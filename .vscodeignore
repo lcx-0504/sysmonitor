@@ -1,3 +1,10 @@
 icon-marketplace.svg
 .cursor/
 assets/
+.git/
+.gitignore
+Chat.md
+genai-chat/
+VSCode Extension Token.txt
+release/
+*.vsix

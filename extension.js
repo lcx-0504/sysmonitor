@@ -726,7 +726,9 @@ function getWebviewHtml(nonce) {
     filterWrap.classList.toggle('has-text', this.value.length > 0);
     renderProcTable();
   });
-  var hintShown = false, hintDismissed = false;
+  var _state = vscode.getState() || {};
+  var hintDismissed = !!_state.hintDismissed;
+  var hintShown = false;
   filterInput.addEventListener('focus', function() {
     if (hintDismissed || hintShown) return;
     hintShown = true;
@@ -739,6 +741,7 @@ function getWebviewHtml(nonce) {
     document.getElementById('hint-close').addEventListener('click', function() {
       hint.classList.remove('show');
       hintDismissed = true;
+      vscode.setState(Object.assign(_state, { hintDismissed: true }));
     });
   });
   document.getElementById('filter-clear').addEventListener('click',function(){
@@ -1052,30 +1055,37 @@ function activate(context) {
   const zh = lang.startsWith('zh');
 
   if (!vscode.env.remoteName) {
-    const autoBtn = zh ? '一键加入 SSH 默认扩展' : 'Add to SSH default extensions';
-    vscode.window.showInformationMessage(
-      zh
-        ? 'System Monitor 在远程窗口（WSL / 容器 / SSH 等）中运行，且仅当远程为 Linux 时可用。使用 Remote-SSH 时可将扩展 ID 写入设置以便自动安装。'
-        : 'System Monitor runs in remote windows (WSL, Dev Containers, SSH, …) and only when the remote OS is Linux. For Remote-SSH, you can save the extension ID for auto-install.',
-      autoBtn
-    ).then(choice => {
-      if (choice === autoBtn) {
-        const c = vscode.workspace.getConfiguration('remote.SSH');
-        const list = (c.get('defaultExtensions') || []).slice();
-        if (!list.includes(EXTENSION_ID)) {
-          list.push(EXTENSION_ID);
-          c.update('defaultExtensions', list, true).then(() => {
-            vscode.window.showInformationMessage(zh
-              ? '已写入：' + EXTENSION_ID + '（仅影响 Remote-SSH 连接）。'
-              : 'Saved: ' + EXTENSION_ID + ' (applies to Remote-SSH only).');
-          });
-        } else {
-          vscode.window.showInformationMessage(zh
-            ? '列表中已有 ' + EXTENSION_ID + '。'
-            : EXTENSION_ID + ' is already in the list.');
+    const dismissed = context.globalState.get('sysmonitor.notifyDismissed', false);
+    const sshCfg = vscode.workspace.getConfiguration('remote.SSH');
+    const defaultExts = (sshCfg.get('defaultExtensions') || []).map(s => s.toLowerCase());
+    const alreadyAdded = defaultExts.includes(EXTENSION_ID.toLowerCase());
+
+    if (!dismissed && !alreadyAdded) {
+      const autoBtn = zh ? '一键加入 SSH 默认扩展' : 'Add to SSH default extensions';
+      const dismissBtn = zh ? '不再提醒' : "Don't remind me";
+      vscode.window.showInformationMessage(
+        zh
+          ? 'System Monitor 仅在远程 Linux 环境中运行。使用 Remote-SSH 时，可将扩展 ID 写入设置以自动安装到服务器。'
+          : 'System Monitor only runs on remote Linux. For Remote-SSH, you can auto-install it on servers.',
+        autoBtn, dismissBtn
+      ).then(choice => {
+        if (choice === autoBtn) {
+          const c = vscode.workspace.getConfiguration('remote.SSH');
+          const list = (c.get('defaultExtensions') || []).slice();
+          if (!list.includes(EXTENSION_ID)) {
+            list.push(EXTENSION_ID);
+            c.update('defaultExtensions', list, true).then(() => {
+              context.globalState.update('sysmonitor.notifyDismissed', true);
+              vscode.window.showInformationMessage(zh
+                ? '已添加 ' + EXTENSION_ID + ' 到 SSH 默认扩展。'
+                : 'Added ' + EXTENSION_ID + ' to SSH default extensions.');
+            });
+          }
+        } else if (choice === dismissBtn) {
+          context.globalState.update('sysmonitor.notifyDismissed', true);
         }
-      }
-    });
+      });
+    }
     context.subscriptions.push(
       vscode.commands.registerCommand('sysmonitor.openPanel', () => {
         vscode.window.showInformationMessage(zh
