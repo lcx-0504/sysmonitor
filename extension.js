@@ -1,32 +1,25 @@
 // extension.js
 const vscode = require('vscode');
 const fs = require('fs');
+const path = require('path');
 const os = require('os');
 const { execSync } = require('child_process');
 
-const PLATFORM = process.platform; // 'linux' | 'darwin' | 'win32'
+const pkg = require(path.join(__dirname, 'package.json'));
+const EXTENSION_ID = `${pkg.publisher}.${pkg.name}`;
+
+const isSSH = !!(process.env.SSH_CLIENT || process.env.SSH_CONNECTION || process.env.SSH_TTY);
+const sshClientIp = (process.env.SSH_CONNECTION || '').split(/\s+/)[0] || '';
 let prevCpu = null;
 let prevNet = null;
+let prevSshBytes = null;
 
 function getCpuPercent() {
   try {
-    if (PLATFORM === 'linux') {
-      const lines = fs.readFileSync('/proc/stat', 'utf8').split('\n');
-      const p = lines[0].split(/\s+/).slice(1).map(Number);
-      const idle = p[3] + (p[4] || 0);
-      const total = p.reduce((a, b) => a + b, 0);
-      if (!prevCpu) { prevCpu = { idle, total }; return 0; }
-      const dTotal = total - prevCpu.total;
-      const dIdle = idle - prevCpu.idle;
-      prevCpu = { idle, total };
-      return dTotal > 0 ? Math.round((1 - dIdle / dTotal) * 100) : 0;
-    }
-    const cpus = os.cpus();
-    let idle = 0, total = 0;
-    for (const c of cpus) {
-      for (const t of Object.values(c.times)) total += t;
-      idle += c.times.idle;
-    }
+    const lines = fs.readFileSync('/proc/stat', 'utf8').split('\n');
+    const p = lines[0].split(/\s+/).slice(1).map(Number);
+    const idle = p[3] + (p[4] || 0);
+    const total = p.reduce((a, b) => a + b, 0);
     if (!prevCpu) { prevCpu = { idle, total }; return 0; }
     const dTotal = total - prevCpu.total;
     const dIdle = idle - prevCpu.idle;
@@ -38,55 +31,35 @@ function getCpuPercent() {
 }
 
 function getMemInfo() {
-  if (PLATFORM === 'linux') {
-    try {
-      const raw = fs.readFileSync('/proc/meminfo', 'utf8');
-      const get = (key) => parseInt(raw.match(new RegExp(key + ':\\s+(\\d+)'))[1]) * 1024;
-      const total = get('MemTotal');
-      const avail = get('MemAvailable');
-      const used = total - avail;
-      return { total, used, avail, percent: Math.round(used / total * 100) };
-    } catch {}
+  try {
+    const raw = fs.readFileSync('/proc/meminfo', 'utf8');
+    const get = (key) => parseInt(raw.match(new RegExp(key + ':\\s+(\\d+)'))[1]) * 1024;
+    const total = get('MemTotal');
+    const avail = get('MemAvailable');
+    const used = total - avail;
+    return { total, used, avail, percent: Math.round(used / total * 100) };
+  } catch {
+    const total = os.totalmem(), free = os.freemem(), used = total - free;
+    return { total, used, avail: free, percent: Math.round(used / total * 100) };
   }
-  const total = os.totalmem(), free = os.freemem(), used = total - free;
-  return { total, used, avail: free, percent: Math.round(used / total * 100) };
 }
 
 function getNetSpeed() {
   try {
-    if (PLATFORM === 'linux') {
-      const lines = fs.readFileSync('/proc/net/dev', 'utf8').split('\n').slice(2);
-      let rx = 0, tx = 0;
-      for (const l of lines) {
-        const p = l.trim().split(/\s+/);
-        if (p.length >= 10 && !p[0].startsWith('lo')) {
-          rx += parseInt(p[1]) || 0;
-          tx += parseInt(p[9]) || 0;
-        }
+    const lines = fs.readFileSync('/proc/net/dev', 'utf8').split('\n').slice(2);
+    let rx = 0, tx = 0;
+    for (const l of lines) {
+      const p = l.trim().split(/\s+/);
+      if (p.length >= 10 && !p[0].startsWith('lo')) {
+        rx += parseInt(p[1]) || 0;
+        tx += parseInt(p[9]) || 0;
       }
-      if (!prevNet) { prevNet = { rx, tx }; return { rx: 0, tx: 0 }; }
-      const result = { rx: (rx - prevNet.rx) / 2, tx: (tx - prevNet.tx) / 2 };
-      prevNet = { rx, tx };
-      return result;
     }
-    if (PLATFORM === 'darwin') {
-      const out = execSync('netstat -ib 2>/dev/null', { timeout: 2000 }).toString();
-      let rx = 0, tx = 0;
-      for (const line of out.split('\n').slice(1)) {
-        const p = line.trim().split(/\s+/);
-        if (p.length >= 10 && p[0] !== 'lo0' && p[2] !== '<Link#0>') {
-          const ibytes = parseInt(p[6]) || 0;
-          const obytes = parseInt(p[9]) || 0;
-          if (ibytes > 0) { rx += ibytes; tx += obytes; }
-        }
-      }
-      if (!prevNet) { prevNet = { rx, tx }; return { rx: 0, tx: 0 }; }
-      const result = { rx: (rx - prevNet.rx) / 2, tx: (tx - prevNet.tx) / 2 };
-      prevNet = { rx, tx };
-      return result;
-    }
-  } catch {}
-  return null;
+    if (!prevNet) { prevNet = { rx, tx }; return { rx: 0, tx: 0 }; }
+    const result = { rx: (rx - prevNet.rx) / 2, tx: (tx - prevNet.tx) / 2 };
+    prevNet = { rx, tx };
+    return result;
+  } catch { return { rx: 0, tx: 0 }; }
 }
 
 function getAllGpus() {
@@ -107,34 +80,19 @@ function getAllGpus() {
   } catch { return []; }
 }
 
-const isSSH = !!(process.env.SSH_CLIENT || process.env.SSH_CONNECTION || process.env.SSH_TTY);
-const sshClientIp = (process.env.SSH_CONNECTION || '').split(/\s+/)[0] || '';
-let prevSshBytes = null;
 function getSshTraffic() {
   if (!isSSH) return { isSSH: false };
-  if (PLATFORM === 'win32') return { isSSH: true, rx: 0, tx: 0 };
   try {
     let totalSent = 0, totalRecv = 0;
-    if (PLATFORM === 'linux') {
-      const filter = sshClientIp
-        ? "ss -ti state established '( sport = :22 and dst " + sshClientIp + " )' 2>/dev/null"
-        : "ss -ti state established '( sport = :22 )' 2>/dev/null";
-      const out = execSync(filter, { timeout: 1000 }).toString();
-      for (const line of out.split('\n')) {
-        const sm = line.match(/bytes_sent:(\d+)/);
-        const rm = line.match(/bytes_received:(\d+)/);
-        if (sm) totalSent += parseInt(sm[1]);
-        if (rm) totalRecv += parseInt(rm[1]);
-      }
-    } else if (PLATFORM === 'darwin') {
-      const cmd = sshClientIp
-        ? "netstat -nb -p tcp 2>/dev/null | grep '\\.22 ' | grep '" + sshClientIp + "'"
-        : "netstat -nb -p tcp 2>/dev/null | grep '\\.22 '";
-      const out = execSync(cmd, { timeout: 1000 }).toString();
-      for (const line of out.split('\n')) {
-        const p = line.trim().split(/\s+/);
-        if (p.length >= 5) { totalRecv += parseInt(p[4]) || 0; totalSent += parseInt(p[5]) || 0; }
-      }
+    const filter = sshClientIp
+      ? "ss -ti state established '( sport = :22 and dst " + sshClientIp + " )' 2>/dev/null"
+      : "ss -ti state established '( sport = :22 )' 2>/dev/null";
+    const out = execSync(filter, { timeout: 1000 }).toString();
+    for (const line of out.split('\n')) {
+      const sm = line.match(/bytes_sent:(\d+)/);
+      const rm = line.match(/bytes_received:(\d+)/);
+      if (sm) totalSent += parseInt(sm[1]);
+      if (rm) totalRecv += parseInt(rm[1]);
     }
     if (!prevSshBytes) { prevSshBytes = { sent: totalSent, recv: totalRecv }; return { isSSH: true, rx: 0, tx: 0 }; }
     const result = {
@@ -309,10 +267,8 @@ function getWebviewHtml(nonce) {
   </div>
   <div class="sett-section">
     <div class="sett-label" id="sett-bar-label">状态栏</div>
-    <div class="sett-row" id="profile-tabs" style="margin-bottom:8px"></div>
     <div id="sett-body"></div>
   </div>
-  <div id="sett-platform-note" style="display:none;padding:6px 12px 10px;font-size:10px;color:var(--muted);line-height:1.5;border-top:1px solid var(--border)"></div>
 </div>
 </div>
 
@@ -335,7 +291,7 @@ function getWebviewHtml(nonce) {
   </div>
 </div>
 
-<div class="net-ssh-row" id="net-ssh-row">
+<div class="net-ssh-row">
   <div class="card" id="net-card">
     <div class="card-head"><span class="card-label" id="net-title">网络</span></div>
     <div class="net-row">
@@ -401,18 +357,18 @@ function getWebviewHtml(nonce) {
     T = zh
       ? { min:' 分钟',cores:' 核',used:'已用',avail:'可用',total:'总计',srvNet:'服务器网络',net:'网络',localSSH:'本机 SSH',up:'↑ 上传',down:'↓ 下载',selAll:'全选空闲',clear:'清除',copyEnv:'复制环境变量',detecting:'检测中…',noGpu:'未检测到 NVIDIA GPU',updAt:'更新于 ',utilLabel:'利用率',memLabel:'显存',tempLabel:'温度',pwLabel:'功耗',
           perfTab:'性能',procTab:'进程',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',close:'关闭',
-          profLocal:'本地设置',profSSH:'远程设置',netLabel:'网络速率',gpuLabel:'GPU',
+          netLabel:'网络速率',gpuLabel:'GPU',
           scopeOff:'关',scopeSummary:'总览',scopeCard:'指定卡',scopeMy:'我的卡',metUtil:'仅利用率',metVram:'仅显存',metBoth:'全部显示',
           netUp:'仅上传',netDown:'仅下载',netAll:'全部显示',netMerge:'合并显示',
           sshLabel:'SSH速率',gpuSummary:'GPU总览',gpuPerf:'GPU性能显示',gpuAll:'所有卡',gpuSpecify:'指定卡',gpuFirst:'前几张',gpuMetric:'GPU显示指标',gpuSkipIdle:'隐藏空闲卡',viewProcs:'查看进程',
-          pcpu:'CPU',pmem:'内存',pgpu:'GPU',ppid:'PID',puser:'用户',pname:'进程名',pcpuPct:'CPU%',pmemCol:'内存',pgpuCol:'GPU',pcount:'共 {n} 进程',pnoGpu:'—',pcmd:'命令',filterHint:'搜索进程...',notAvail:'不可用' }
+          pcpu:'CPU',pmem:'内存',pgpu:'GPU',ppid:'PID',puser:'用户',pname:'进程名',pcpuPct:'CPU%',pmemCol:'内存',pgpuCol:'GPU',pcount:'共 {n} 进程',pnoGpu:'—',pcmd:'命令',filterHint:'搜索进程...' }
       : { min:' min',cores:' cores',used:'Used',avail:'Avail',total:'Total',srvNet:'Server Net',net:'Network',localSSH:'Local SSH',up:'↑ Up',down:'↓ Down',selAll:'Select All',clear:'Clear',copyEnv:'Copy Env Var',detecting:'Detecting…',noGpu:'No NVIDIA GPU detected',updAt:'Updated ',utilLabel:'Util',memLabel:'VRAM',tempLabel:'Temp',pwLabel:'Power',
           perfTab:'Perf',procTab:'Procs',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',close:'Close',
-          profLocal:'Local Settings',profSSH:'Remote Settings',netLabel:'Network',gpuLabel:'GPU',
+          netLabel:'Network',gpuLabel:'GPU',
           scopeOff:'Off',scopeSummary:'Summary',scopeCard:'Card',scopeMy:'My Card',metUtil:'Util Only',metVram:'VRAM Only',metBoth:'All',
           netUp:'Upload',netDown:'Download',netAll:'All',netMerge:'Merged',
           sshLabel:'SSH Traffic',gpuSummary:'GPU Summary',gpuPerf:'GPU Performance',gpuAll:'All Cards',gpuSpecify:'Specific',gpuFirst:'First N',gpuMetric:'GPU Metric',gpuSkipIdle:'Hide Idle',viewProcs:'View Procs',
-          pcpu:'CPU',pmem:'Memory',pgpu:'GPU',ppid:'PID',puser:'User',pname:'Process',pcpuPct:'CPU%',pmemCol:'Mem',pgpuCol:'GPU',pcount:'{n} processes',pnoGpu:'—',pcmd:'Command',filterHint:'Search...',notAvail:'N/A' };
+          pcpu:'CPU',pmem:'Memory',pgpu:'GPU',ppid:'PID',puser:'User',pname:'Process',pcpuPct:'CPU%',pmemCol:'Mem',pgpuCol:'GPU',pcount:'{n} processes',pnoGpu:'—',pcmd:'Command',filterHint:'Search...' };
     document.getElementById('l-1m').textContent = '1' + T.min;
     document.getElementById('l-5m').textContent = '5' + T.min;
     document.getElementById('l-15m').textContent = '15' + T.min;
@@ -435,18 +391,14 @@ function getWebviewHtml(nonce) {
   window.addEventListener('message', function(evt) {
     var data = evt.data;
     if (data.cmd === 'config') {
-      cfgRemote = data.remote || cfgRemote;
-      cfgLocal = data.local || cfgLocal;
+      barCfg = data.barCfg || barCfg;
       curInterval = data.interval || curInterval;
-      isRemote = !!data.isRemote;
       gpuCount = data.gpuCount || gpuCount;
-      curPlatform = data.platform || curPlatform;
       if (modalOpen) renderSettingsBody();
       return;
     }
     if (data.cmd === 'procs') {
       procData = data.data || [];
-      procPlatform = data.platform || '';
       renderProcTable();
       return;
     }
@@ -466,29 +418,23 @@ function getWebviewHtml(nonce) {
     document.getElementById('mem-avail').textContent = d.mem.availStr;
     document.getElementById('mem-total').textContent = d.mem.totalStr;
 
-    var netSshRow = document.getElementById('net-ssh-row');
     var sshCard = document.getElementById('ssh-card');
     var netTitle = document.getElementById('net-title');
-    if (!d.net) {
-      netSshRow.style.display = 'none';
+    if (d.ssh && d.ssh.isSSH) {
+      netTitle.textContent = T.srvNet;
+      sshCard.style.display = '';
+      document.getElementById('ssh-label').textContent = T.localSSH;
+      document.getElementById('ssh-tx').textContent = d.ssh.txStr;
+      document.getElementById('ssh-rx').textContent = d.ssh.rxStr;
+      document.getElementById('net-up-label').textContent = T.up;
+      document.getElementById('net-down-label').textContent = T.down;
+      document.getElementById('ssh-up-label').textContent = T.up;
+      document.getElementById('ssh-down-label').textContent = T.down;
     } else {
-      netSshRow.style.display = '';
-      if (d.ssh && d.ssh.isSSH) {
-        netTitle.textContent = T.srvNet;
-        sshCard.style.display = '';
-        document.getElementById('ssh-label').textContent = T.localSSH;
-        document.getElementById('ssh-tx').textContent = d.ssh.txStr;
-        document.getElementById('ssh-rx').textContent = d.ssh.rxStr;
-        document.getElementById('net-up-label').textContent = T.up;
-        document.getElementById('net-down-label').textContent = T.down;
-        document.getElementById('ssh-up-label').textContent = T.up;
-        document.getElementById('ssh-down-label').textContent = T.down;
-      } else {
-        netTitle.textContent = T.net;
-        sshCard.style.display = 'none';
-        document.getElementById('net-up-label').textContent = T.up;
-        document.getElementById('net-down-label').textContent = T.down;
-      }
+      netTitle.textContent = T.net;
+      sshCard.style.display = 'none';
+      document.getElementById('net-up-label').textContent = T.up;
+      document.getElementById('net-down-label').textContent = T.down;
     }
 
     var gpuBody = document.getElementById('gpu-body');
@@ -534,10 +480,8 @@ function getWebviewHtml(nonce) {
       gpuBody.innerHTML = '<span class="gpu-na">' + T.noGpu + '</span>';
     }
 
-    if (d.net) {
-      document.getElementById('net-tx').textContent = d.net.txStr;
-      document.getElementById('net-rx').textContent = d.net.rxStr;
-    }
+    document.getElementById('net-tx').textContent = d.net.txStr;
+    document.getElementById('net-rx').textContent = d.net.rxStr;
 
     var freeCard = document.getElementById('free-gpu-card');
     if (d.gpus && d.gpus.length) {
@@ -616,21 +560,17 @@ function getWebviewHtml(nonce) {
   });
 
   // ── 设置模态 ──
-  var cfgRemote = {cpu:true,ram:false,net:'off',ssh:false,gpu:{summary:true,mode:'off',cards:[],metric:'both'}};
-  var cfgLocal = {cpu:true,ram:false,net:'off',gpu:{summary:false,mode:'off',cards:[],metric:'both'}};
-  var curInterval = 2, gpuCount = 8, isRemote = false, modalOpen = false, curPlatform = 'linux';
-  var activeProfile = 'local';
+  var barCfg = {barEnabled:true,cpu:true,ram:false,net:'off',ssh:false,gpu:{summary:true,mode:'off',cards:[],metric:'both'}};
+  var curInterval = 2, gpuCount = 8, modalOpen = false;
 
   function openModal() {
     modalOpen = true;
-    activeProfile = isRemote ? 'ssh' : 'local';
     vscode.postMessage({cmd:'getConfig'});
     document.getElementById('modal-mask').classList.add('open');
     document.getElementById('modal-title-text').textContent = T.settTitle;
     document.getElementById('sett-interval-label').textContent = T.interval;
     document.getElementById('sett-bar-label').textContent = T.statusBar;
     renderIntervalRow();
-    renderProfileTabs();
     renderSettingsBody();
   }
   function closeModal() { modalOpen = false; document.getElementById('modal-mask').classList.remove('open'); }
@@ -651,25 +591,13 @@ function getWebviewHtml(nonce) {
     });
   }
 
-  function renderProfileTabs() {
-    var tabs = document.getElementById('profile-tabs');
-    tabs.innerHTML = '';
-    [{id:'local',label:T.profLocal},{id:'ssh',label:T.profSSH}].forEach(function(p) {
-      var b = document.createElement('button');
-      b.className = 'tb' + (activeProfile===p.id?' on':'');
-      b.textContent = p.label;
-      b.addEventListener('click', function(){ activeProfile=p.id; renderProfileTabs(); renderSettingsBody(); });
-      tabs.appendChild(b);
-    });
-  }
-
-  function getCfg() { return activeProfile==='ssh'?cfgRemote:cfgLocal; }
+  function getCfg() { return barCfg; }
   var _pushTimer = null;
   function pushCfg() {
     if (_pushTimer) clearTimeout(_pushTimer);
     _pushTimer = setTimeout(function() {
       _pushTimer = null;
-      vscode.postMessage({cmd:'setConfig',key:'statusBar',local:cfgLocal,remote:cfgRemote});
+      vscode.postMessage({cmd:'setConfig',key:'statusBar',value:barCfg});
     }, 300);
   }
 
@@ -691,11 +619,8 @@ function getWebviewHtml(nonce) {
     if (!barOn) { body.innerHTML = h; bindSettingsEvents(body, cfg); return; }
     h += row('CPU', toggle('cpu', cfg.cpu ? T.enabled : T.disabled));
     h += row('RAM', toggle('ram', cfg.ram ? T.enabled : T.disabled));
-    var winNA = curPlatform === 'win32' ? ' <span style="font-size:9px;color:var(--muted);opacity:0.7">(Windows '+T.notAvail+')</span>' : '';
-    h += row(T.netLabel, radio('net','off',T.scopeOff)+radio('net','up',T.netUp)+radio('net','down',T.netDown)+radio('net','both',T.netAll)+radio('net','combined',T.netMerge)+winNA);
-    if (activeProfile==='ssh') {
-      h += row(T.sshLabel, toggle('ssh', cfg.ssh ? T.enabled : T.disabled)+winNA);
-    }
+    h += row(T.netLabel, radio('net','off',T.scopeOff)+radio('net','up',T.netUp)+radio('net','down',T.netDown)+radio('net','both',T.netAll)+radio('net','combined',T.netMerge));
+    h += row(T.sshLabel, toggle('ssh', cfg.ssh ? T.enabled : T.disabled));
     h += row(T.gpuSummary, '<button class="tb'+(gpu.summary?' on':'')+'" data-act="gpu-summary">'+(gpu.summary?T.enabled:T.disabled)+'</button>');
 
     var gpuMode = gpu.mode || 'off';
@@ -726,21 +651,6 @@ function getWebviewHtml(nonce) {
 
     body.innerHTML = h;
     bindSettingsEvents(body, cfg);
-
-    var note = document.getElementById('sett-platform-note');
-    if (curPlatform === 'win32') {
-      note.style.display = '';
-      note.innerHTML = zh
-        ? '💡 当前为 <b>Windows</b>，网络速率、SSH 流量、进程 CPU% 和用户名不可用。<br>如通过 SSH 连接 Linux/macOS 服务器，以上功能由远端系统提供，不受此限制。'
-        : '💡 Running on <b>Windows</b>: network speed, SSH traffic, process CPU% and username are unavailable locally.<br>When connected via SSH to a Linux/macOS server, these features are provided by the remote system.';
-    } else if (curPlatform === 'darwin') {
-      note.style.display = '';
-      note.innerHTML = zh
-        ? '💡 当前为 <b>macOS</b>，所有功能均支持。如通过 SSH 连接服务器，监控数据来自远端系统。'
-        : '💡 Running on <b>macOS</b>, all features supported. When connected via SSH, monitoring data comes from the remote system.';
-    } else {
-      note.style.display = 'none';
-    }
   }
 
   function bindSettingsEvents(body, cfg) {
@@ -798,7 +708,7 @@ function getWebviewHtml(nonce) {
   }
 
   // ── 进程 tab 逻辑 ──
-  var procSort = 'cpu', procData = [], procFilter = '', procPlatform = '';
+  var procSort = 'cpu', procData = [], procFilter = '';
   function renderProcToolbar() {
     var tb = document.getElementById('proc-toolbar');
     if(!tb) return;
@@ -874,11 +784,10 @@ function getWebviewHtml(nonce) {
         gpuCell = '<span class="pmuted">'+T.pnoGpu+'</span>';
       }
       var cmdShort = p.cmd && p.cmd.length > 50 ? p.cmd.substring(0,50)+'…' : (p.cmd||p.name);
-      var cpuTxt = procPlatform === 'win32' ? '<span class="pmuted">N/A</span>' : p.cpu.toFixed(1);
-      var userTxt = p.user === '-' ? '<span class="pmuted">-</span>' : esc(p.user);
+      var cpuTxt = p.cpu.toFixed(1);
       html+='<tr>'
         +'<td title="PID '+p.pid+'&#10;'+esc(p.cmd||p.name)+'">'+esc(p.name)+'</td>'
-        +'<td>'+userTxt+'</td>'
+        +'<td>'+esc(p.user)+'</td>'
         +'<td class="r">'+cpuTxt+'</td>'
         +'<td class="r">'+fmtPMem(p.mem)+'</td>'
         +'<td class="r">'+p.memPct+'%</td>'
@@ -895,14 +804,11 @@ function getWebviewHtml(nonce) {
 </html>`;
 }
 
-const isRemote = !!process.env.SSH_CONNECTION;
-
 function readConfig() {
   const c = vscode.workspace.getConfiguration('sysmonitor');
   const interval = c.get('refreshInterval', 2);
-  const profile = isRemote ? 'remote' : 'local';
-  const barCfg = c.get('statusBar.' + profile) || { cpu: true, ram: false, net: 'off', gpu: { summary: true, mode: 'off', cards: [], metric: 'both' } };
-  return { interval, barCfg, profile };
+  const barCfg = c.get('statusBar') || { barEnabled: true, cpu: true, ram: false, net: 'off', ssh: false, gpu: { summary: true, mode: 'off', cards: [], metric: 'both' } };
+  return { interval, barCfg };
 }
 
 function getMyGpuIndices() {
@@ -915,14 +821,9 @@ function getMyGpuIndices() {
       const parts = line.split(', ');
       const pid = parts[0].trim();
       try {
-        if (PLATFORM === 'linux') {
-          const status = fs.readFileSync('/proc/' + pid + '/status', 'utf8');
-          const m = status.match(/Uid:\s+(\d+)/);
-          if (m && parseInt(m[1]) === process.getuid()) uuidSet.add(parts[1].trim());
-        } else {
-          const psOut = execSync('ps -o user= -p ' + pid + ' 2>/dev/null', { timeout: 1000 }).toString().trim();
-          if (psOut === user) uuidSet.add(parts[1].trim());
-        }
+        const status = fs.readFileSync('/proc/' + pid + '/status', 'utf8');
+        const m = status.match(/Uid:\s+(\d+)/);
+        if (m && parseInt(m[1]) === process.getuid()) uuidSet.add(parts[1].trim());
       } catch {}
     }
     if (uuidSet.size === 0) return [];
@@ -941,36 +842,16 @@ function getProcessData() {
   const totalMem = os.totalmem();
   const procs = [];
   try {
-    let psCmd;
-    if (PLATFORM === 'win32') {
-      psCmd = 'tasklist /FO CSV /NH 2>nul';
-    } else if (PLATFORM === 'darwin') {
-      psCmd = 'ps -Aro pid,user,%cpu,rss,comm | tail -n +2 | head -100';
-    } else {
-      psCmd = 'ps -eo pid,user,%cpu,rss,args --sort=-%cpu --no-headers | head -100';
-    }
-    const psOut = execSync(psCmd, { timeout: 3000 }).toString();
-    if (PLATFORM === 'win32') {
-      for (const line of psOut.trim().split('\n')) {
-        const cols = line.replace(/"/g, '').split(',');
-        if (cols.length >= 5) {
-          const name = cols[0].trim();
-          const pid = parseInt(cols[1]) || 0;
-          const mem = parseInt((cols[4] || '0').replace(/[^\d]/g, '')) * 1024;
-          if (mem > 1e6) procs.push({ pid, user: '-', cpu: 0, mem, memPct: totalMem > 0 ? +(mem / totalMem * 100).toFixed(1) : 0, name, cmd: name });
-        }
-      }
-    } else {
-      for (const line of psOut.trim().split('\n')) {
-        const m = line.trim().match(/^(\d+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+(.+)$/);
-        if (m) {
-          const cpu = parseFloat(m[3]) || 0;
-          const rss = parseInt(m[4]) * 1024;
-          if (rss > 1e6 || cpu > 0) {
-            const args = m[5].trim();
-            const name = args.split(/\s+/)[0].split('/').pop();
-            procs.push({ pid: parseInt(m[1]), user: m[2], cpu, mem: rss, memPct: totalMem > 0 ? +(rss / totalMem * 100).toFixed(1) : 0, name, cmd: args });
-          }
+    const psOut = execSync('ps -eo pid,user,%cpu,rss,args --sort=-%cpu --no-headers | head -100', { timeout: 3000 }).toString();
+    for (const line of psOut.trim().split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+(.+)$/);
+      if (m) {
+        const cpu = parseFloat(m[3]) || 0;
+        const rss = parseInt(m[4]) * 1024;
+        if (rss > 1e6 || cpu > 0) {
+          const args = m[5].trim();
+          const name = args.split(/\s+/)[0].split('/').pop();
+          procs.push({ pid: parseInt(m[1]), user: m[2], cpu, mem: rss, memPct: totalMem > 0 ? +(rss / totalMem * 100).toFixed(1) : 0, name, cmd: args });
         }
       }
     }
@@ -1026,9 +907,7 @@ class MonitorViewProvider {
           c.update('refreshInterval', msg.value, true).then(() => updateBar());
           this._resetTimer(msg.value * 1000);
         } else if (msg.key === 'statusBar') {
-          c.update('statusBar.local', msg.local, true).then(() => {
-            return c.update('statusBar.remote', msg.remote, true);
-          }).then(() => updateBar());
+          c.update('statusBar', msg.value, true).then(() => updateBar());
         }
       } else if (msg.cmd === 'openSettings') {
         vscode.commands.executeCommand('workbench.action.openSettings', 'sysmonitor');
@@ -1048,9 +927,9 @@ class MonitorViewProvider {
       const ssh  = getSshTraffic();
       const loads = os.loadavg();
       const lang = vscode.env.language;
-      const netData = net ? { rxStr: fmtBytes(net.rx), txStr: fmtBytes(net.tx) } : null;
+      const netData = { rxStr: fmtBytes(net.rx), txStr: fmtBytes(net.tx) };
       const payload = {
-        lang, cpu, cpuCores: os.cpus().length, platform: PLATFORM,
+        lang, cpu, cpuCores: os.cpus().length,
         load1: loads[0].toFixed(2), load5: loads[1].toFixed(2), load15: loads[2].toFixed(2),
         mem: { percent: mem.percent, usedStr: fmtSize(mem.used), availStr: fmtSize(mem.avail), totalStr: fmtSize(mem.total) },
         gpus,
@@ -1086,19 +965,16 @@ class MonitorViewProvider {
   _pushProcs() {
     if (!this._view || this._paused) return;
     const data = getProcessData();
-    this._view.webview.postMessage({ cmd: 'procs', data, platform: PLATFORM });
+    this._view.webview.postMessage({ cmd: 'procs', data });
   }
 
   _pushConfig() {
     if (!this._view) return;
-    const { interval } = readConfig();
-    const c = vscode.workspace.getConfiguration('sysmonitor');
-    const remote = c.get('statusBar.remote') || { cpu: true, ram: false, net: 'off', ssh: false, gpu: { summary: true, mode: 'off', cards: [], metric: 'both' } };
-    const local = c.get('statusBar.local') || { cpu: true, ram: false, net: 'off', gpu: { summary: false, mode: 'off', cards: [], metric: 'both' } };
+    const { interval, barCfg } = readConfig();
     const gpus = getAllGpus();
     this._view.webview.postMessage({
-      cmd: 'config', interval, remote, local,
-      isRemote, gpuCount: gpus.length || 8, platform: PLATFORM,
+      cmd: 'config', interval, barCfg,
+      gpuCount: gpus.length || 8,
     });
   }
 }
@@ -1172,6 +1048,68 @@ function updateBar() {
 }
 
 function activate(context) {
+  const lang = vscode.env.language || '';
+  const zh = lang.startsWith('zh');
+
+  if (!vscode.env.remoteName) {
+    const autoBtn = zh ? '一键加入 SSH 默认扩展' : 'Add to SSH default extensions';
+    vscode.window.showInformationMessage(
+      zh
+        ? 'System Monitor 在远程窗口（WSL / 容器 / SSH 等）中运行，且仅当远程为 Linux 时可用。使用 Remote-SSH 时可将扩展 ID 写入设置以便自动安装。'
+        : 'System Monitor runs in remote windows (WSL, Dev Containers, SSH, …) and only when the remote OS is Linux. For Remote-SSH, you can save the extension ID for auto-install.',
+      autoBtn
+    ).then(choice => {
+      if (choice === autoBtn) {
+        const c = vscode.workspace.getConfiguration('remote.SSH');
+        const list = (c.get('defaultExtensions') || []).slice();
+        if (!list.includes(EXTENSION_ID)) {
+          list.push(EXTENSION_ID);
+          c.update('defaultExtensions', list, true).then(() => {
+            vscode.window.showInformationMessage(zh
+              ? '已写入：' + EXTENSION_ID + '（仅影响 Remote-SSH 连接）。'
+              : 'Saved: ' + EXTENSION_ID + ' (applies to Remote-SSH only).');
+          });
+        } else {
+          vscode.window.showInformationMessage(zh
+            ? '列表中已有 ' + EXTENSION_ID + '。'
+            : EXTENSION_ID + ' is already in the list.');
+        }
+      }
+    });
+    context.subscriptions.push(
+      vscode.commands.registerCommand('sysmonitor.openPanel', () => {
+        vscode.window.showInformationMessage(zh
+          ? '请先打开远程文件夹或 WSL（侧边栏图标仅在远程窗口显示）。'
+          : 'Open a remote folder or WSL first (activity bar icon only appears in remote windows).');
+      })
+    );
+    return;
+  }
+
+  if (process.platform !== 'linux') {
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider('sysmonitor.panel', {
+        resolveWebviewView(view) {
+          const nonce = Math.random().toString(36).slice(2, 18);
+          const title = zh ? '仅支持 Linux 远程' : 'Linux remote only';
+          const body = zh
+            ? '当前远程环境不是 Linux（' + process.platform + '），本扩展无法采集系统指标。请在 Linux 服务器、WSL2（Linux 发行版）或 Linux 容器中使用。'
+            : 'This remote is not Linux (' + process.platform + '). System Monitor only supports Linux. Use a Linux server, WSL2 distro, or Linux container.';
+          view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}';">
+<style nonce="${nonce}">body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);padding:16px;font-size:12px;line-height:1.6}h3{margin:0 0 10px;font-size:13px}p{color:var(--vscode-descriptionForeground);margin:0}</style></head><body>
+<h3>${title}</h3><p>${body}</p></body></html>`;
+        }
+      })
+    );
+    context.subscriptions.push(
+      vscode.commands.registerCommand('sysmonitor.openPanel', () => {
+        vscode.commands.executeCommand('workbench.view.extension.sysmonitor-container');
+      })
+    );
+    return;
+  }
+
   const provider = new MonitorViewProvider(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('sysmonitor.panel', provider, {
@@ -1181,7 +1119,7 @@ function activate(context) {
 
   const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   bar.command = 'sysmonitor.openPanel';
-  bar.tooltip = isRemote ? 'System Monitor (Remote)' : 'System Monitor (Local)';
+  bar.tooltip = 'System Monitor (Remote)';
   barRef = bar;
   const { barCfg: initCfg } = readConfig();
   if (initCfg.barEnabled !== false) bar.show();

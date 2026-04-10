@@ -2,103 +2,69 @@
 
 [中文说明](README.zh-CN.md)
 
-A lightweight VS Code / Cursor extension for real-time system resource monitoring.
+A lightweight VS Code / Cursor extension for monitoring system resources on **remote Linux** (Remote-SSH, WSL, Dev Containers, etc.).
 
 ## Features
 
 - **CPU** — Usage percentage, 1/5/15 min load averages
 - **RAM** — Used / Available / Total
-- **Network** — Upload & download speed, SSH traffic (remote)
+- **Network** — Upload & download speed
+- **SSH Traffic** — Upload & download through your SSH connection
 - **GPU** — NVIDIA GPU utilization, VRAM, temperature, power (multi-GPU)
 - **Free GPU Picker** — Select idle GPUs and copy `CUDA_VISIBLE_DEVICES`
 - **Process Manager** — Sortable by CPU / RAM / GPU, searchable (supports `GPU0` / `#0` syntax)
-- **Status Bar** — Configurable pinned metrics with codicon icons
-- **Settings** — Per-profile (local / remote) status bar customization
+- **Status Bar** — Configurable pinned metrics
+- **Settings** — Built-in settings panel, no need to edit JSON
 - **i18n** — Chinese & English, auto-detected
 
-## Platform Support
+## Quick Start
 
-| Feature | Linux | macOS | Windows |
-|---------|-------|-------|---------|
-| CPU usage | ✅ `/proc/stat` | ✅ `os.cpus()` | ✅ `os.cpus()` |
-| RAM | ✅ `/proc/meminfo` | ✅ `os` module | ✅ `os` module |
-| Network speed | ✅ `/proc/net/dev` | ✅ `netstat -ib` | ❌ Hidden |
-| SSH traffic | ✅ `ss` | ✅ `netstat` | ❌ Hidden |
-| Processes | ✅ Full (`ps -eo`) | ✅ Full (`ps -Aro`) | ⚠️ Limited (no CPU%, no username) |
-| GPU (NVIDIA) | ✅ `nvidia-smi` | ✅ `nvidia-smi` | ✅ `nvidia-smi` |
+1. Install the extension (from Marketplace or `.vsix`)
+2. (Optional, Remote-SSH only) When prompted in a local window, add the extension ID to `remote.SSH.defaultExtensions`
+3. Open a **remote** workspace: Remote-SSH, **WSL**, or a **Dev Container** on **Linux**
+4. The sidebar and status bar appear when the extension runs on Linux
 
-> **Unsupported features are hidden or marked N/A, never shown as fake zeros.**
+> The extension runs in the **remote** extension host, not on your local OS. It only collects metrics when the remote OS is **Linux**.
+> The activity bar icon appears **only** in a **remote** window (WSL, Dev Containers, SSH, etc.), not in a pure local window.
+> The remote machine must run **Linux**; Windows or macOS remotes show an unsupported message.
 
-### About SSH Remote Connections
+## Configuration
 
-When using VS Code Remote-SSH, the extension runs on the **remote machine**. This means:
-
-- The platform that matters is the **remote server's OS**, not your local machine.
-- If you SSH from Windows into a Linux server, you get **full Linux feature support**.
-- Network, SSH traffic, and process data all come from the remote system.
-
-This is the most common use case — the extension is designed with remote development in mind.
-
-## Configuration Tips
-
-### Only show status bar when connected via SSH
-
-If you only want the monitoring status bar during remote sessions, set the **local** profile's status bar to disabled:
+All settings are accessible via the **Settings** button in the sidebar panel. You can also edit `settings.json` directly:
 
 ```jsonc
-// settings.json
 {
-  "sysmonitor.statusBar.local": {
-    "barEnabled": false
-  },
-  "sysmonitor.statusBar.remote": {
+  "sysmonitor.refreshInterval": 2,
+  "sysmonitor.statusBar": {
     "barEnabled": true,
     "cpu": true,
     "ram": true,
     "net": "both",
     "ssh": true,
-    "gpu": { "summary": true, "mode": "all", "metric": "both" }
+    "gpu": {
+      "summary": true,
+      "mode": "all",
+      "metric": "both",
+      "skipIdle": false
+    }
   }
 }
 ```
 
-Or use the built-in settings panel (click the **Settings** button in the sidebar) — switch to **Local Settings** tab and toggle **Show Status Bar** off.
+### GPU display modes
 
-> The sidebar panel (performance + processes) is always available regardless of this setting.
-> This is useful if you want to occasionally check server stats without a permanent status bar.
+- `"mode": "off"` — no per-card stats in status bar
+- `"mode": "all"` — show all cards
+- `"mode": "first"` + `"firstN": 4` — show first N cards
+- `"mode": "specify"` + `"cards": [0, 1, 3]` — show specific cards
+- `"mode": "my"` — show only cards used by your processes
 
-### Completely disable locally (remote-only use)
+### Hide status bar
 
-If you don't want the extension active at all on your local machine, use VS Code's built-in mechanism:
-
-1. Open the Extensions sidebar
-2. Find **System Monitor**, right-click
-3. Select **Disable (Workspace)** for local workspaces, or enable only for remote
-
-This way the extension only loads when you SSH into a remote server — no sidebar icon, no status bar, zero overhead locally.
-
-### Show GPU info for specific cards only
-
-```jsonc
-{
-  "sysmonitor.statusBar.remote": {
-    "gpu": { "mode": "specify", "cards": [0, 1, 3], "metric": "both" }
-  }
-}
-```
-
-### Hide idle GPUs from status bar
-
-```jsonc
-{
-  "sysmonitor.statusBar.remote": {
-    "gpu": { "mode": "all", "skipIdle": true, "metric": "utilization" }
-  }
-}
-```
+Set `"barEnabled": false` to hide the status bar while keeping the sidebar panel available.
 
 ## Requirements
 
-- NVIDIA GPU monitoring requires `nvidia-smi` in PATH
-- SSH traffic monitoring requires `ss` (Linux) or `netstat` (macOS)
-- Best experience on Linux; macOS fully supported; Windows has limited local monitoring
+- Linux remote server (connects via VS Code Remote-SSH)
+- NVIDIA GPU monitoring requires `nvidia-smi`
+- SSH traffic monitoring requires `ss`

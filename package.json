@@ -2,8 +2,8 @@
   "name": "sysmonitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.0",
-  "publisher": "lichenxi",
+  "version": "1.0.2",
+  "publisher": "LiChenxi",
   "license": "MIT",
   "icon": "icon.png",
   "repository": {
@@ -20,7 +20,8 @@
         {
           "id": "sysmonitor-container",
           "title": "%viewTitle%",
-          "icon": "./icon.svg"
+          "icon": "./icon.svg",
+          "when": "remoteName"
         }
       ]
     },
@@ -29,14 +30,16 @@
         {
           "type": "webview",
           "id": "sysmonitor.panel",
-          "name": "%viewName%"
+          "name": "%viewName%",
+          "when": "remoteName"
         }
       ]
     },
     "commands": [
       {
         "command": "sysmonitor.openPanel",
-        "title": "%cmdOpen%"
+        "title": "%cmdOpen%",
+        "when": "remoteName"
       }
     ],
     "configuration": {
@@ -49,26 +52,17 @@
           "maximum": 30,
           "description": "Refresh interval in seconds"
         },
-        "sysmonitor.statusBar.remote": {
+        "sysmonitor.statusBar": {
           "type": "object",
           "default": {
+            "barEnabled": true,
             "cpu": true,
             "ram": false,
             "net": "off",
             "ssh": false,
-            "gpu": { "summary": true, "mode": "off", "cards": [], "metric": "both" }
+            "gpu": { "summary": true, "mode": "off", "cards": [], "firstN": 2, "metric": "both", "skipIdle": false }
           },
-          "description": "Status bar items when connected via SSH"
-        },
-        "sysmonitor.statusBar.local": {
-          "type": "object",
-          "default": {
-            "cpu": true,
-            "ram": false,
-            "net": "off",
-            "gpu": { "summary": false, "mode": "off", "cards": [], "metric": "both" }
-          },
-          "description": "Status bar items for local use"
+          "description": "Status bar display configuration"
         }
       }
     }
