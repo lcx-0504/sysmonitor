@@ -285,7 +285,7 @@ function getWebviewHtml(nonce, initCfg) {
   .spark-bg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
   .card-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
   .card-label { font-size: 11px; font-weight: 600; }
-  .card-value { font-size: 11px; color: var(--muted); }
+  .card-value { font-size: 11px; font-weight: 600; }
   .track { height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; margin-bottom: 6px; }
   .fill  { height: 100%; border-radius: 2px; background: var(--accent); transition: width .5s ease, background .5s ease; }
   .fill.warn   { background: var(--warn); }
@@ -312,8 +312,6 @@ function getWebviewHtml(nonce, initCfg) {
   .disk-footer { display: none; justify-content: space-between; align-items: baseline; margin-top: 2px; }
   .disk-meta { font-size: 10px; color: var(--muted); }
   .disk-pct { font-size: 10px; font-weight: 600; }
-  .disk-pct.warn { color: var(--warn); }
-  .disk-pct.danger { color: var(--danger); }
   @container (max-width: 200px) {
     .disk-info { display: none; }
     .disk-footer { display: flex; }
@@ -325,13 +323,16 @@ function getWebviewHtml(nonce, initCfg) {
   .gpu-name { font-size: 11px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
   .gpu-sub { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; cursor: default; direction: rtl; text-align: left; }
   .bar-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-bottom: 2px; gap: 4px; overflow: hidden; }
-  .bar-label span:first-child { flex-shrink: 0; white-space: nowrap; }
-  .bar-label span:last-child { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; direction: rtl; text-align: left; }
+  .bar-label > span:first-child { flex-shrink: 0; white-space: nowrap; }
+  .bar-label > span:nth-child(2) { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .ltr-ellipsis { direction: rtl; text-align: left; }
   .gpu-stats { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-top: 4px; overflow: hidden; }
   .gpu-stats span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .gpu-stats b { color: var(--text); font-weight: 500; }
-  .gpu-link { font-size: 9px; color: var(--accent); cursor: pointer; opacity: .7; transition: opacity .15s; white-space: nowrap; }
-  .gpu-link:hover { opacity: 1; text-decoration: underline; }
+  .gpu-pct { font-size: 10px; font-weight: 600; flex-shrink: 0; white-space: nowrap; }
+  .gpu-mem-wrap { display: flex; gap: 4px; overflow: hidden; min-width: 0; align-items: baseline; color: var(--text); }
+  .gpu-link { font-size: 9px; color: var(--text); cursor: pointer; opacity: .7; transition: opacity .15s; white-space: nowrap; }
+  .gpu-link:hover { opacity: 1; text-decoration: underline; color: var(--accent); }
   .capsules { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; margin-bottom: 4px; }
   .cap { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); color: var(--muted); background: transparent; user-select: none; transition: all .15s; }
   .cap:hover { border-color: var(--accent); color: var(--text); }
@@ -343,6 +344,7 @@ function getWebviewHtml(nonce, initCfg) {
   .action-btn:hover { border-color: var(--accent); }
   .action-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .action-btn.primary:hover { opacity: .85; }
+  .action-btn.primary:not(:disabled):active { color: #000; }
   .action-btn:disabled { opacity: .35; cursor: default; }
   .action-btn:disabled:hover { border-color: var(--border); opacity: .35; }
 
@@ -371,7 +373,8 @@ function getWebviewHtml(nonce, initCfg) {
   td[title] { cursor: default; }
   tr:hover td { background: var(--vscode-list-hoverBackground, rgba(255,255,255,.04)); }
   .r { text-align: right; }
-  .gpu-tag { font-size: 9px; background: var(--vscode-badge-background,#4d4d4d); color: var(--vscode-badge-foreground,#fff); border-radius: 3px; padding: 0 4px; white-space: nowrap; display: inline-block; margin-right: 2px; }
+  .gpu-tag { font-size: 9px; background: var(--vscode-badge-background,#4d4d4d); color: var(--vscode-badge-foreground,#fff); border-radius: 3px; padding: 0 4px; white-space: nowrap; display: block; margin-bottom: 1px; width: fit-content; }
+  .gpu-cell { white-space: normal !important; }
   .pmuted { color: var(--muted); }
   .sett-input { background: var(--vscode-input-background, #3c3c3c); border: 1px solid var(--border); border-radius: 3px; color: var(--text); font-size: 10px; padding: 2px 6px; font-family: inherit; outline: none; width: 80px; }
   .sett-input.wide { flex: 1; width: 0; min-width: 0; box-sizing: border-box; }
@@ -382,6 +385,9 @@ function getWebviewHtml(nonce, initCfg) {
   .sett-err { font-size: 9px; color: var(--danger); margin-top: 1px; }
   .custom-group { margin-top: 4px; margin-bottom: 8px; margin-left: 2px; padding: 4px 4px 4px 8px; box-shadow: inset 2px 0 0 var(--muted); border-radius: 0 4px 4px 0; }
   .dim { opacity: .4; }
+  .ctx-menu { position: fixed; z-index: 999; background: var(--card-bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 0; box-shadow: 0 2px 8px rgba(0,0,0,.3); min-width: 120px; }
+  .ctx-menu-item { padding: 4px 12px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .ctx-menu-item:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,.04)); }
 </style>
 </head>
 <body>
@@ -688,10 +694,10 @@ function getWebviewHtml(nonce, initCfg) {
           var memPct = Math.min(100, Math.round(mu / mt * 100));
           ghtml += '<div class="gpu-mini" style="position:relative;overflow:hidden">'
             + '<svg class="spark-bg" id="gpu-spark-' + g.idx + '" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="gpu-spark-area-' + g.idx + '" /></svg>'
-            + '<div class="gpu-title"><span class="gpu-name">GPU ' + g.idx + '</span><span class="gpu-sub" title="' + g.name + '">' + g.name + '</span></div>'
-            + '<div class="bar-label"><span>' + T.utilLabel + '</span><span id="gpu-util-text-' + g.idx + '">' + util + '% <span class="gpu-link" data-gpu-link="' + g.idx + '">&nearr; ' + T.viewProcs + '</span></span></div>'
+            + '<div class="gpu-title"><span class="gpu-name">GPU ' + g.idx + '</span><span class="gpu-sub" title="' + g.name + '"><bdo dir="ltr">' + g.name + '</bdo></span></div>'
+            + '<div class="bar-label"><span>' + T.utilLabel + '</span><span id="gpu-util-text-' + g.idx + '"><b>' + util + '%</b> <span class="gpu-link" data-gpu-link="' + g.idx + '">&nearr; ' + T.viewProcs + '</span></span></div>'
             + '<div class="track"><div class="fill ' + colorClass(util) + '" id="gpu-util-' + g.idx + '"></div></div>'
-            + '<div class="bar-label"><span>' + T.memLabel + '</span><span id="gpu-mem-text-' + g.idx + '" title="' + mu + ' / ' + mt + ' MiB (' + memPct + '%)">' + mu + ' / ' + mt + ' MiB (' + memPct + '%)</span></div>'
+            + '<div class="bar-label"><span>' + T.memLabel + '</span><span class="gpu-mem-wrap"><span class="ltr-ellipsis" id="gpu-mem-text-' + g.idx + '" title="' + mu + ' / ' + mt + ' MiB"><bdo dir="ltr">' + mu + ' / ' + mt + ' MiB</bdo></span><span class="gpu-pct" id="gpu-mem-pct-' + g.idx + '">' + memPct + '%</span></span></div>'
             + '<div class="track"><div class="fill ' + colorClass(memPct) + '" id="gpu-mem-' + g.idx + '"></div></div>'
             + '<div class="gpu-stats"><span id="gpu-temp-' + g.idx + '" title="' + T.tempLabel + ' ' + (g.temp || 0) + ' °C">' + T.tempLabel + ' <b>' + (g.temp || 0) + ' °C</b></span>' + (g.power ? '<span id="gpu-power-' + g.idx + '" title="' + T.pwLabel + ' ' + g.power.draw + '/' + g.power.limit + ' W">' + T.pwLabel + ' <b>' + g.power.draw + '/' + g.power.limit + ' W</b></span>' : '') + '</div></div>';
         });
@@ -731,9 +737,11 @@ function getWebviewHtml(nonce, initCfg) {
           if (ub) { ub.style.width = util + '%'; ub.className = 'fill ' + colorClass(util); }
           if (mb) { mb.style.width = memPct + '%'; mb.className = 'fill ' + colorClass(memPct); }
           var ut = document.getElementById('gpu-util-text-' + g.idx);
-          if (ut) { var link = ut.querySelector('.gpu-link'); ut.textContent = util + '% '; if (link) ut.appendChild(link); }
+          if (ut) { var b = ut.querySelector('b'); if (b) { b.textContent = util + '%'; } else { var link = ut.querySelector('.gpu-link'); ut.textContent = util + '% '; if (link) ut.appendChild(link); } }
           var mt2 = document.getElementById('gpu-mem-text-' + g.idx);
-          if (mt2) { mt2.textContent = mu + ' / ' + mt + ' MiB (' + memPct + '%)'; mt2.title = mu + ' / ' + mt + ' MiB (' + memPct + '%)'; }
+          if (mt2) { var bdo = mt2.querySelector('bdo'); if (bdo) bdo.textContent = mu + ' / ' + mt + ' MiB'; else mt2.textContent = mu + ' / ' + mt + ' MiB'; mt2.title = mu + ' / ' + mt + ' MiB'; }
+          var mp = document.getElementById('gpu-mem-pct-' + g.idx);
+          if (mp) { mp.textContent = memPct + '%'; }
           var te = document.getElementById('gpu-temp-' + g.idx);
           if (te) { te.innerHTML = T.tempLabel + ' <b>' + (g.temp || 0) + ' °C</b>'; te.title = T.tempLabel + ' ' + (g.temp || 0) + ' °C'; }
           var pw = document.getElementById('gpu-power-' + g.idx);
@@ -806,7 +814,8 @@ function getWebviewHtml(nonce, initCfg) {
     document.querySelectorAll('.cap.sel').forEach(function(b){ b.classList.remove('sel'); });
     updateCopyBtn();
   });
-  document.getElementById('copy-btn').addEventListener('click', function() {
+  var _copyBtn = document.getElementById('copy-btn');
+  _copyBtn.addEventListener('click', function() {
     if (this.disabled) return;
     var ids = Object.keys(selectedGpus).map(Number).sort(function(a,b){return a-b;}).join(',');
     var ta = document.createElement('textarea'); ta.value = 'CUDA_VISIBLE_DEVICES=' + ids;
@@ -1231,22 +1240,57 @@ function getWebviewHtml(nonce, initCfg) {
       } else {
         gpuCell = '<span class="pmuted">'+T.pnoGpu+'</span>';
       }
-      var cmdShort = p.cmd && p.cmd.length > 50 ? p.cmd.substring(0,50)+'…' : (p.cmd||p.name);
       var cpuTxt = p.cpu.toFixed(1);
+      var cmdFull = p.cmd || p.name;
       html+='<tr>'
         +'<td class="r">'+p.pid+'</td>'
-        +'<td title="PID '+p.pid+'&#10;'+esc(p.cmd||p.name)+'">'+esc(p.name)+'</td>'
+        +'<td title="PID '+p.pid+'&#10;'+esc(cmdFull)+'">'+esc(p.name)+'</td>'
         +'<td>'+esc(p.user)+'</td>'
         +'<td class="r">'+cpuTxt+'</td>'
         +'<td class="r">'+fmtPMem(p.mem)+'</td>'
         +'<td class="r">'+p.memPct+'%</td>'
-        +'<td>'+gpuCell+'</td>'
-        +'<td title="'+esc(p.cmd||'')+'">'+esc(cmdShort)+'</td>'
+        +'<td class="gpu-cell">'+gpuCell+'</td>'
+        +'<td title="'+esc(cmdFull)+'">'+esc(cmdFull)+'</td>'
         +'</tr>';
     });
     document.getElementById('proc-tbody').innerHTML = html;
   }
   renderProcToolbar();
+
+  // ── 右键菜单 ──
+  var ctxMenu = null;
+  function removeCtxMenu() { if (ctxMenu) { ctxMenu.remove(); ctxMenu = null; } }
+  document.addEventListener('click', removeCtxMenu);
+  document.addEventListener('scroll', removeCtxMenu, true);
+  document.getElementById('proc-tbody').addEventListener('contextmenu', function(e) {
+    var td = e.target.closest('td');
+    var tr = e.target.closest('tr');
+    if (!td || !tr) return;
+    e.preventDefault();
+    removeCtxMenu();
+    var menu = document.createElement('div');
+    menu.className = 'ctx-menu';
+    var cellText = td.textContent;
+    var rowCells = tr.querySelectorAll('td');
+    var rowText = Array.prototype.map.call(rowCells, function(c) { return c.textContent; }).join('\\t');
+    var item1 = document.createElement('div');
+    item1.className = 'ctx-menu-item';
+    item1.textContent = zh ? '复制单元格' : 'Copy Cell';
+    item1.addEventListener('click', function() { navigator.clipboard.writeText(cellText); removeCtxMenu(); });
+    var item2 = document.createElement('div');
+    item2.className = 'ctx-menu-item';
+    item2.textContent = zh ? '复制整行' : 'Copy Row';
+    item2.addEventListener('click', function() { navigator.clipboard.writeText(rowText); removeCtxMenu(); });
+    menu.appendChild(item1);
+    menu.appendChild(item2);
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    document.body.appendChild(menu);
+    ctxMenu = menu;
+    var rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 4) + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 4) + 'px';
+  });
 
 </script>
 </body>
