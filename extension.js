@@ -10,9 +10,14 @@ const EXTENSION_ID = `${pkg.publisher}.${pkg.name}`;
 
 const isSSH = !!(process.env.SSH_CLIENT || process.env.SSH_CONNECTION || process.env.SSH_TTY);
 const sshClientIp = (process.env.SSH_CONNECTION || '').split(/\s+/)[0] || '';
+const CPU_CORES = os.cpus().length;
 let prevCpu = null;
 let prevNet = null;
+let prevNetTime = 0;
 let prevSshBytes = null;
+let prevSshTime = 0;
+let _log = null;
+function dbg(msg) { if (_log) _log.appendLine('[' + new Date().toISOString().slice(11, 23) + '] ' + msg); }
 
 function getCpuPercent() {
   try {
@@ -26,7 +31,7 @@ function getCpuPercent() {
     prevCpu = { idle, total };
     return dTotal > 0 ? Math.round((1 - dIdle / dTotal) * 100) : 0;
   } catch {
-    return Math.min(100, Math.round(os.loadavg()[0] / os.cpus().length * 100));
+    return Math.min(100, Math.round(os.loadavg()[0] / CPU_CORES * 100));
   }
 }
 
@@ -55,9 +60,11 @@ function getNetSpeed() {
         tx += parseInt(p[9]) || 0;
       }
     }
-    if (!prevNet) { prevNet = { rx, tx }; return { rx: 0, tx: 0 }; }
-    const result = { rx: (rx - prevNet.rx) / 2, tx: (tx - prevNet.tx) / 2 };
+    if (!prevNet) { prevNet = { rx, tx }; prevNetTime = Date.now(); return { rx: 0, tx: 0 }; }
+    const dtSec = (Date.now() - prevNetTime) / 1000 || 1;
+    const result = { rx: (rx - prevNet.rx) / dtSec, tx: (tx - prevNet.tx) / dtSec };
     prevNet = { rx, tx };
+    prevNetTime = Date.now();
     return result;
   } catch { return { rx: 0, tx: 0 }; }
 }
@@ -94,13 +101,15 @@ function getSshTraffic() {
       if (sm) totalSent += parseInt(sm[1]);
       if (rm) totalRecv += parseInt(rm[1]);
     }
-    if (!prevSshBytes) { prevSshBytes = { sent: totalSent, recv: totalRecv }; return { isSSH: true, rx: 0, tx: 0 }; }
+    if (!prevSshBytes) { prevSshBytes = { sent: totalSent, recv: totalRecv }; prevSshTime = Date.now(); return { isSSH: true, rx: 0, tx: 0 }; }
+    const sshDt = (Date.now() - prevSshTime) / 1000 || 1;
     const result = {
       isSSH: true,
-      tx: Math.max(0, (totalSent - prevSshBytes.sent) / 2),
-      rx: Math.max(0, (totalRecv - prevSshBytes.recv) / 2),
+      tx: Math.max(0, (totalSent - prevSshBytes.sent) / sshDt),
+      rx: Math.max(0, (totalRecv - prevSshBytes.recv) / sshDt),
     };
     prevSshBytes = { sent: totalSent, recv: totalRecv };
+    prevSshTime = Date.now();
     return result;
   } catch { return { isSSH: true, rx: 0, tx: 0 }; }
 }
@@ -113,21 +122,42 @@ let _diskCache = [];
 let _diskRefreshing = false;
 
 const VIRTUAL_FS = new Set(['tmpfs', 'devtmpfs', 'sysfs', 'proc', 'efivarfs', 'squashfs', 'cgroup', 'cgroup2', 'configfs', 'debugfs', 'devpts', 'fusectl', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'binfmt_misc', 'autofs', 'tracefs', 'ramfs']);
+const DISK_PRESET_DEFAULT = 'vfat,/proc,/sys,/run,/snap,/usr,/etc,/dev,/init';
+const DISK_PRESET_MORE = '';
 
-function parseDfOutput(out, mountFilter) {
+function parseDiskRules(rules) {
+  const fsList = [], pathList = [];
+  if (!rules) return { fsList, pathList };
+  for (const r of rules.split(',')) {
+    const t = r.trim();
+    if (!t) continue;
+    if (t.startsWith('/')) pathList.push(t);
+    else fsList.push(t);
+  }
+  return { fsList, pathList };
+}
+
+function shouldExcludeDisk(fstype, mount, rules, skipVirtual) {
+  if (rules === null) return false;
+  if (!skipVirtual && VIRTUAL_FS.has(fstype)) return true;
+  const { fsList, pathList } = typeof rules === 'object' ? rules : parseDiskRules(rules);
+  if (fsList.some(f => fstype === f)) return true;
+  if (pathList.some(p => mount === p || mount.startsWith(p.endsWith('/') ? p : p + '/'))) return true;
+  return false;
+}
+
+function parseDfOutput(out, diskCfg) {
+  const rules = normalizeMountFilter(diskCfg);
+  const parsed = rules !== null ? parseDiskRules(rules) : null;
+  const skipVirtual = (typeof diskCfg === 'object' && diskCfg.mountFilter === 'custom' && diskCfg.showVirtualFs);
   return out.trim().split('\n').slice(1).reduce((acc, line) => {
     const parts = line.trim().split(/\s+/);
     if (parts.length < 7) return acc;
     const [fs, fstype, blocks, used, , pctStr, ...mountParts] = parts;
     const mount = mountParts.join(' ');
-    if (mountFilter === 'default') {
-      if (!fs.startsWith('/dev/')) return acc;
-      if (fstype === 'squashfs' || fstype === 'vfat') return acc;
-    } else if (mountFilter === 'more') {
-      if (VIRTUAL_FS.has(fstype)) return acc;
-    }
-    // 'all' → no filtering
+    if (shouldExcludeDisk(fstype, mount, parsed, skipVirtual)) return acc;
     const total = parseInt(blocks) * 1024;
+    if (!total) return acc;
     const usedBytes = parseInt(used) * 1024;
     const pct = parseInt(pctStr);
     acc.push({ mount, total, used: usedBytes, pct: isNaN(pct) ? 0 : pct });
@@ -135,20 +165,63 @@ function parseDfOutput(out, mountFilter) {
   }, []);
 }
 
-function refreshDiskCache(mountFilter = 'default', cb) {
+function parseFindmntJson(jsonStr, diskCfg) {
+  const rules = normalizeMountFilter(diskCfg);
+  const parsed = rules !== null ? parseDiskRules(rules) : null;
+  const skipVirtual = (typeof diskCfg === 'object' && diskCfg.mountFilter === 'custom' && diskCfg.showVirtualFs);
+  try {
+    const list = JSON.parse(jsonStr).filesystems || [];
+    return list.reduce((acc, f) => {
+      const fstype = f.fstype || '';
+      const mount = f.target || '';
+      if (shouldExcludeDisk(fstype, mount, parsed, skipVirtual)) return acc;
+      const total = f.size || 0;
+      if (!total) return acc;
+      const usedBytes = f.used || 0;
+      const pct = parseInt(f['use%']) || 0;
+      acc.push({ mount, total, used: usedBytes, pct: isNaN(pct) ? 0 : pct });
+      return acc;
+    }, []);
+  } catch { return null; }
+}
+
+function normalizeMountFilter(diskCfg) {
+  const f = typeof diskCfg === 'string' ? diskCfg : (diskCfg.mountFilter || 'default');
+  if (f === 'default') return DISK_PRESET_DEFAULT;
+  if (f === 'more') return DISK_PRESET_MORE;
+  if (f === 'all') return null;
+  if (f === 'custom') {
+    const parts = [];
+    if (diskCfg.customFsExclude) parts.push(diskCfg.customFsExclude);
+    if (diskCfg.customPathExclude) parts.push(diskCfg.customPathExclude);
+    return parts.join(',') || '';
+  }
+  return f || DISK_PRESET_DEFAULT;
+}
+
+function refreshDiskCache(diskCfg, cb) {
   if (_diskRefreshing) return;
+  if (typeof diskCfg === 'function') { cb = diskCfg; diskCfg = getConfig().diskCfg; }
+  if (!diskCfg) diskCfg = getConfig().diskCfg;
   _diskRefreshing = true;
   const { exec } = require('child_process');
-  exec('df -PT --local 2>/dev/null', { timeout: 5000 }, (err, stdout) => {
-    _diskRefreshing = false;
-    if (!err && stdout) _diskCache = parseDfOutput(stdout, mountFilter);
-    if (cb) cb();
+  exec('findmnt -l -b -o FSTYPE,SIZE,USED,USE%,TARGET --json 2>/dev/null', { timeout: 5000 }, (err, stdout) => {
+    if (!err && stdout) {
+      const result = parseFindmntJson(stdout, diskCfg);
+      if (result) { _diskCache = result; _diskRefreshing = false; if (cb) cb(); return; }
+    }
+    exec('df -PT --local 2>/dev/null', { timeout: 5000 }, (err2, stdout2) => {
+      _diskRefreshing = false;
+      if (!err2 && stdout2) _diskCache = parseDfOutput(stdout2, diskCfg);
+      if (cb) cb();
+    });
   });
 }
 
 function getDiskInfo() { return _diskCache; }
 
-function getWebviewHtml(nonce) {
+function getWebviewHtml(nonce, initCfg) {
+  const cfgStr = JSON.stringify(JSON.stringify(initCfg || {}));
   return `<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -175,6 +248,7 @@ function getWebviewHtml(nonce) {
   .tb { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer; font-family: inherit; white-space: nowrap; }
   .tb:hover { border-color: var(--accent); }
   .tb.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tb.mini { padding: 1px 5px; font-size: 9px; }
   .spacer { flex: 1; min-width: 0; }
   .topbar-info { font-size: 10px; color: var(--muted); white-space: nowrap; }
   .topbar-right { display: flex; gap: 4px; align-items: center; margin-left: auto; }
@@ -190,15 +264,15 @@ function getWebviewHtml(nonce) {
   .modal-mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; justify-content: center; align-items: center; }
   .modal-mask.open { display: flex; }
   .modal { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); width: 90%; max-width: 360px; max-height: 80vh; overflow-y: auto; padding: 12px; }
-  .modal-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
-  .modal-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
-  .modal-close:hover { color: var(--text); }
+  .modal-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .flex-1 { flex: 1; }
+  .copyright { text-align: center; font-size: 9px; color: var(--muted); margin-top: 8px; opacity: .5; }
   .modal-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
   .modal-tab-content { display: none; }
   .modal-tab-content.active { display: block; }
   .sett-section { margin-bottom: 10px; }
   .sett-section:last-child { margin-bottom: 0; }
-  .sett-label { font-size: 10px; font-weight: 600; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .5px; }
+  .sett-label { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .5px; }
   .sett-row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; flex-wrap: wrap; }
   .sett-row:last-child { margin-bottom: 0; }
   .sett-sub { margin-left: 12px; margin-top: 2px; }
@@ -297,9 +371,14 @@ function getWebviewHtml(nonce) {
   .gpu-tag { font-size: 9px; background: var(--vscode-badge-background,#4d4d4d); color: var(--vscode-badge-foreground,#fff); border-radius: 3px; padding: 0 4px; white-space: nowrap; display: inline-block; margin-right: 2px; }
   .pmuted { color: var(--muted); }
   .sett-input { background: var(--vscode-input-background, #3c3c3c); border: 1px solid var(--border); border-radius: 3px; color: var(--text); font-size: 10px; padding: 2px 6px; font-family: inherit; outline: none; width: 80px; }
+  .sett-input.wide { flex: 1; width: 0; min-width: 0; box-sizing: border-box; }
+  .sett-input[readonly] { opacity: .5; cursor: default; }
+  .tb[disabled] { opacity: .4; cursor: default; pointer-events: none; }
   .sett-input:focus { border-color: var(--accent); }
   .sett-input.err { border-color: var(--danger); }
   .sett-err { font-size: 9px; color: var(--danger); margin-top: 1px; }
+  .custom-group { margin-top: 4px; margin-bottom: 8px; margin-left: 2px; padding: 4px 4px 4px 8px; box-shadow: inset 2px 0 0 var(--muted); border-radius: 0 4px 4px 0; }
+  .dim { opacity: .4; }
 </style>
 </head>
 <body>
@@ -319,7 +398,7 @@ function getWebviewHtml(nonce) {
 <!-- ── 设置模态 ── -->
 <div class="modal-mask" id="modal-mask">
 <div class="modal">
-  <div class="modal-title"><span id="modal-title-text">设置</span><span style="flex:1"></span><button class="tb" id="open-vsc-settings" style="font-size:9px">settings.json ↗</button><button class="modal-close" id="modal-close">&times;</button></div>
+  <div class="modal-title"><span id="modal-title-text">设置</span><span class="flex-1"></span><button class="tb" id="open-vsc-settings">settings.json ↗</button><button class="tb" id="modal-close">✕</button></div>
   <div class="sett-section">
     <div class="sett-label" id="sett-interval-label">刷新间隔</div>
     <div class="sett-row" id="interval-row"></div>
@@ -336,6 +415,7 @@ function getWebviewHtml(nonce) {
     <div class="sett-label" id="sett-display-label">显示</div>
     <div id="sett-display-body"></div>
   </div>
+  <div class="copyright">v${pkg.version} · © ${new Date().getFullYear()} Li Chenxi · ${pkg.license}</div>
 </div>
 </div>
 
@@ -437,8 +517,8 @@ function getWebviewHtml(nonce) {
           scopeOff:'关',scopeSummary:'总览',scopeCard:'指定卡',scopeMy:'我的卡',metUtil:'仅利用率',metVram:'仅显存',metBoth:'全部显示',
           netUp:'仅上传',netDown:'仅下载',netAll:'全部显示',netMerge:'合并显示',
           sshLabel:'SSH速率',gpuSummary:'GPU总览',gpuPerf:'GPU性能显示',gpuAll:'所有卡',gpuSpecify:'指定卡',gpuFirst:'前几张',gpuMetric:'GPU显示指标',gpuSkipIdle:'隐藏空闲卡',viewProcs:'查看进程',
-          diskLabel:'磁盘',diskNoData:'无磁盘数据',diskFilter:'挂载过滤',diskDefault:'默认',diskMore:'更多',diskAll:'全部',diskDefaultDesc:'仅 /dev/* 物理分区（排除 squashfs/vfat）',diskMoreDesc:'排除 tmpfs 等虚拟文件系统',diskAllDesc:'包含所有挂载点（含 tmpfs、/run 等）',
-          displayLabel:'显示',chartsToggle:'卡片背景图表',
+          diskLabel:'磁盘',diskNoData:'无磁盘数据',diskFilter:'挂载过滤',diskDefault:'默认',diskMore:'更多',diskAll:'全部',diskCustom:'自定义',diskShowVirtual:'排除虚拟 FS',diskShowVirtualTip:'tmpfs, sysfs, proc, devtmpfs 等',diskExcludeFs:'排除 FS 类型',diskExcludeFsTip:'如 vfat, ntfs, fuse 等文件系统类型',diskExcludePath:'排除路径前缀',diskExcludePathTip:'如 /proc, /sys, /run 等挂载路径',diskHideParent:'仅显示叶子挂载点',diskHideParentTip:'适用于 AutoDL 等平台，过滤共享存储池，仅显示个人配额',
+          displayLabel:'显示',chartsToggle:'卡片背景图表',sparkLabel:'图表时长',
           pcpu:'CPU',pmem:'内存',pgpu:'GPU',ppid:'PID',puser:'用户',pname:'进程名',pcpuPct:'CPU%',pmemCol:'内存',pgpuCol:'GPU',pcount:'共 {n} 进程',pnoGpu:'—',pcmd:'命令',filterHint:'搜索进程...' }
       : { min:' min',cores:' cores',used:'Used',avail:'Avail',total:'Total',srvNet:'Server Net',net:'Network',localSSH:'Local SSH',up:'↑ Up',down:'↓ Down',selAll:'Select All',clear:'Clear',copyEnv:'Copy Env Var',detecting:'Detecting…',noGpu:'No NVIDIA GPU detected',updAt:'Updated ',utilLabel:'Util',memLabel:'VRAM',tempLabel:'Temp',pwLabel:'Power',
           perfTab:'Perf',procTab:'Procs',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',close:'Close',
@@ -446,8 +526,8 @@ function getWebviewHtml(nonce) {
           scopeOff:'Off',scopeSummary:'Summary',scopeCard:'Card',scopeMy:'My Card',metUtil:'Util Only',metVram:'VRAM Only',metBoth:'All',
           netUp:'Upload',netDown:'Download',netAll:'All',netMerge:'Merged',
           sshLabel:'SSH Traffic',gpuSummary:'GPU Summary',gpuPerf:'GPU Performance',gpuAll:'All Cards',gpuSpecify:'Specific',gpuFirst:'First N',gpuMetric:'GPU Metric',gpuSkipIdle:'Hide Idle',viewProcs:'View Procs',
-          diskLabel:'Disk',diskNoData:'No disk data',diskFilter:'Mount Filter',diskDefault:'Default',diskMore:'More',diskAll:'All',diskDefaultDesc:'/dev/* partitions (excl. squashfs/vfat)',diskMoreDesc:'Exclude tmpfs and virtual FS',diskAllDesc:'All mount points (incl. tmpfs, /run, etc.)',
-          displayLabel:'Display',chartsToggle:'Card Background Charts',
+          diskLabel:'Disk',diskNoData:'No disk data',diskFilter:'Mount Filter',diskDefault:'Default',diskMore:'More',diskAll:'All',diskCustom:'Custom',diskShowVirtual:'Exclude Virtual FS',diskShowVirtualTip:'tmpfs, sysfs, proc, devtmpfs, etc.',diskExcludeFs:'Exclude FS Type',diskExcludeFsTip:'e.g. vfat, ntfs, fuse',diskExcludePath:'Exclude Path Prefix',diskExcludePathTip:'e.g. /proc, /sys, /run',diskHideParent:'Leaf mounts only',diskHideParentTip:'For platforms like AutoDL: hides shared pools, shows only your quota',
+          displayLabel:'Display',chartsToggle:'Card Background Charts',sparkLabel:'Chart Duration',
           pcpu:'CPU',pmem:'Memory',pgpu:'GPU',ppid:'PID',puser:'User',pname:'Process',pcpuPct:'CPU%',pmemCol:'Mem',pgpuCol:'GPU',pcount:'{n} processes',pnoGpu:'—',pcmd:'Command',filterHint:'Search...' };
     document.getElementById('l-1m').textContent = '1' + T.min;
     document.getElementById('l-5m').textContent = '5' + T.min;
@@ -468,8 +548,8 @@ function getWebviewHtml(nonce) {
   }
   setLang('zh');
 
-  // ── 趋势图 ──
-  var SPARK_MAX = 60;
+  // ── 趋势图（时间基准）──
+  var SPARK_WINDOW = 5 * 60 * 1000;
   var cpuHist = [], ramHist = [], netTxHist = [], netRxHist = [], sshTxHist = [], sshRxHist = [], gpuHist = {};
 
   function sparkColor(pct) {
@@ -477,15 +557,30 @@ function getWebviewHtml(nonce) {
   }
   function sparkPaths(hist, maxVal) {
     if (hist.length < 2) return null;
-    var n = hist.length, step = 100 / (n - 1);
+    var now = Date.now();
+    var t0 = now - SPARK_WINDOW;
     var pts = [];
-    for (var i = 0; i < n; i++) {
-      var x = (i * step).toFixed(1);
-      var y = (100 - Math.min(hist[i] / maxVal * 100, 100)).toFixed(1);
-      pts.push(x + ',' + y);
+    // 如果最老的点在窗口外，插值一个 x=0 的虚拟起点
+    if (hist[0].t < t0 && hist.length > 1) {
+      var a = hist[0], b = hist[1];
+      var frac = (t0 - a.t) / (b.t - a.t);
+      var v0 = a.v + (b.v - a.v) * frac;
+      pts.push('0,' + (100 - Math.min(v0 / maxVal * 100, 100)).toFixed(1));
+      for (var i = 1; i < hist.length; i++) {
+        var x = ((hist[i].t - t0) / SPARK_WINDOW * 100).toFixed(1);
+        var y = (100 - Math.min(hist[i].v / maxVal * 100, 100)).toFixed(1);
+        pts.push(x + ',' + y);
+      }
+    } else {
+      for (var i = 0; i < hist.length; i++) {
+        var x = ((hist[i].t - t0) / SPARK_WINDOW * 100).toFixed(1);
+        var y = (100 - Math.min(hist[i].v / maxVal * 100, 100)).toFixed(1);
+        pts.push(x + ',' + y);
+      }
     }
+    if (pts.length < 2) return null;
     var line = 'M' + pts.join('L');
-    var area = line + 'L100,100L0,100Z';
+    var area = line + 'L' + pts[pts.length-1].split(',')[0] + ',100L' + pts[0].split(',')[0] + ',100Z';
     return { line: line, area: area };
   }
   function renderSpark(areaEl, lineEl, hist, maxVal, color) {
@@ -495,7 +590,13 @@ function getWebviewHtml(nonce) {
     areaEl.setAttribute('fill', color);
     areaEl.setAttribute('fill-opacity', '0.06');
   }
-  function pushHist(arr, val) { arr.push(val); if (arr.length > SPARK_MAX) arr.shift(); }
+  function pushHist(arr, val) {
+    var now = Date.now();
+    arr.push({t: now, v: val});
+    var cutoff = now - SPARK_WINDOW;
+    // 保留一个窗口外的锚点用于插值
+    while (arr.length > 2 && arr[1].t < cutoff) arr.shift();
+  }
 
   // ── 消息处理 ──
   window.addEventListener('message', function(evt) {
@@ -504,6 +605,7 @@ function getWebviewHtml(nonce) {
       barCfg = data.barCfg || barCfg;
       diskCfg = data.diskCfg || diskCfg;
       displayCfg = data.displayCfg || displayCfg;
+      SPARK_WINDOW = (displayCfg.sparkMinutes || 5) * 60 * 1000;
       applyCharts();
       curInterval = data.interval || curInterval;
       gpuCount = data.gpuCount || gpuCount;
@@ -548,8 +650,8 @@ function getWebviewHtml(nonce) {
       pushHist(sshTxHist, d.ssh.rx || 0);
       pushHist(sshRxHist, d.ssh.tx || 0);
       var sshMax = 1;
-      sshTxHist.forEach(function(v) { if (v > sshMax) sshMax = v; });
-      sshRxHist.forEach(function(v) { if (v > sshMax) sshMax = v; });
+      sshTxHist.forEach(function(p) { if (p.v > sshMax) sshMax = p.v; });
+      sshRxHist.forEach(function(p) { if (p.v > sshMax) sshMax = p.v; });
       renderSpark(document.getElementById('ssh-spark-tx-area'), null, sshTxHist, sshMax, 'var(--warn)');
       renderSpark(document.getElementById('ssh-spark-rx-area'), null, sshRxHist, sshMax, 'var(--accent)');
       document.getElementById('net-up-label').textContent = T.up;
@@ -565,47 +667,76 @@ function getWebviewHtml(nonce) {
 
     var gpuBody = document.getElementById('gpu-body');
     if (d.gpus && d.gpus.length) {
-      var ghtml = '';
+      var gpuKeys = d.gpus.map(function(g) { return g.idx; });
+      var gpuSame = gpuKeys.length === _gpuKeys.length && gpuKeys.every(function(k, i) { return k === _gpuKeys[i]; });
       d.gpus.forEach(function(g) {
-        var util = parseInt(g.util) || 0;
-        var mu = parseInt(g.memUsed) || 0;
-        var mt = parseInt(g.memTotal) || 1;
-        var memPct = Math.min(100, Math.round(mu / mt * 100));
-        ghtml += '<div class="gpu-mini" style="position:relative;overflow:hidden">'
-          + '<svg class="spark-bg" id="gpu-spark-' + g.idx + '" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="gpu-spark-area-' + g.idx + '" /></svg>'
-          + '<div class="gpu-title"><span class="gpu-name">GPU ' + g.idx + '</span><span class="gpu-sub" title="' + g.name + '">' + g.name + '</span></div>'
-          + '<div class="bar-label"><span>' + T.utilLabel + '</span><span>' + util + '% <span class="gpu-link" data-gpu-link="' + g.idx + '">&nearr; ' + T.viewProcs + '</span></span></div>'
-          + '<div class="track"><div class="fill ' + colorClass(util) + '" id="gpu-util-' + g.idx + '"></div></div>'
-          + '<div class="bar-label"><span>' + T.memLabel + '</span><span title="' + mu + ' / ' + mt + ' MiB (' + memPct + '%)">' + mu + ' / ' + mt + ' MiB (' + memPct + '%)</span></div>'
-          + '<div class="track"><div class="fill ' + colorClass(memPct) + '" id="gpu-mem-' + g.idx + '"></div></div>'
-          + '<div class="gpu-stats"><span title="' + T.tempLabel + ' ' + (g.temp || 0) + ' °C">' + T.tempLabel + ' <b>' + (g.temp || 0) + ' °C</b></span>' + (g.power ? '<span title="' + T.pwLabel + ' ' + g.power.draw + '/' + g.power.limit + ' W">' + T.pwLabel + ' <b>' + g.power.draw + '/' + g.power.limit + ' W</b></span>' : '') + '</div></div>';
         if (!gpuHist[g.idx]) gpuHist[g.idx] = [];
-        pushHist(gpuHist[g.idx], util);
+        pushHist(gpuHist[g.idx], parseInt(g.util) || 0);
       });
-      gpuBody.innerHTML = ghtml;
-      gpuBody.querySelectorAll('.gpu-link').forEach(function(el) {
-        el.addEventListener('click', function() {
-          var idx = this.dataset.gpuLink;
-          procSort = 'gpu';
-          procFilter = 'gpu' + idx;
-          filterInput.value = 'GPU' + idx;
-          filterWrap.classList.add('has-text');
-          switchTab('proc');
-          renderProcToolbar();
-          renderProcTable();
+      if (!gpuSame) {
+        _gpuKeys = gpuKeys;
+        var ghtml = '';
+        d.gpus.forEach(function(g) {
+          var util = parseInt(g.util) || 0;
+          var mu = parseInt(g.memUsed) || 0;
+          var mt = parseInt(g.memTotal) || 1;
+          var memPct = Math.min(100, Math.round(mu / mt * 100));
+          ghtml += '<div class="gpu-mini" style="position:relative;overflow:hidden">'
+            + '<svg class="spark-bg" id="gpu-spark-' + g.idx + '" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="gpu-spark-area-' + g.idx + '" /></svg>'
+            + '<div class="gpu-title"><span class="gpu-name">GPU ' + g.idx + '</span><span class="gpu-sub" title="' + g.name + '">' + g.name + '</span></div>'
+            + '<div class="bar-label"><span>' + T.utilLabel + '</span><span id="gpu-util-text-' + g.idx + '">' + util + '% <span class="gpu-link" data-gpu-link="' + g.idx + '">&nearr; ' + T.viewProcs + '</span></span></div>'
+            + '<div class="track"><div class="fill ' + colorClass(util) + '" id="gpu-util-' + g.idx + '"></div></div>'
+            + '<div class="bar-label"><span>' + T.memLabel + '</span><span id="gpu-mem-text-' + g.idx + '" title="' + mu + ' / ' + mt + ' MiB (' + memPct + '%)">' + mu + ' / ' + mt + ' MiB (' + memPct + '%)</span></div>'
+            + '<div class="track"><div class="fill ' + colorClass(memPct) + '" id="gpu-mem-' + g.idx + '"></div></div>'
+            + '<div class="gpu-stats"><span id="gpu-temp-' + g.idx + '" title="' + T.tempLabel + ' ' + (g.temp || 0) + ' °C">' + T.tempLabel + ' <b>' + (g.temp || 0) + ' °C</b></span>' + (g.power ? '<span id="gpu-power-' + g.idx + '" title="' + T.pwLabel + ' ' + g.power.draw + '/' + g.power.limit + ' W">' + T.pwLabel + ' <b>' + g.power.draw + '/' + g.power.limit + ' W</b></span>' : '') + '</div></div>';
         });
-      });
-      d.gpus.forEach(function(g) {
-        var util = parseInt(g.util) || 0;
-        var mu = parseInt(g.memUsed) || 0, mt = parseInt(g.memTotal) || 1;
-        var memPct = Math.min(100, Math.round(mu / mt * 100));
-        var ub = document.getElementById('gpu-util-' + g.idx);
-        var mb = document.getElementById('gpu-mem-' + g.idx);
-        if (ub) ub.style.width = util + '%';
-        if (mb) mb.style.width = memPct + '%';
-        var ga = document.getElementById('gpu-spark-area-' + g.idx);
-        if (ga && gpuHist[g.idx]) renderSpark(ga, null, gpuHist[g.idx], 100, sparkColor(util));
-      });
+        gpuBody.innerHTML = ghtml;
+        gpuBody.querySelectorAll('.gpu-link').forEach(function(el) {
+          el.addEventListener('click', function() {
+            var idx = this.dataset.gpuLink;
+            procSort = 'gpu';
+            procFilter = 'gpu' + idx;
+            filterInput.value = 'GPU' + idx;
+            filterWrap.classList.add('has-text');
+            switchTab('proc');
+            renderProcToolbar();
+            renderProcTable();
+          });
+        });
+        requestAnimationFrame(function() {
+          d.gpus.forEach(function(g) {
+            var util = parseInt(g.util) || 0;
+            var mu = parseInt(g.memUsed) || 0, mt = parseInt(g.memTotal) || 1;
+            var memPct = Math.min(100, Math.round(mu / mt * 100));
+            var ub = document.getElementById('gpu-util-' + g.idx);
+            var mb = document.getElementById('gpu-mem-' + g.idx);
+            if (ub) ub.style.width = util + '%';
+            if (mb) mb.style.width = memPct + '%';
+            var ga = document.getElementById('gpu-spark-area-' + g.idx);
+            if (ga && gpuHist[g.idx]) renderSpark(ga, null, gpuHist[g.idx], 100, sparkColor(util));
+          });
+        });
+      } else {
+        d.gpus.forEach(function(g) {
+          var util = parseInt(g.util) || 0;
+          var mu = parseInt(g.memUsed) || 0, mt = parseInt(g.memTotal) || 1;
+          var memPct = Math.min(100, Math.round(mu / mt * 100));
+          var ub = document.getElementById('gpu-util-' + g.idx);
+          var mb = document.getElementById('gpu-mem-' + g.idx);
+          if (ub) { ub.style.width = util + '%'; ub.className = 'fill ' + colorClass(util); }
+          if (mb) { mb.style.width = memPct + '%'; mb.className = 'fill ' + colorClass(memPct); }
+          var ut = document.getElementById('gpu-util-text-' + g.idx);
+          if (ut) { var link = ut.querySelector('.gpu-link'); ut.textContent = util + '% '; if (link) ut.appendChild(link); }
+          var mt2 = document.getElementById('gpu-mem-text-' + g.idx);
+          if (mt2) { mt2.textContent = mu + ' / ' + mt + ' MiB (' + memPct + '%)'; mt2.title = mu + ' / ' + mt + ' MiB (' + memPct + '%)'; }
+          var te = document.getElementById('gpu-temp-' + g.idx);
+          if (te) { te.innerHTML = T.tempLabel + ' <b>' + (g.temp || 0) + ' °C</b>'; te.title = T.tempLabel + ' ' + (g.temp || 0) + ' °C'; }
+          var pw = document.getElementById('gpu-power-' + g.idx);
+          if (pw && g.power) { pw.innerHTML = T.pwLabel + ' <b>' + g.power.draw + '/' + g.power.limit + ' W</b>'; pw.title = T.pwLabel + ' ' + g.power.draw + '/' + g.power.limit + ' W'; }
+          var ga = document.getElementById('gpu-spark-area-' + g.idx);
+          if (ga && gpuHist[g.idx]) renderSpark(ga, null, gpuHist[g.idx], 100, sparkColor(util));
+        });
+      }
     } else {
       gpuBody.innerHTML = '<span class="gpu-na">' + T.noGpu + '</span>';
     }
@@ -615,8 +746,8 @@ function getWebviewHtml(nonce) {
     pushHist(netTxHist, d.net.tx || 0);
     pushHist(netRxHist, d.net.rx || 0);
     var netMax = 1;
-    netTxHist.forEach(function(v) { if (v > netMax) netMax = v; });
-    netRxHist.forEach(function(v) { if (v > netMax) netMax = v; });
+    netTxHist.forEach(function(p) { if (p.v > netMax) netMax = p.v; });
+    netRxHist.forEach(function(p) { if (p.v > netMax) netMax = p.v; });
     renderSpark(document.getElementById('net-spark-tx-area'), null, netTxHist, netMax, 'var(--warn)');
     renderSpark(document.getElementById('net-spark-rx-area'), null, netRxHist, netMax, 'var(--accent)');
 
@@ -697,10 +828,12 @@ function getWebviewHtml(nonce) {
   });
 
   // ── 设置模态 ──
-  var barCfg = {barEnabled:true,cpu:true,ram:true,disk:false,net:'off',ssh:false,gpu:{summary:true,mode:'off',cards:[],metric:'both'}};
-  var diskCfg = {mountFilter:'default'};
-  var displayCfg = {charts:true};
-  var curInterval = 2, gpuCount = 8, modalOpen = false;
+  var __initCfg = JSON.parse(${cfgStr});
+  var barCfg = __initCfg.barCfg || {barEnabled:true,cpu:true,ram:true,disk:false,net:'off',ssh:false,gpu:{summary:true,mode:'off',cards:[],metric:'both'}};
+  var diskCfg = __initCfg.diskCfg || {mountFilter:'default',hideParentMounts:true};
+  var displayCfg = __initCfg.displayCfg || {charts:true};
+  var curInterval = __initCfg.interval || 2, gpuCount = __initCfg.gpuCount || 8, modalOpen = false;
+  SPARK_WINDOW = (displayCfg.sparkMinutes || 5) * 60 * 1000;
 
   function applyCharts() {
     var vis = displayCfg.charts !== false ? '' : 'none';
@@ -708,31 +841,52 @@ function getWebviewHtml(nonce) {
   }
 
   // ── 磁盘渲染 ──
+  var _diskKeys = [], _gpuKeys = [];
   function renderDisk(disks) {
     var card = document.getElementById('disk-card');
     var el = document.getElementById('disk-body');
-    if (!disks || !disks.length) { card.style.display = 'none'; return; }
+    if (!disks || !disks.length) { card.style.display = 'none'; _diskKeys = []; return; }
     card.style.display = '';
-    var h = '';
-    disks.forEach(function(d) {
-      var cls = colorClass(d.pct);
-      h += '<div class="disk-item">'
-        + '<div class="disk-header"><span class="disk-mount" title="' + d.mount + '">' + d.mount + '</span>'
-        + '<span class="disk-info"><span class="disk-meta">' + d.usedStr + ' / ' + d.totalStr + '</span><span class="disk-pct ' + cls + '">' + d.pct + '%</span></span></div>'
-        + '<div class="track"><div class="fill ' + cls + '" id="disk-fill-' + disks.indexOf(d) + '"></div></div>'
-        + '<div class="disk-footer"><span class="disk-meta">' + d.usedStr + ' / ' + d.totalStr + '</span><span class="disk-pct ' + cls + '">' + d.pct + '%</span></div>'
-        + '</div>';
-    });
-    el.innerHTML = h;
-    disks.forEach(function(d, i) {
-      var fill = document.getElementById('disk-fill-' + i);
-      if (fill) fill.style.width = d.pct + '%';
-    });
+    var keys = disks.map(function(d) { return d.mount; });
+    var same = keys.length === _diskKeys.length && keys.every(function(k, i) { return k === _diskKeys[i]; });
+    if (!same) {
+      _diskKeys = keys;
+      var h = '';
+      disks.forEach(function(d, i) {
+        var cls = colorClass(d.pct);
+        h += '<div class="disk-item">'
+          + '<div class="disk-header"><span class="disk-mount" title="' + d.mount + '">' + d.mount + '</span>'
+          + '<span class="disk-info"><span class="disk-meta" id="disk-meta-' + i + '">' + d.usedStr + ' / ' + d.totalStr + '</span><span class="disk-pct ' + cls + '" id="disk-pct-' + i + '">' + d.pct + '%</span></span></div>'
+          + '<div class="track"><div class="fill ' + cls + '" id="disk-fill-' + i + '"></div></div>'
+          + '<div class="disk-footer"><span class="disk-meta" id="disk-fmeta-' + i + '">' + d.usedStr + ' / ' + d.totalStr + '</span><span class="disk-pct ' + cls + '" id="disk-fpct-' + i + '">' + d.pct + '%</span></div>'
+          + '</div>';
+      });
+      el.innerHTML = h;
+      requestAnimationFrame(function() {
+        disks.forEach(function(d, i) {
+          var fill = document.getElementById('disk-fill-' + i);
+          if (fill) fill.style.width = d.pct + '%';
+        });
+      });
+    } else {
+      disks.forEach(function(d, i) {
+        var cls = colorClass(d.pct);
+        var fill = document.getElementById('disk-fill-' + i);
+        if (fill) { fill.style.width = d.pct + '%'; fill.className = 'fill ' + cls; }
+        var meta = document.getElementById('disk-meta-' + i);
+        if (meta) meta.textContent = d.usedStr + ' / ' + d.totalStr;
+        var pct = document.getElementById('disk-pct-' + i);
+        if (pct) { pct.textContent = d.pct + '%'; pct.className = 'disk-pct ' + cls; }
+        var fmeta = document.getElementById('disk-fmeta-' + i);
+        if (fmeta) fmeta.textContent = d.usedStr + ' / ' + d.totalStr;
+        var fpct = document.getElementById('disk-fpct-' + i);
+        if (fpct) { fpct.textContent = d.pct + '%'; fpct.className = 'disk-pct ' + cls; }
+      });
+    }
   }
 
   function openModal() {
     modalOpen = true;
-    vscode.postMessage({cmd:'getConfig'});
     document.getElementById('modal-mask').classList.add('open');
     document.getElementById('modal-title-text').textContent = T.settTitle;
     document.getElementById('sett-interval-label').textContent = T.interval;
@@ -795,7 +949,8 @@ function getWebviewHtml(nonce) {
 
     var gpuMode = gpu.mode || 'off';
     h += row(T.gpuPerf,
-      '<button class="tb'+(gpuMode==='all'?' on':'')+'" data-act="gpu-mode" data-val="all">'+T.gpuAll+'</button>'
+      '<button class="tb'+(gpuMode==='off'?' on':'')+'" data-act="gpu-mode" data-val="off">'+T.scopeOff+'</button>'
+      +'<button class="tb'+(gpuMode==='all'?' on':'')+'" data-act="gpu-mode" data-val="all">'+T.gpuAll+'</button>'
       +'<button class="tb'+(gpuMode==='first'?' on':'')+'" data-act="gpu-mode" data-val="first">'+T.gpuFirst+'</button>'
       +'<button class="tb'+(gpuMode==='specify'?' on':'')+'" data-act="gpu-mode" data-val="specify">'+T.gpuSpecify+'</button>'
       +'<button class="tb'+(gpuMode==='my'?' on':'')+'" data-act="gpu-mode" data-val="my">'+T.scopeMy+'</button>');
@@ -823,29 +978,102 @@ function getWebviewHtml(nonce) {
     bindSettingsEvents(body, cfg);
 
     var diskBody = document.getElementById('sett-disk-body');
+    var curFilter = diskCfg.mountFilter || 'default';
     var dh = '<div class="sett-row"><span style="font-size:10px;color:var(--muted);min-width:60px">' + T.diskFilter + '</span>';
-    dh += '<button class="tb' + (diskCfg.mountFilter==='default'?' on':'') + '" data-act="disk-filter" data-val="default" title="' + T.diskDefaultDesc + '">' + T.diskDefault + '</button>';
-    dh += '<button class="tb' + (diskCfg.mountFilter==='more'?' on':'') + '" data-act="disk-filter" data-val="more" title="' + T.diskMoreDesc + '">' + T.diskMore + '</button>';
-    dh += '<button class="tb' + (diskCfg.mountFilter==='all'?' on':'') + '" data-act="disk-filter" data-val="all" title="' + T.diskAllDesc + '">' + T.diskAll + '</button></div>';
-    dh += '<div style="font-size:9px;color:var(--muted);margin-top:2px;padding-left:2px">' + (diskCfg.mountFilter==='default'?T.diskDefaultDesc:diskCfg.mountFilter==='more'?T.diskMoreDesc:T.diskAllDesc) + '</div>';
+    dh += '<button class="tb' + (curFilter==='default'?' on':'') + '" data-act="disk-filter" data-val="default">' + T.diskDefault + '</button>';
+    dh += '<button class="tb' + (curFilter==='more'?' on':'') + '" data-act="disk-filter" data-val="more">' + T.diskMore + '</button>';
+    dh += '<button class="tb' + (curFilter==='all'?' on':'') + '" data-act="disk-filter" data-val="all">' + T.diskAll + '</button>';
+    dh += '<button class="tb' + (curFilter==='custom'?' on':'') + '" data-act="disk-filter" data-val="custom">' + T.diskCustom + '</button></div>';
+    var isCustom = curFilter === 'custom';
+    var presetVals = {default:{fs:'vfat',paths:'/proc,/sys,/run,/snap,/usr,/etc,/dev,/init',vfs:false},more:{fs:'',paths:'',vfs:false},all:{fs:'',paths:'',vfs:true}};
+    var showFs, showPaths, showVfs;
+    if (isCustom) {
+      showFs = diskCfg.customFsExclude || '';
+      showPaths = diskCfg.customPathExclude || '';
+      showVfs = diskCfg.showVirtualFs;
+    } else {
+      var pv = presetVals[curFilter] || presetVals['default'];
+      showFs = pv.fs; showPaths = pv.paths; showVfs = pv.vfs;
+    }
+    var dis = isCustom ? '' : ' disabled';
+    dh += '<div class="custom-group' + (isCustom ? '' : ' dim') + '">';
+    dh += '<div class="sett-row"><span style="font-size:9px;color:var(--muted);min-width:70px" title="' + T.diskShowVirtualTip + '">' + T.diskShowVirtual + ' ⓘ</span>';
+    dh += '<button class="tb' + (!showVfs ? ' on' : '') + '"' + dis + ' data-act="disk-show-virtual">' + (!showVfs ? T.enabled : T.disabled) + '</button></div>';
+    dh += '<div class="sett-row" style="margin-top:2px"><span style="font-size:9px;color:var(--muted);min-width:70px" title="' + T.diskExcludeFsTip + '">' + T.diskExcludeFs + ' ⓘ</span>';
+    dh += '<input class="sett-input wide" id="disk-fs-input" type="text" value="' + showFs.replace(/"/g,'&quot;') + '"' + (isCustom ? ' placeholder="vfat,ntfs"' : '') + (isCustom ? '' : ' readonly') + ' /></div>';
+    dh += '<div class="sett-row" style="margin-top:2px"><span style="font-size:9px;color:var(--muted);min-width:70px" title="' + T.diskExcludePathTip + '">' + T.diskExcludePath + ' ⓘ</span>';
+    dh += '<input class="sett-input wide" id="disk-path-input" type="text" value="' + showPaths.replace(/"/g,'&quot;') + '"' + (isCustom ? ' placeholder="/proc,/sys,/run"' : '') + (isCustom ? '' : ' readonly') + ' /></div>';
+    dh += '</div>';
+    dh += '<div class="sett-row" style="margin-top:6px"><span style="font-size:10px;color:var(--muted);min-width:60px" title="' + T.diskHideParentTip + '">' + T.diskHideParent + ' ⓘ</span>';
+    dh += '<button class="tb' + (diskCfg.hideParentMounts !== false ? ' on' : '') + '" data-act="disk-hide-parent">' + (diskCfg.hideParentMounts !== false ? T.enabled : T.disabled) + '</button></div>';
     diskBody.innerHTML = dh;
+    void diskBody.offsetHeight;
     diskBody.querySelectorAll('[data-act="disk-filter"]').forEach(function(btn) {
       btn.addEventListener('click', function() {
-        diskCfg.mountFilter = this.dataset.val;
+        var val = this.dataset.val;
+        if (val === 'custom' && curFilter !== 'custom') {
+          diskCfg.customFsExclude = showFs;
+          diskCfg.customPathExclude = showPaths;
+          diskCfg.showVirtualFs = showVfs;
+        }
+        diskCfg.mountFilter = val;
         vscode.postMessage({cmd:'setConfig',key:'disk',value:diskCfg});
         renderSettingsBody();
       });
+    });
+    if (curFilter === 'custom') {
+      var vfsBtn = diskBody.querySelector('[data-act="disk-show-virtual"]');
+      if (vfsBtn) vfsBtn.addEventListener('click', function() {
+        diskCfg.showVirtualFs = !diskCfg.showVirtualFs;
+        vscode.postMessage({cmd:'setConfig',key:'disk',value:diskCfg});
+        renderSettingsBody();
+      });
+      var _diskTimer = null;
+      function onDiskCustomInput() {
+        if (_diskTimer) clearTimeout(_diskTimer);
+        _diskTimer = setTimeout(function() {
+          var fsInput = document.getElementById('disk-fs-input');
+          var pathInput = document.getElementById('disk-path-input');
+          if (fsInput) diskCfg.customFsExclude = fsInput.value;
+          if (pathInput) diskCfg.customPathExclude = pathInput.value;
+          vscode.postMessage({cmd:'setConfig',key:'disk',value:diskCfg});
+        }, 600);
+      }
+      var fsInput = document.getElementById('disk-fs-input');
+      var pathInput = document.getElementById('disk-path-input');
+      if (fsInput) fsInput.addEventListener('input', onDiskCustomInput);
+      if (pathInput) pathInput.addEventListener('input', onDiskCustomInput);
+    }
+    var hideParentBtn = diskBody.querySelector('[data-act="disk-hide-parent"]');
+    if (hideParentBtn) hideParentBtn.addEventListener('click', function() {
+      diskCfg.hideParentMounts = !diskCfg.hideParentMounts;
+      vscode.postMessage({cmd:'setConfig',key:'disk',value:diskCfg});
+      renderSettingsBody();
     });
 
     var dispBody = document.getElementById('sett-display-body');
     var dph = '<div class="sett-row"><span style="font-size:10px;color:var(--muted);min-width:60px">' + T.chartsToggle + '</span>';
     dph += '<button class="tb' + (displayCfg.charts !== false ? ' on' : '') + '" data-act="charts-toggle">' + (displayCfg.charts !== false ? T.enabled : T.disabled) + '</button></div>';
+    dph += '<div class="sett-row"><span style="font-size:10px;color:var(--muted);min-width:60px">' + T.sparkLabel + '</span>';
+    [1,2,5,10,30].forEach(function(m) {
+      var cur = displayCfg.sparkMinutes || 5;
+      dph += '<button class="tb' + (cur===m?' on':'') + '" data-act="spark-min" data-val="' + m + '">' + m + (zh?'分':'m') + '</button>';
+    });
+    dph += '</div>';
     dispBody.innerHTML = dph;
     dispBody.querySelector('[data-act="charts-toggle"]').addEventListener('click', function() {
       displayCfg.charts = !displayCfg.charts;
       vscode.postMessage({cmd:'setConfig',key:'display',value:displayCfg});
       applyCharts();
       renderSettingsBody();
+    });
+    dispBody.querySelectorAll('[data-act="spark-min"]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        displayCfg.sparkMinutes = parseInt(this.dataset.val);
+        SPARK_WINDOW = displayCfg.sparkMinutes * 60 * 1000;
+        vscode.postMessage({cmd:'setConfig',key:'display',value:displayCfg});
+        renderSettingsBody();
+      });
     });
   }
 
@@ -891,8 +1119,7 @@ function getWebviewHtml(nonce) {
         else if (a==='radio') { cfg[this.dataset.key] = this.dataset.val; }
         else if (a==='gpu-summary') { cfg.gpu.summary = !cfg.gpu.summary; }
         else if (a==='gpu-mode') {
-          var v = this.dataset.val;
-          cfg.gpu.mode = (cfg.gpu.mode === v) ? 'off' : v;
+          cfg.gpu.mode = this.dataset.val;
         }
         else if (a==='gpu-metric') { cfg.gpu.metric = this.dataset.val; }
         else if (a==='gpu-skip-idle') { cfg.gpu.skipIdle = !cfg.gpu.skipIdle; }
@@ -1003,13 +1230,57 @@ function getWebviewHtml(nonce) {
 </html>`;
 }
 
-function readConfig() {
+// ── 统一配置缓存层 ──────────────────────────────────────────────────────────
+const CFG_DEFAULTS = {
+  interval: 2,
+  barCfg: { barEnabled: true, cpu: true, ram: false, net: 'off', ssh: false, gpu: { summary: true, mode: 'off', cards: [], metric: 'both' } },
+  diskCfg: { mountFilter: 'default', hideParentMounts: true },
+  displayCfg: { charts: true, sparkMinutes: 5 },
+};
+const CFG_KEY_MAP = { interval: 'refreshInterval', barCfg: 'statusBar', diskCfg: 'disk', displayCfg: 'display' };
+let _cfgCache = null;
+let _selfWriting = false;
+let _dirtyKeys = new Set();
+let _flushTimer = null;
+
+function _readSettingsOnce() {
   const c = vscode.workspace.getConfiguration('sysmonitor');
-  const interval = c.get('refreshInterval', 2);
-  const barCfg = c.get('statusBar') || { barEnabled: true, cpu: true, ram: false, net: 'off', ssh: false, gpu: { summary: true, mode: 'off', cards: [], metric: 'both' } };
-  const diskCfg = c.get('disk') || { mountFilter: 'default' };
-  const displayCfg = c.get('display') || { charts: true };
-  return { interval, barCfg, diskCfg, displayCfg };
+  return {
+    interval: c.get('refreshInterval', CFG_DEFAULTS.interval),
+    barCfg: c.get('statusBar') || CFG_DEFAULTS.barCfg,
+    diskCfg: c.get('disk') || CFG_DEFAULTS.diskCfg,
+    displayCfg: c.get('display') || CFG_DEFAULTS.displayCfg,
+  };
+}
+
+function initConfig() { _cfgCache = _readSettingsOnce(); }
+
+function getConfig() {
+  if (!_cfgCache) initConfig();
+  return _cfgCache;
+}
+
+function setConfigValue(key, value) {
+  if (!_cfgCache) initConfig();
+  _cfgCache[key] = value;
+  _dirtyKeys.add(key);
+  if (_flushTimer) clearTimeout(_flushTimer);
+  _flushTimer = setTimeout(_flushConfig, 500);
+}
+
+function _flushConfig() {
+  _flushTimer = null;
+  if (_dirtyKeys.size === 0) return;
+  _selfWriting = true;
+  const c = vscode.workspace.getConfiguration('sysmonitor');
+  const ps = [];
+  for (const key of _dirtyKeys) ps.push(c.update(CFG_KEY_MAP[key], _cfgCache[key], true));
+  _dirtyKeys.clear();
+  Promise.all(ps).then(() => { setTimeout(() => { _selfWriting = false; }, 200); });
+}
+
+function refreshConfigFromSettings() {
+  _cfgCache = _readSettingsOnce();
 }
 
 function getMyGpuIndices() {
@@ -1097,23 +1368,27 @@ class MonitorViewProvider {
     this._view = view;
     view.webview.options = { enableScripts: true };
     const nonce = Math.random().toString(36).slice(2, 18);
-    view.webview.html = getWebviewHtml(nonce);
+    const cfg = getConfig();
+    const gpus = getAllGpus();
+    view.webview.html = getWebviewHtml(nonce, { interval: cfg.interval, barCfg: cfg.barCfg, diskCfg: cfg.diskCfg, displayCfg: cfg.displayCfg, gpuCount: gpus.length || 8 });
 
     view.webview.onDidReceiveMessage(msg => {
       if (msg.cmd === 'getConfig') {
         this._pushConfig();
       } else if (msg.cmd === 'setConfig') {
-        const c = vscode.workspace.getConfiguration('sysmonitor');
         if (msg.key === 'refreshInterval') {
-          c.update('refreshInterval', msg.value, true).then(() => updateBar());
+          dbg('setConfig refreshInterval: ' + msg.value);
+          setConfigValue('interval', msg.value);
           this._resetTimer(msg.value * 1000);
+          updateBar();
         } else if (msg.key === 'statusBar') {
-          c.update('statusBar', msg.value, true).then(() => updateBar());
+          setConfigValue('barCfg', msg.value);
+          updateBar();
         } else if (msg.key === 'disk') {
-          c.update('disk', msg.value, true);
-          refreshDiskCache(msg.value.mountFilter);
+          setConfigValue('diskCfg', msg.value);
+          refreshDiskCache(msg.value, () => { if (this._tick) this._tick(); });
         } else if (msg.key === 'display') {
-          c.update('display', msg.value, true);
+          setConfigValue('displayCfg', msg.value);
         }
       } else if (msg.cmd === 'openSettings') {
         vscode.commands.executeCommand('workbench.action.openSettings', 'sysmonitor');
@@ -1126,6 +1401,7 @@ class MonitorViewProvider {
 
     const tick = () => {
       if (!this._view || this._paused) return;
+      const _t0 = Date.now();
       const cpu = getCpuPercent();
       const mem = getMemInfo();
       const net = getNetSpeed();
@@ -1134,10 +1410,14 @@ class MonitorViewProvider {
       const loads = os.loadavg();
       const lang = vscode.env.language;
       const netData = { rx: net.rx, tx: net.tx, rxStr: fmtBytes(net.rx), txStr: fmtBytes(net.tx) };
-      const { diskCfg } = readConfig();
-      const disks = getDiskInfo().map(d => ({ mount: d.mount, usedStr: fmtDiskSize(d.used), totalStr: fmtDiskSize(d.total), pct: d.pct }));
+      const diskCfg = getConfig().diskCfg;
+      let disks = getDiskInfo().map(d => ({ mount: d.mount, usedStr: fmtDiskSize(d.used), totalStr: fmtDiskSize(d.total), pct: d.pct }));
+      if (diskCfg.hideParentMounts !== false) {
+        const mounts = disks.map(d => d.mount);
+        disks = disks.filter(d => d.mount === '/' || !mounts.some(m => m !== d.mount && m.startsWith(d.mount + '/')));
+      }
       const payload = {
-        lang, cpu, cpuCores: os.cpus().length,
+        lang, cpu, cpuCores: CPU_CORES,
         load1: loads[0].toFixed(2), load5: loads[1].toFixed(2), load15: loads[2].toFixed(2),
         mem: { percent: mem.percent, usedStr: fmtSize(mem.used), availStr: fmtSize(mem.avail), totalStr: fmtSize(mem.total) },
         gpus,
@@ -1148,16 +1428,21 @@ class MonitorViewProvider {
       this._view.webview.postMessage({ cmd: 'update', payload });
       latestData = { cpu, mem: { percent: mem.percent }, net: netData, ssh: payload.ssh, gpus, diskRoot: disks.find(d => d.mount === '/') };
       updateBar();
+      const elapsed = Date.now() - _t0;
+      if (elapsed > 500) dbg('slow tick: ' + elapsed + 'ms  interval=' + this._interval);
     };
     this._tick = tick;
 
-    const { interval, diskCfg } = readConfig();
-    this._interval = interval * 1000;
-    // 首次同步加载磁盘数据（--local 避免 NFS 挂起）
-    try { _diskCache = parseDfOutput(execSync('df -PT --local 2>/dev/null', { timeout: 3000 }).toString(), diskCfg.mountFilter); } catch { }
+    this._interval = cfg.interval * 1000;
+    // 首次同步加载磁盘数据（findmnt 优先，可发现 Docker bind mount；回退到 df）
+    try {
+      const fmOut = execSync('findmnt -l -b -o FSTYPE,SIZE,USED,USE%,TARGET --json 2>/dev/null', { timeout: 3000 }).toString();
+      const r = parseFindmntJson(fmOut, cfg.diskCfg);
+      if (r) _diskCache = r; else throw 0;
+    } catch { try { _diskCache = parseDfOutput(execSync('df -PT --local 2>/dev/null', { timeout: 3000 }).toString(), cfg.diskCfg); } catch { } }
     tick();
     this._timer = setInterval(tick, this._interval);
-    this._diskTimer = setInterval(() => { const { diskCfg: dc } = readConfig(); refreshDiskCache(dc.mountFilter); }, 10000);
+    this._diskTimer = setInterval(() => { refreshDiskCache(getConfig().diskCfg); }, 10000);
 
     this._procsTimer = setInterval(() => { this._pushProcs(); }, 5000);
 
@@ -1170,6 +1455,7 @@ class MonitorViewProvider {
   }
 
   _resetTimer(ms) {
+    dbg('_resetTimer: ' + ms + 'ms (was ' + this._interval + 'ms)');
     this._interval = ms;
     clearInterval(this._timer);
     this._timer = setInterval(this._tick, ms);
@@ -1183,10 +1469,10 @@ class MonitorViewProvider {
 
   _pushConfig() {
     if (!this._view) return;
-    const { interval, barCfg, diskCfg, displayCfg } = readConfig();
+    const cfg = getConfig();
     const gpus = getAllGpus();
     this._view.webview.postMessage({
-      cmd: 'config', interval, barCfg, diskCfg, displayCfg,
+      cmd: 'config', interval: cfg.interval, barCfg: cfg.barCfg, diskCfg: cfg.diskCfg, displayCfg: cfg.displayCfg,
       gpuCount: gpus.length || 8,
     });
   }
@@ -1255,13 +1541,16 @@ function formatBarText(cfg, data) {
 
 function updateBar() {
   if (!barRef) return;
-  const { barCfg } = readConfig();
-  const txt = formatBarText(barCfg, latestData);
+  const cfg = getConfig().barCfg;
+  const txt = formatBarText(cfg, latestData);
   if (txt) { barRef.text = txt; barRef.show(); }
   else { barRef.hide(); }
 }
 
 function activate(context) {
+  _log = vscode.window.createOutputChannel('System Monitor');
+  context.subscriptions.push(_log);
+  dbg('activate');
   const lang = vscode.env.language || '';
   const zh = lang.startsWith('zh');
 
@@ -1347,14 +1636,19 @@ function activate(context) {
   bar.command = 'sysmonitor.openPanel';
   bar.tooltip = 'System Monitor (Remote)';
   barRef = bar;
-  const { barCfg: initCfg } = readConfig();
-  if (initCfg.barEnabled !== false) bar.show();
+  if (getConfig().barCfg.barEnabled !== false) bar.show();
   context.subscriptions.push(bar);
 
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('sysmonitor')) {
+      dbg('onDidChangeConfiguration: selfWriting=' + _selfWriting);
+      if (!_selfWriting) {
+        refreshConfigFromSettings();
+        if (provider._view) provider._pushConfig();
+      }
       updateBar();
-      const newInt = readConfig().interval * 1000;
+      const newInt = getConfig().interval * 1000;
+      dbg('  config interval check: newInt=' + newInt + '  provider._interval=' + provider._interval);
       if (provider._interval !== newInt) {
         provider._resetTimer(newInt);
       }

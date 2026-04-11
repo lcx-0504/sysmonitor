@@ -2,7 +2,7 @@
   "name": "sysmonitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "publisher": "LiChenxi",
   "license": "MIT",
   "icon": "icon.png",
@@ -80,13 +80,14 @@
         "sysmonitor.disk": {
           "type": "object",
           "default": {
-            "mountFilter": "default"
+            "mountFilter": "default",
+            "hideParentMounts": true
           },
           "description": "Disk monitoring settings"
         },
         "sysmonitor.display": {
           "type": "object",
-          "default": { "charts": true },
+          "default": { "charts": true, "sparkMinutes": 5 },
           "description": "Display settings"
         }
       }
