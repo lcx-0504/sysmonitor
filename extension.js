@@ -284,7 +284,7 @@ function getWebviewHtml(nonce, initCfg) {
   .card-label { font-size: 11px; font-weight: 600; }
   .card-value { font-size: 11px; color: var(--muted); }
   .track { height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; margin-bottom: 6px; }
-  .fill  { height: 100%; border-radius: 2px; background: var(--accent); transition: width .5s ease; }
+  .fill  { height: 100%; border-radius: 2px; background: var(--accent); transition: width .5s ease, background .5s ease; }
   .fill.warn   { background: var(--warn); }
   .fill.danger { background: var(--danger); }
   .detail-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
@@ -588,7 +588,7 @@ function getWebviewHtml(nonce, initCfg) {
     if (!p) return;
     areaEl.setAttribute('d', p.area);
     areaEl.setAttribute('fill', color);
-    areaEl.setAttribute('fill-opacity', '0.06');
+    areaEl.setAttribute('fill-opacity', document.body.classList.contains('vscode-dark') ? '0.12' : '0.06');
   }
   function pushHist(arr, val) {
     var now = Date.now();
@@ -1199,7 +1199,7 @@ function getWebviewHtml(nonce, initCfg) {
       ? T.pcount.replace('{n}', filtered.length + '/' + procData.length)
       : T.pcount.replace('{n}', procData.length);
     document.getElementById('proc-hdr').innerHTML =
-      '<th>'+T.pname+'</th><th>'+T.puser+'</th><th class="r">CPU%</th><th class="r">RAM</th><th class="r">RAM%</th><th>GPU</th><th>'+T.pcmd+'</th>';
+      '<th>PID</th><th>'+T.pname+'</th><th>'+T.puser+'</th><th class="r">CPU%</th><th class="r">RAM</th><th class="r">RAM%</th><th>GPU</th><th>'+T.pcmd+'</th>';
     var html = '';
     sorted.forEach(function(p){
       var gpuCell = '';
@@ -1212,6 +1212,7 @@ function getWebviewHtml(nonce, initCfg) {
       var cmdShort = p.cmd && p.cmd.length > 50 ? p.cmd.substring(0,50)+'…' : (p.cmd||p.name);
       var cpuTxt = p.cpu.toFixed(1);
       html+='<tr>'
+        +'<td class="r">'+p.pid+'</td>'
         +'<td title="PID '+p.pid+'&#10;'+esc(p.cmd||p.name)+'">'+esc(p.name)+'</td>'
         +'<td>'+esc(p.user)+'</td>'
         +'<td class="r">'+cpuTxt+'</td>'
