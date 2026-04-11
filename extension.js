@@ -263,10 +263,13 @@ function getWebviewHtml(nonce, initCfg) {
   /* ── 模态 ── */
   .modal-mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; justify-content: center; align-items: center; }
   .modal-mask.open { display: flex; }
-  .modal { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); width: 90%; max-width: 360px; max-height: 80vh; overflow-y: auto; padding: 12px; }
-  .modal-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .modal { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); width: 90%; max-width: 360px; max-height: 80vh; overflow-y: hidden; padding: 0; display: flex; flex-direction: column; }
+  .modal-title { font-size: 14px; font-weight: 600; padding: 12px 12px 8px; display: flex; align-items: center; gap: 6px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+  .modal-body { flex: 1; overflow-y: auto; padding: 12px; min-height: 0; }
   .flex-1 { flex: 1; }
-  .copyright { text-align: center; font-size: 9px; color: var(--muted); margin-top: 8px; opacity: .5; }
+  .copyright { text-align: center; font-size: 9px; color: var(--muted); margin-top: 8px; opacity: .5; line-height: 1.6; }
+  .copyright a { color: var(--muted); text-decoration: none; }
+  .copyright a:hover { text-decoration: underline; }
   .modal-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
   .modal-tab-content { display: none; }
   .modal-tab-content.active { display: block; }
@@ -320,10 +323,10 @@ function getWebviewHtml(nonce, initCfg) {
   .gpu-na { font-size: 11px; color: var(--muted); }
   .gpu-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 4px; }
   .gpu-name { font-size: 11px; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
-  .gpu-sub { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; cursor: default; }
+  .gpu-sub { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; cursor: default; direction: rtl; text-align: left; }
   .bar-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-bottom: 2px; gap: 4px; overflow: hidden; }
   .bar-label span:first-child { flex-shrink: 0; white-space: nowrap; }
-  .bar-label span:last-child { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .bar-label span:last-child { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; direction: rtl; text-align: left; }
   .gpu-stats { display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-top: 4px; overflow: hidden; }
   .gpu-stats span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .gpu-stats b { color: var(--text); font-weight: 500; }
@@ -399,6 +402,7 @@ function getWebviewHtml(nonce, initCfg) {
 <div class="modal-mask" id="modal-mask">
 <div class="modal">
   <div class="modal-title"><span id="modal-title-text">设置</span><span class="flex-1"></span><button class="tb" id="open-vsc-settings">settings.json ↗</button><button class="tb" id="modal-close">✕</button></div>
+  <div class="modal-body">
   <div class="sett-section">
     <div class="sett-label" id="sett-interval-label">刷新间隔</div>
     <div class="sett-row" id="interval-row"></div>
@@ -415,7 +419,8 @@ function getWebviewHtml(nonce, initCfg) {
     <div class="sett-label" id="sett-display-label">显示</div>
     <div id="sett-display-body"></div>
   </div>
-  <div class="copyright">v${pkg.version} · © ${new Date().getFullYear()} Li Chenxi · ${pkg.license}</div>
+  <div class="copyright">v${pkg.version} · © ${new Date().getFullYear()} Li Chenxi · ${pkg.license}<br><a href="https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor">Marketplace</a> · <a href="https://open-vsx.org/extension/LiChenxi/sysmonitor">Open VSX</a> · <a href="https://github.com/lcx-0504/sysmonitor">GitHub</a></div>
+  </div>
 </div>
 </div>
 
@@ -512,7 +517,7 @@ function getWebviewHtml(nonce, initCfg) {
     zh = lang && lang.startsWith('zh');
     T = zh
       ? { min:' 分钟',cores:' 核',used:'已用',avail:'可用',total:'总计',srvNet:'服务器网络',net:'网络',localSSH:'本机 SSH',up:'↑ 上传',down:'↓ 下载',selAll:'全选空闲',clear:'清除',copyEnv:'复制环境变量',detecting:'检测中…',noGpu:'未检测到 NVIDIA GPU',updAt:'更新于 ',utilLabel:'利用率',memLabel:'显存',tempLabel:'温度',pwLabel:'功耗',
-          perfTab:'性能',procTab:'进程',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',close:'关闭',
+          perfTab:'性能',procTab:'进程',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',barAlign:'位置',barPriority:'优先级',barPriorityTip:'数字越大越靠左（左侧）或越靠右（右侧），默认 10',close:'关闭',
           netLabel:'网络速率',gpuLabel:'GPU',
           scopeOff:'关',scopeSummary:'总览',scopeCard:'指定卡',scopeMy:'我的卡',metUtil:'仅利用率',metVram:'仅显存',metBoth:'全部显示',
           netUp:'仅上传',netDown:'仅下载',netAll:'全部显示',netMerge:'合并显示',
@@ -521,7 +526,7 @@ function getWebviewHtml(nonce, initCfg) {
           displayLabel:'显示',chartsToggle:'卡片背景图表',sparkLabel:'图表时长',
           pcpu:'CPU',pmem:'内存',pgpu:'GPU',ppid:'PID',puser:'用户',pname:'进程名',pcpuPct:'CPU%',pmemCol:'内存',pgpuCol:'GPU',pcount:'共 {n} 进程',pnoGpu:'—',pcmd:'命令',filterHint:'搜索进程...' }
       : { min:' min',cores:' cores',used:'Used',avail:'Avail',total:'Total',srvNet:'Server Net',net:'Network',localSSH:'Local SSH',up:'↑ Up',down:'↓ Down',selAll:'Select All',clear:'Clear',copyEnv:'Copy Env Var',detecting:'Detecting…',noGpu:'No NVIDIA GPU detected',updAt:'Updated ',utilLabel:'Util',memLabel:'VRAM',tempLabel:'Temp',pwLabel:'Power',
-          perfTab:'Perf',procTab:'Procs',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',close:'Close',
+          perfTab:'Perf',procTab:'Procs',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',barAlign:'Position',barPriority:'Priority',barPriorityTip:'Higher = closer to the edge. Default: 10',close:'Close',
           netLabel:'Network',gpuLabel:'GPU',
           scopeOff:'Off',scopeSummary:'Summary',scopeCard:'Card',scopeMy:'My Card',metUtil:'Util Only',metVram:'VRAM Only',metBoth:'All',
           netUp:'Upload',netDown:'Download',netAll:'All',netMerge:'Merged',
@@ -901,6 +906,10 @@ function getWebviewHtml(nonce, initCfg) {
   document.getElementById('modal-close').addEventListener('click', closeModal);
   document.getElementById('modal-mask').addEventListener('click', function(e){ if (e.target===this) closeModal(); });
   document.getElementById('open-vsc-settings').addEventListener('click', function(){ vscode.postMessage({cmd:'openSettings'}); });
+  document.addEventListener('click', function(e) {
+    var a = e.target.closest('a[href]');
+    if (a && a.href) { e.preventDefault(); vscode.postMessage({cmd:'openLink', url:a.href}); }
+  });
 
   function renderIntervalRow() {
     var row = document.getElementById('interval-row');
@@ -908,7 +917,7 @@ function getWebviewHtml(nonce, initCfg) {
     [1,2,5,10].forEach(function(s) {
       var b = document.createElement('button');
       b.className = 'tb' + (curInterval===s?' on':'');
-      b.textContent = s+'s';
+      b.textContent = s+(zh?'秒':'s');
       b.addEventListener('click', function(){ curInterval=s; renderIntervalRow(); vscode.postMessage({cmd:'setConfig',key:'refreshInterval',value:s}); });
       row.appendChild(b);
     });
@@ -940,6 +949,10 @@ function getWebviewHtml(nonce, initCfg) {
     var barOn = cfg.barEnabled !== false;
     h += row(T.barToggle, '<button class="tb'+(barOn?' on':'')+'" data-act="bar-toggle">'+(barOn?T.enabled:T.disabled)+'</button>');
     if (!barOn) { body.innerHTML = h; bindSettingsEvents(body, cfg); return; }
+    var curAlign = cfg.alignment || 'left';
+    h += row(T.barAlign, '<button class="tb'+(curAlign==='left'?' on':'')+'" data-act="radio" data-key="alignment" data-val="left">'+(zh?'左':'Left')+'</button><button class="tb'+(curAlign==='right'?' on':'')+'" data-act="radio" data-key="alignment" data-val="right">'+(zh?'右':'Right')+'</button>');
+    var curPri = typeof cfg.priority === 'number' ? cfg.priority : 10;
+    h += row(T.barPriority+' <span title="'+T.barPriorityTip+'" style="cursor:help">ⓘ</span>', '<input class="sett-input" id="bar-priority-input" type="number" min="0" max="10000" value="'+curPri+'" style="width:60px" />');
     h += row('CPU', toggle('cpu', cfg.cpu ? T.enabled : T.disabled));
     h += row('RAM', toggle('ram', cfg.ram ? T.enabled : T.disabled));
     h += row(T.diskLabel, toggle('disk', cfg.disk ? T.enabled : T.disabled));
@@ -1078,6 +1091,15 @@ function getWebviewHtml(nonce, initCfg) {
   }
 
   function bindSettingsEvents(body, cfg) {
+    var priInput = document.getElementById('bar-priority-input');
+    if (priInput) {
+      priInput.addEventListener('input', function() {
+        var n = parseInt(this.value);
+        if (isNaN(n) || n < 0) n = 10;
+        cfg.priority = n;
+        pushCfg();
+      });
+    }
     var cardsInput = document.getElementById('gpu-cards-input');
     if (cardsInput) {
       cardsInput.addEventListener('input', function() {
@@ -1234,7 +1256,7 @@ function getWebviewHtml(nonce, initCfg) {
 // ── 统一配置缓存层 ──────────────────────────────────────────────────────────
 const CFG_DEFAULTS = {
   interval: 2,
-  barCfg: { barEnabled: true, cpu: true, ram: false, net: 'off', ssh: false, gpu: { summary: true, mode: 'off', cards: [], metric: 'both' } },
+  barCfg: { barEnabled: true, alignment: 'left', priority: 10, cpu: true, ram: false, net: 'off', ssh: false, gpu: { summary: true, mode: 'off', cards: [], metric: 'both' } },
   diskCfg: { mountFilter: 'default', hideParentMounts: true },
   displayCfg: { charts: true, sparkMinutes: 5 },
 };
@@ -1393,6 +1415,10 @@ class MonitorViewProvider {
         }
       } else if (msg.cmd === 'openSettings') {
         vscode.commands.executeCommand('workbench.action.openSettings', 'sysmonitor');
+      } else if (msg.cmd === 'openLink') {
+        if (msg.url && /^https?:\/\//.test(msg.url)) {
+          vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        }
       } else if (msg.cmd === 'pause') {
         this._paused = !!msg.value;
       } else if (msg.cmd === 'needProcs') {
@@ -1633,12 +1659,29 @@ function activate(context) {
     })
   );
 
-  const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  const initCfg = getConfig().barCfg;
+  const initAlign = initCfg.alignment === 'right' ? vscode.StatusBarAlignment.Right : vscode.StatusBarAlignment.Left;
+  const initPri = typeof initCfg.priority === 'number' ? initCfg.priority : 10;
+  let bar = vscode.window.createStatusBarItem(initAlign, initPri);
   bar.command = 'sysmonitor.openPanel';
   bar.tooltip = 'System Monitor (Remote)';
   barRef = bar;
-  if (getConfig().barCfg.barEnabled !== false) bar.show();
+  if (initCfg.barEnabled !== false) bar.show();
   context.subscriptions.push(bar);
+
+  function recreateBar() {
+    const cfg = getConfig().barCfg;
+    const align = cfg.alignment === 'right' ? vscode.StatusBarAlignment.Right : vscode.StatusBarAlignment.Left;
+    const pri = typeof cfg.priority === 'number' ? cfg.priority : 10;
+    if (bar.alignment === align && bar.priority === pri) return;
+    bar.dispose();
+    bar = vscode.window.createStatusBarItem(align, pri);
+    bar.command = 'sysmonitor.openPanel';
+    bar.tooltip = 'System Monitor (Remote)';
+    barRef = bar;
+    context.subscriptions.push(bar);
+    updateBar();
+  }
 
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('sysmonitor')) {
@@ -1647,6 +1690,7 @@ function activate(context) {
         refreshConfigFromSettings();
         if (provider._view) provider._pushConfig();
       }
+      recreateBar();
       updateBar();
       const newInt = getConfig().interval * 1000;
       dbg('  config interval check: newInt=' + newInt + '  provider._interval=' + provider._interval);

@@ -2,7 +2,7 @@
   "name": "sysmonitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "publisher": "LiChenxi",
   "license": "MIT",
   "icon": "icon.png",
@@ -62,6 +62,8 @@
           "type": "object",
           "default": {
             "barEnabled": true,
+            "alignment": "left",
+            "priority": 10,
             "cpu": true,
             "ram": true,
             "net": "off",
