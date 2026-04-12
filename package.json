@@ -2,7 +2,7 @@
   "name": "sysmonitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "publisher": "LiChenxi",
   "license": "MIT",
   "icon": "icon.png",
@@ -40,7 +40,7 @@
           "id": "sysmonitor-container",
           "title": "%viewTitle%",
           "icon": "./icon.svg",
-          "when": "remoteName"
+          "when": "remoteName || isLinux"
         }
       ]
     },
@@ -50,7 +50,7 @@
           "type": "webview",
           "id": "sysmonitor.panel",
           "name": "%viewName%",
-          "when": "remoteName"
+          "when": "remoteName || isLinux"
         }
       ]
     },
@@ -58,7 +58,7 @@
       {
         "command": "sysmonitor.openPanel",
         "title": "%cmdOpen%",
-        "when": "remoteName"
+        "when": "remoteName || isLinux"
       }
     ],
     "configuration": {

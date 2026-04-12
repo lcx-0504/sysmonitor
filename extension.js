@@ -1665,50 +1665,86 @@ function activate(context) {
   const zh = lang.startsWith('zh');
 
   if (!vscode.env.remoteName) {
-    const dismissed = context.globalState.get('sysmonitor.notifyDismissed', false);
-    const sshCfg = vscode.workspace.getConfiguration('remote.SSH');
-    const defaultExts = (sshCfg.get('defaultExtensions') || []).map(s => s.toLowerCase());
-    const alreadyAdded = defaultExts.includes(EXTENSION_ID.toLowerCase());
-
-    if (!dismissed && !alreadyAdded) {
-      const autoBtn = zh ? '一键加入 SSH 默认扩展' : 'Add to SSH default extensions';
-      const dismissBtn = zh ? '不再提醒' : "Don't remind me";
-      vscode.window.showInformationMessage(
-        zh
-          ? 'System Monitor 仅在远程 Linux 环境中运行。使用 Remote-SSH 时，可将扩展 ID 写入设置以自动安装到服务器。'
-          : 'System Monitor only runs on remote Linux. For Remote-SSH, you can auto-install it on servers.',
-        autoBtn, dismissBtn
-      ).then(choice => {
-        if (choice === autoBtn) {
-          const c = vscode.workspace.getConfiguration('remote.SSH');
-          const list = (c.get('defaultExtensions') || []).slice();
-          if (!list.includes(EXTENSION_ID)) {
-            list.push(EXTENSION_ID);
-            c.update('defaultExtensions', list, true).then(() => {
-              context.globalState.update('sysmonitor.notifyDismissed', true);
-              vscode.window.showInformationMessage(zh
-                ? '已添加 ' + EXTENSION_ID + ' 到 SSH 默认扩展。'
-                : 'Added ' + EXTENSION_ID + ' to SSH default extensions.');
-            });
+    if (process.platform === 'linux') {
+      // local Linux → fall through to full monitoring
+      const localDismissed = context.globalState.get('sysmonitor.localLinuxNotifyDismissed', false);
+      const localSshCfg = vscode.workspace.getConfiguration('remote.SSH');
+      const localDefaultExts = (localSshCfg.get('defaultExtensions') || []).map(s => s.toLowerCase());
+      const localAlreadyAdded = localDefaultExts.includes(EXTENSION_ID.toLowerCase());
+      if (!localDismissed && !localAlreadyAdded) {
+        const autoBtn = zh ? '一键加入' : 'Add to SSH default extensions';
+        const dismissBtn = zh ? '不再提醒' : "Don't remind me";
+        vscode.window.showInformationMessage(
+          zh
+            ? 'System Monitor 支持在远程 Linux 环境中运行，是否将扩展 ID 写入到 Remote-SSH 设置以自动安装到服务器？'
+            : 'System Monitor also runs on remote Linux. Add extension ID to Remote-SSH settings to auto-install on servers?',
+          autoBtn, dismissBtn
+        ).then(choice => {
+          if (choice === autoBtn) {
+            const c = vscode.workspace.getConfiguration('remote.SSH');
+            const list = (c.get('defaultExtensions') || []).slice();
+            if (!list.includes(EXTENSION_ID)) {
+              list.push(EXTENSION_ID);
+              c.update('defaultExtensions', list, true).then(() => {
+                context.globalState.update('sysmonitor.localLinuxNotifyDismissed', true);
+                vscode.window.showInformationMessage(zh
+                  ? '已添加 ' + EXTENSION_ID + ' 到 SSH 默认扩展。'
+                  : 'Added ' + EXTENSION_ID + ' to SSH default extensions.');
+              });
+            }
+          } else if (choice === dismissBtn) {
+            context.globalState.update('sysmonitor.localLinuxNotifyDismissed', true);
           }
-        } else if (choice === dismissBtn) {
-          context.globalState.update('sysmonitor.notifyDismissed', true);
-        }
-      });
-    } else if (!dismissed && alreadyAdded) {
-      context.globalState.update('sysmonitor.notifyDismissed', true);
-      vscode.window.showInformationMessage(zh
-        ? '✅ System Monitor 已在 SSH 默认扩展列表中，下次连接 Linux 服务器时将自动安装。'
-        : '✅ System Monitor is already in your SSH default extensions and will auto-install on Linux servers.');
-    }
-    context.subscriptions.push(
-      vscode.commands.registerCommand('sysmonitor.openPanel', () => {
+        });
+      } else if (!localDismissed && localAlreadyAdded) {
+        context.globalState.update('sysmonitor.localLinuxNotifyDismissed', true);
+      }
+    } else {
+      const dismissed = context.globalState.get('sysmonitor.notifyDismissed', false);
+      const sshCfg = vscode.workspace.getConfiguration('remote.SSH');
+      const defaultExts = (sshCfg.get('defaultExtensions') || []).map(s => s.toLowerCase());
+      const alreadyAdded = defaultExts.includes(EXTENSION_ID.toLowerCase());
+
+      if (!dismissed && !alreadyAdded) {
+        const autoBtn = zh ? '一键加入' : 'Add to SSH default extensions';
+        const dismissBtn = zh ? '不再提醒' : "Don't remind me";
+        vscode.window.showInformationMessage(
+          zh
+            ? 'System Monitor 仅支持远程/本地 Linux 环境中运行。是否将扩展 ID 写入到 Remote-SSH 设置以自动安装到服务器？'
+            : 'System Monitor runs on remote/local Linux only. Add extension ID to Remote-SSH settings to auto-install on servers?',
+          autoBtn, dismissBtn
+        ).then(choice => {
+          if (choice === autoBtn) {
+            const c = vscode.workspace.getConfiguration('remote.SSH');
+            const list = (c.get('defaultExtensions') || []).slice();
+            if (!list.includes(EXTENSION_ID)) {
+              list.push(EXTENSION_ID);
+              c.update('defaultExtensions', list, true).then(() => {
+                context.globalState.update('sysmonitor.notifyDismissed', true);
+                vscode.window.showInformationMessage(zh
+                  ? '已添加 ' + EXTENSION_ID + ' 到 SSH 默认扩展。'
+                  : 'Added ' + EXTENSION_ID + ' to SSH default extensions.');
+              });
+            }
+          } else if (choice === dismissBtn) {
+            context.globalState.update('sysmonitor.notifyDismissed', true);
+          }
+        });
+      } else if (!dismissed && alreadyAdded) {
+        context.globalState.update('sysmonitor.notifyDismissed', true);
         vscode.window.showInformationMessage(zh
-          ? '请先打开远程文件夹或 WSL（侧边栏图标仅在远程窗口显示）。'
-          : 'Open a remote folder or WSL first (activity bar icon only appears in remote windows).');
-      })
-    );
-    return;
+          ? 'System Monitor 已在 SSH 默认扩展列表中，下次连接 Linux 服务器时将自动安装。'
+          : 'System Monitor is already in your SSH default extensions and will auto-install on Linux servers.');
+      }
+      context.subscriptions.push(
+        vscode.commands.registerCommand('sysmonitor.openPanel', () => {
+          vscode.window.showInformationMessage(zh
+            ? 'System Monitor 仅在远程/本地 Linux 环境中运行，连接到远程 Linux 服务器、WSL、Linux 容器等以开始使用。'
+            : 'System Monitor runs on remote/local Linux only. Connect to a remote Linux server, WSL, Linux container, etc. to get started.');
+        })
+      );
+      return;
+    }
   }
 
   if (process.platform !== 'linux') {
@@ -1716,10 +1752,10 @@ function activate(context) {
       vscode.window.registerWebviewViewProvider('sysmonitor.panel', {
         resolveWebviewView(view) {
           const nonce = Math.random().toString(36).slice(2, 18);
-          const title = zh ? '仅支持 Linux 远程' : 'Linux remote only';
+          const title = zh ? '仅支持 Linux' : 'Linux only';
           const body = zh
-            ? '当前远程环境不是 Linux（' + process.platform + '），本扩展无法采集系统指标。请在 Linux 服务器、WSL2（Linux 发行版）或 Linux 容器中使用。'
-            : 'This remote is not Linux (' + process.platform + '). System Monitor only supports Linux. Use a Linux server, WSL2 distro, or Linux container.';
+            ? '当前远程环境不是 Linux（' + process.platform + '），本扩展无法采集系统指标。请在 Linux 服务器、WSL、Linux 容器或本地 Linux 中使用。'
+            : 'This remote is not Linux (' + process.platform + '). System Monitor requires Linux. Use a Linux server, WSL, Linux container, or local Linux.';
           view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}';">
 <style nonce="${nonce}">body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);padding:16px;font-size:12px;line-height:1.6}h3{margin:0 0 10px;font-size:13px}p{color:var(--vscode-descriptionForeground);margin:0}</style></head><body>
@@ -1747,7 +1783,7 @@ function activate(context) {
   const initPri = typeof initCfg.priority === 'number' ? initCfg.priority : 10;
   let bar = vscode.window.createStatusBarItem(initAlign, initPri);
   bar.command = 'sysmonitor.openPanel';
-  bar.tooltip = 'System Monitor (Remote)';
+  bar.tooltip = 'System Monitor';
   barRef = bar;
   if (initCfg.barEnabled !== false) bar.show();
   context.subscriptions.push(bar);
@@ -1760,7 +1796,7 @@ function activate(context) {
     bar.dispose();
     bar = vscode.window.createStatusBarItem(align, pri);
     bar.command = 'sysmonitor.openPanel';
-    bar.tooltip = 'System Monitor (Remote)';
+    bar.tooltip = 'System Monitor';
     barRef = bar;
     context.subscriptions.push(bar);
     updateBar();

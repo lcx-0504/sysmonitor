@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.22 — 2025-07-13
+
+- **Local Linux support**: extension now activates on local Linux desktops in addition to remote environments
+- **Notification improvements**: local Linux users are prompted to add extension to SSH default settings; text refined across all scenarios
+- **WSL2 → WSL**: updated references from "WSL2" to "WSL" for broader compatibility
+- **Status bar tooltip**: simplified from "System Monitor (Remote)" to "System Monitor"
+
 ## 1.0.21 — 2026-04-13
 
 - **GPU tag font size**: adjust to 11px for better visual balance

@@ -10,7 +10,7 @@
 
 [中文说明](README.zh-CN.md)
 
-A lightweight VS Code / Cursor extension for monitoring system resources on **remote Linux** (Remote-SSH, WSL, Dev Containers, etc.).
+A lightweight VS Code / Cursor extension for monitoring system resources on **remote/local Linux** (Remote-SSH, WSL, Dev Containers, local Linux, etc.).
 
 ![Performance Tab](https://raw.githubusercontent.com/lcx-0504/sysmonitor/main/screenshots/perf.png)
 

@@ -1,6 +1,6 @@
 {
   "displayName": "系统监控",
-  "description": "远程 Linux 系统监控 — CPU / GPU / RAM / Network",
+  "description": "远程/本地 Linux 系统监控 — CPU / GPU / RAM / Network",
   "viewTitle": "系统监控",
   "viewName": "系统监控",
   "procsName": "进程",
