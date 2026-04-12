@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.19 — 2025-07-13
+
+- **GPU VRAM percentage**: GPU tags in process table now show `#idx vram pct%` format (e.g. `#0 1.2G 45%`)
+- **Colored GPU tags**: tag background color changes based on VRAM usage threshold (blue < 70%, yellow ≥ 70%, red ≥ 90%), using `color-mix()` with theme variables
+- **Table column width**: only the command column stretches to fill remaining space; all other columns stay compact
+
+## 1.0.18 — 2025-07-13
+
+- **Metadata update**: improved keywords, description, categories for better Marketplace discoverability; added homepage and bugs links to package.json
+
 ## 1.0.16 — 2025-04-12
 
 - Fix README badges: replace deprecated shields.io VS Marketplace badges with vsmarketplacebadges.dev

@@ -370,10 +370,17 @@ function getWebviewHtml(nonce, initCfg) {
   table { border-collapse: collapse; min-width: 500px; width: 100%; }
   th { font-size: 10px; font-weight: 600; color: var(--muted); text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--border); white-space: nowrap; position: sticky; top: 0; background: var(--card-bg); z-index: 2; }
   td { padding: 2px 4px; border-bottom: 1px solid var(--vscode-widget-border,#1e1e1e); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+  th:not(:nth-child(8)),td:not(:nth-child(8)) { width: 1%; }
   td[title] { cursor: default; }
   tr:hover td { background: var(--vscode-list-hoverBackground, rgba(255,255,255,.04)); }
   .r { text-align: right; }
-  .gpu-tag { font-size: 9px; background: var(--vscode-badge-background,#4d4d4d); color: var(--vscode-badge-foreground,#fff); border-radius: 3px; padding: 0 4px; white-space: nowrap; display: block; margin-bottom: 1px; width: fit-content; }
+  .gpu-tag { font-size: 9px; border-radius: 3px; padding: 0 4px; white-space: nowrap; display: block; margin-bottom: 1px; text-align: center; background: var(--vscode-badge-background,#4d4d4d); color: var(--vscode-badge-foreground,#fff); }
+  .gpu-tag.tag-accent { background: color-mix(in srgb, var(--accent) 24%, transparent); color: var(--text); }
+  .gpu-tag.tag-warn { background: color-mix(in srgb, var(--warn) 24%, transparent); color: var(--text); }
+  .gpu-tag.tag-danger { background: color-mix(in srgb, var(--danger) 24%, transparent); color: var(--text); }
+  .vscode-light .gpu-tag.tag-accent { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .vscode-light .gpu-tag.tag-warn { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+  .vscode-light .gpu-tag.tag-danger { background: color-mix(in srgb, var(--danger) 12%, transparent); }
   .gpu-cell { white-space: normal !important; }
   .pmuted { color: var(--muted); }
   .sett-input { background: var(--vscode-input-background, #3c3c3c); border: 1px solid var(--border); border-radius: 3px; color: var(--text); font-size: 10px; padding: 2px 6px; font-family: inherit; outline: none; width: 80px; }
@@ -1259,7 +1266,12 @@ function getWebviewHtml(nonce, initCfg) {
     sorted.forEach(function(p){
       var gpuCell = '';
       if (p.gpus && p.gpus.length) {
-        var tags = p.gpus.map(function(g){return '<span class="gpu-tag">#'+g.idx+' '+g.vram+'M</span>';}).join(' ');
+        var tags = p.gpus.map(function(g){
+          var vTxt = g.vram >= 1024 ? (g.vram/1024).toFixed(1)+'G' : g.vram+'M';
+          var pct = g.memTotal > 0 ? Math.round(g.vram / g.memTotal * 100) : 0;
+          var cls = pct >= 90 ? ' tag-danger' : pct >= 70 ? ' tag-warn' : pct > 0 ? ' tag-accent' : '';
+          return '<span class="gpu-tag'+cls+'">#'+g.idx+' '+vTxt+' '+pct+'%</span>';
+        }).join(' ');
         gpuCell = tags;
       } else {
         gpuCell = '<span class="pmuted">'+T.pnoGpu+'</span>';
@@ -1422,12 +1434,13 @@ function getProcessData() {
   try {
     const gpuOut = execSync('nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader,nounits', { timeout: 3000 }).toString().trim();
     if (gpuOut) {
-      const uuidToIdx = {};
+      const uuidToIdx = {}, uuidToMem = {};
       try {
-        const idxOut = execSync('nvidia-smi --query-gpu=index,gpu_uuid --format=csv,noheader', { timeout: 2000 }).toString().trim();
+        const idxOut = execSync('nvidia-smi --query-gpu=index,gpu_uuid,memory.total --format=csv,noheader,nounits', { timeout: 2000 }).toString().trim();
         for (const line of idxOut.split('\n').filter(Boolean)) {
-          const [idx, uuid] = line.split(', ');
+          const [idx, uuid, mt] = line.split(', ');
           uuidToIdx[uuid.trim()] = parseInt(idx);
+          uuidToMem[uuid.trim()] = parseInt(mt) || 0;
         }
       } catch { }
       const gpuMap = {};
@@ -1438,7 +1451,7 @@ function getProcessData() {
         const vram = parseInt(parts[2]) || 0;
         if (pid) {
           if (!gpuMap[pid]) gpuMap[pid] = [];
-          gpuMap[pid].push({ idx: uuidToIdx[uuid] !== undefined ? uuidToIdx[uuid] : -1, vram });
+          gpuMap[pid].push({ idx: uuidToIdx[uuid] !== undefined ? uuidToIdx[uuid] : -1, vram, memTotal: uuidToMem[uuid] || 0 });
         }
       }
       for (const p of procs) {

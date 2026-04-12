@@ -4,3 +4,5 @@ VSCode Extension Token.txt
 genai-chat/
 Chat.md
 .DS_Store
+tmp
+.vscode/

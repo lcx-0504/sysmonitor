@@ -9,3 +9,5 @@ VSCode Extension Token.txt
 release/
 screenshots/
 *.vsix
+.vscode/
+tmp/
