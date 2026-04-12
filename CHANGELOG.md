@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.16 — 2025-04-12
+
+- Fix README badges: replace deprecated shields.io VS Marketplace badges with vsmarketplacebadges.dev
+
 ## 1.0.15 — 2025-04-12
 
 - Add Shields.io badges to README (Marketplace version/downloads/rating, Open VSX, GitHub stars, license)

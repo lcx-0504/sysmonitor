@@ -1,8 +1,8 @@
 # System Monitor — 系统监控
 
-[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
-[![Downloads](https://img.shields.io/visual-studio-marketplace/d/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
-[![Rating](https://img.shields.io/visual-studio-marketplace/r/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![VS Marketplace](https://vsmarketplacebadges.dev/version/LiChenxi.sysmonitor.svg)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![Downloads](https://vsmarketplacebadges.dev/downloads-short/LiChenxi.sysmonitor.svg)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![Rating](https://vsmarketplacebadges.dev/rating-star/LiChenxi.sysmonitor.svg)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
 [![Open VSX](https://img.shields.io/open-vsx/v/LiChenxi/sysmonitor)](https://open-vsx.org/extension/LiChenxi/sysmonitor)
 [![Open VSX Downloads](https://img.shields.io/open-vsx/dt/LiChenxi/sysmonitor)](https://open-vsx.org/extension/LiChenxi/sysmonitor)
 [![GitHub Stars](https://img.shields.io/github/stars/lcx-0504/sysmonitor)](https://github.com/lcx-0504/sysmonitor)
