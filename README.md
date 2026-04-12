@@ -1,5 +1,13 @@
 # System Monitor
 
+[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![Downloads](https://img.shields.io/visual-studio-marketplace/d/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![Rating](https://img.shields.io/visual-studio-marketplace/r/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![Open VSX](https://img.shields.io/open-vsx/v/LiChenxi/sysmonitor)](https://open-vsx.org/extension/LiChenxi/sysmonitor)
+[![Open VSX Downloads](https://img.shields.io/open-vsx/dt/LiChenxi/sysmonitor)](https://open-vsx.org/extension/LiChenxi/sysmonitor)
+[![GitHub Stars](https://img.shields.io/github/stars/lcx-0504/sysmonitor)](https://github.com/lcx-0504/sysmonitor)
+[![License](https://img.shields.io/github/license/lcx-0504/sysmonitor)](LICENSE)
+
 [中文说明](README.zh-CN.md)
 
 A lightweight VS Code / Cursor extension for monitoring system resources on **remote Linux** (Remote-SSH, WSL, Dev Containers, etc.).

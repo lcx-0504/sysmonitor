@@ -1,5 +1,13 @@
 # System Monitor — 系统监控
 
+[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![Downloads](https://img.shields.io/visual-studio-marketplace/d/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![Rating](https://img.shields.io/visual-studio-marketplace/r/LiChenxi.sysmonitor)](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor)
+[![Open VSX](https://img.shields.io/open-vsx/v/LiChenxi/sysmonitor)](https://open-vsx.org/extension/LiChenxi/sysmonitor)
+[![Open VSX Downloads](https://img.shields.io/open-vsx/dt/LiChenxi/sysmonitor)](https://open-vsx.org/extension/LiChenxi/sysmonitor)
+[![GitHub Stars](https://img.shields.io/github/stars/lcx-0504/sysmonitor)](https://github.com/lcx-0504/sysmonitor)
+[![License](https://img.shields.io/github/license/lcx-0504/sysmonitor)](LICENSE)
+
 轻量级 VS Code / Cursor 扩展，在 **远程 Linux**（Remote-SSH、WSL、Dev Container 等）上监控系统资源。
 
 ![性能面板](https://raw.githubusercontent.com/lcx-0504/sysmonitor/main/screenshots/perf.png)

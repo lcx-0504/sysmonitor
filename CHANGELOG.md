@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.15 — 2025-04-12
+
+- Add Shields.io badges to README (Marketplace version/downloads/rating, Open VSX, GitHub stars, license)
+
 ## 1.0.14 — 2025-04-12
 
 - **README refresh**: add screenshots (performance, process manager, settings), restructure documentation with feature tables
