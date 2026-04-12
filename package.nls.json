@@ -1,6 +1,6 @@
 {
   "displayName": "System Monitor",
-  "description": "Real-time CPU / GPU / RAM / Network monitor",
+  "description": "Remote Linux system monitor — CPU / GPU / RAM / Network",
   "viewTitle": "System Monitor",
   "viewName": "System Monitor",
   "procsName": "Processes",
