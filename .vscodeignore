@@ -6,6 +6,7 @@ assets/
 Chat.md
 genai-chat/
 VSCode Extension Token.txt
+TODO.txt
 release/
 screenshots/
 *.vsix

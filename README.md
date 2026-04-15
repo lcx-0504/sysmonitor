@@ -20,12 +20,12 @@ A lightweight VS Code / Cursor extension for monitoring system resources on **re
 |----------|---------|
 | **CPU** | Usage %, 1/5/15 min load, core count, sparkline chart |
 | **RAM** | Used / Available / Total, sparkline chart |
-| **Disk** | Mount points with progress bars, configurable filters (default / more / all / custom) |
+| **Disk** | Mount points with progress bars, real-time R/W speed with sparkline, configurable filters |
 | **Network** | Upload & download speed, sparkline charts |
 | **SSH Traffic** | Upload & download through your SSH connection |
 | **GPU** | NVIDIA utilization, VRAM, temperature, power draw (multi-GPU) |
 | **GPU Picker** | Select idle GPUs, copy `CUDA_VISIBLE_DEVICES` with one click |
-| **Process Manager** | Sort by CPU / RAM / GPU, searchable, right-click to copy cell or row |
+| **Process Manager** | Sort by CPU / RAM / GPU, searchable, right-click to copy cell, row, or PID |
 | **Status Bar** | Customizable position, priority, and displayed metrics |
 | **Settings** | Built-in settings panel with live preview — no JSON editing needed |
 | **i18n** | Chinese & English, auto-detected |
@@ -36,7 +36,7 @@ A lightweight VS Code / Cursor extension for monitoring system resources on **re
 
 - Sort by **CPU**, **RAM**, or **GPU** usage
 - Search by process name, PID, user, or command (`GPU0` / `#0` syntax to filter by GPU card)
-- Right-click context menu: **Copy Cell** / **Copy Row** (full command included)
+- Right-click context menu: **Copy Cell** / **Copy Row** (full command included) / **Copy PID**
 
 ### Settings Panel
 
@@ -50,14 +50,15 @@ A lightweight VS Code / Cursor extension for monitoring system resources on **re
 ## Quick Start
 
 1. Install the extension from [Marketplace](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor) or [Open VSX](https://open-vsx.org/extension/LiChenxi/sysmonitor)
-2. Open a **remote** workspace: **Remote-SSH**, **WSL**, or a **Dev Container** on **Linux**
+2. Open a **Linux** workspace — **Remote-SSH**, **WSL**, **Dev Container**, or a **local Linux** desktop
 3. The sidebar icon and status bar metrics appear automatically
 
-> **Note**: The extension runs in the remote extension host, not on your local OS. The activity bar icon only appears in remote windows. The remote machine must run **Linux**.
+> **Note**: The system must be **Linux**. On remote connections (SSH / WSL / Dev Container), the extension runs in the remote extension host. On local Linux, it reads system info directly. On non-Linux local machines, the extension offers to add itself to `remote.SSH.defaultExtensions` for auto-install on remote servers.
 
-### First launch (Remote-SSH)
+### First launch
 
-When you open a local window, the extension offers to add itself to `remote.SSH.defaultExtensions` so it auto-installs on every server you connect to.
+- **Remote-SSH / local non-Linux**: The extension offers to add itself to `remote.SSH.defaultExtensions` so it auto-installs on every server you connect to.
+- **Local Linux**: The extension activates immediately and monitors the local system.
 
 ## Configuration
 
@@ -109,9 +110,9 @@ All settings are accessible via the **Settings** button in the sidebar panel. Yo
 
 ## Requirements
 
-- Linux remote server
+- Linux (remote or local)
 - NVIDIA GPU monitoring requires `nvidia-smi`
-- SSH traffic monitoring requires `ss`
+- SSH traffic monitoring requires `ss` (remote connections only)
 
 ## License
 

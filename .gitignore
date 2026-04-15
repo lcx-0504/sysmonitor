@@ -1,6 +1,7 @@
 node_modules/
 *.vsix
 VSCode Extension Token.txt
+TODO.txt
 genai-chat/
 Chat.md
 .DS_Store

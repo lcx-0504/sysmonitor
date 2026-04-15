@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 — 2026-04-15
+
+- **Disk I/O**: real-time read/write speed displayed in disk card header (combined R+W; hover tooltip shows breakdown), with background sparkline chart (read=yellow, write=blue, dynamic scaling)
+- **Status bar Disk I/O**: 5 display modes — off / read / write / both / combined — matching the network speed pattern
+- **GPU idle card IDs**: status bar summary can now show idle GPU IDs (e.g. `3/8 (2,5,7)`) — new `showIdleIds` toggle in settings
+- **GPU VRAM in process table**: GPU tags now show total VRAM (e.g. `#0 4.2G/80G 15%`) with RTL ellipsis on overflow
+- **Tabular numbers**: applied `tabular-nums` globally for stable number widths across all metrics
+- **Speed display**: `fmtBytes` / `fmtBytesShort` now support GB/s
+- **Theme color**: accent color changed from `progressBar.background` to `button.background` for better compatibility with 2026 themes; button text and menu shadow also follow theme variables
+- **UI polish**: fixed GPU card baseline alignment; limited process name column width; primary button active feedback changed to opacity
+
 ## 1.0.23 — 2025-07-14
 
 - **Charts toggle responsive**: background sparklines now hide/show immediately without requiring Reload Window; also applies to dynamically created GPU cards
