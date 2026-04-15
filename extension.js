@@ -323,7 +323,7 @@ function getWebviewHtml(nonce, initCfg) {
   .detail-row + .detail-row { margin-top: 3px; }
   .detail-row span:last-child { color: var(--text); }
   .net-ssh-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-bottom: 10px; }
-  .net-ssh-row > .card { flex: 1 1 140px; min-width: 0; margin-bottom: 0; }
+  .net-ssh-row > .card { flex: 1 1 146px; min-width: 0; margin-bottom: 0; }
   .net-row { display: flex; gap: 6px; }
   .net-item { flex: 1; min-width: 0; }
   .net-dir  { font-size: 10px; color: var(--muted); margin-bottom: 3px; white-space: nowrap; }

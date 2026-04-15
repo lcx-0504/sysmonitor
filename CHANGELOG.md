@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1 — 2026-04-15
+
+- **Layout**: increased CPU/RAM card flex-basis from 140px to 146px, preventing load labels from wrapping at the single/dual row breakpoint
+
 ## 1.1.0 — 2026-04-15
 
 - **Disk I/O**: real-time read/write speed displayed in disk card header (combined R+W; hover tooltip shows breakdown), with background sparkline chart (read=yellow, write=blue, dynamic scaling)
