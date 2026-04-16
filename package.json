@@ -29,6 +29,10 @@
     "gpu",
     "remote"
   ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check extension.js && node --check lib/gpu-collector.js"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
