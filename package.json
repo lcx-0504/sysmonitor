@@ -2,7 +2,7 @@
   "name": "sysmonitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "publisher": "LiChenxi",
   "license": "MIT",
   "icon": "icon.png",
