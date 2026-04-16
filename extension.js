@@ -3,7 +3,8 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
+const { collectGpuSnapshot, createGpuSnapshotCache } = require('./lib/gpu-collector');
 
 const pkg = require(path.join(__dirname, 'package.json'));
 const EXTENSION_ID = `${pkg.publisher}.${pkg.name}`;
@@ -22,6 +23,7 @@ let _log = null;
 let _prevGpuCount = -1;
 let _prevSshState = -1;
 let _prevDiskCount = -1;
+let gpuSnapshotCache = createGpuSnapshotCache();
 function dbg(msg) { if (_log) _log.appendLine('[' + new Date().toISOString().slice(11, 23) + '] ' + msg); }
 
 function getCpuPercent() {
@@ -101,21 +103,7 @@ function getDiskIO() {
 }
 
 function getAllGpus() {
-  try {
-    const out = execSync(
-      'nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit --format=csv,noheader,nounits',
-      { timeout: 3000 }
-    ).toString().trim();
-    return out.split('\n').filter(Boolean).map(line => {
-      const [idx, name, util, memUsed, memTotal, temp, pd, pl] = line.split(', ');
-      return {
-        idx: parseInt(idx), name: name.trim(),
-        util: parseInt(util), memUsed: parseInt(memUsed), memTotal: parseInt(memTotal),
-        temp: parseInt(temp),
-        power: isNaN(parseFloat(pd)) ? null : { draw: parseFloat(pd).toFixed(0), limit: parseFloat(pl).toFixed(0) },
-      };
-    });
-  } catch (e) { if (_prevGpuCount !== 0) { dbg('GPU: nvidia-smi failed: ' + (e.message || e)); _prevGpuCount = 0; } return []; }
+  return collectGpuSnapshot({ execFileSync, dbg }, gpuSnapshotCache).gpus;
 }
 
 function getSshTraffic() {

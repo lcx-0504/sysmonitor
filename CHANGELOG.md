@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **GPU refresh resilience**: split base and power `nvidia-smi` queries, keep the last successful GPU detail snapshot on transient collection failures, and log fallback behavior to the Output Channel
+
 ## 1.1.2 — 2026-04-16
 
 - **Tabular numbers toggle**: added on/off switch in Display settings (default: on) with info tooltip
