@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **GPU refresh resilience**: split base and power `nvidia-smi` queries, keep the last successful GPU detail snapshot on transient collection failures, and log fallback behavior to the Output Channel
+- **Async GPU collection**: GPU data is now collected asynchronously via `execFile` (non-blocking), eliminating UI freezes caused by slow `nvidia-smi` responses. Cached snapshots survive transient timeouts (30 s TTL). State transitions (fresh / fallback / unavailable) are logged to the Output Channel. Inspired by @klay7w's PR #1.
 
 ## 1.1.2 — 2026-04-16
 

@@ -3,8 +3,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync, execFileSync } = require('child_process');
-const { collectGpuSnapshot, createGpuSnapshotCache } = require('./lib/gpu-collector');
+const { execSync, execFile } = require('child_process');
 
 const pkg = require(path.join(__dirname, 'package.json'));
 const EXTENSION_ID = `${pkg.publisher}.${pkg.name}`;
@@ -23,7 +22,11 @@ let _log = null;
 let _prevGpuCount = -1;
 let _prevSshState = -1;
 let _prevDiskCount = -1;
-let gpuSnapshotCache = createGpuSnapshotCache();
+let _gpuCache = [];
+let _gpuCacheTime = 0;
+let _gpuRunning = false;
+let _gpuState = '';
+const GPU_CACHE_TTL = 30000;
 function dbg(msg) { if (_log) _log.appendLine('[' + new Date().toISOString().slice(11, 23) + '] ' + msg); }
 
 function getCpuPercent() {
@@ -103,7 +106,39 @@ function getDiskIO() {
 }
 
 function getAllGpus() {
-  return collectGpuSnapshot({ execFileSync, dbg }, gpuSnapshotCache).gpus;
+  if (!_gpuRunning) {
+    _gpuRunning = true;
+    execFile('nvidia-smi',
+      ['--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit',
+       '--format=csv,noheader,nounits'],
+      { timeout: 5000 },
+      (err, stdout) => {
+        _gpuRunning = false;
+        if (err) {
+          const s = _gpuCache.length > 0 ? 'fallback' : 'unavailable';
+          if (s !== _gpuState) { dbg('gpu snapshot ' + s + ': ' + (err.message || err)); _gpuState = s; }
+          return;
+        }
+        try {
+          _gpuCache = stdout.trim().split('\n').filter(Boolean).map(line => {
+            const [idx, name, util, memUsed, memTotal, temp, pd, pl] = line.split(',').map(s => s.trim());
+            return {
+              idx: parseInt(idx), name,
+              util: parseInt(util), memUsed: parseInt(memUsed), memTotal: parseInt(memTotal),
+              temp: parseInt(temp),
+              power: isNaN(parseFloat(pd)) ? null : { draw: parseFloat(pd).toFixed(0), limit: parseFloat(pl).toFixed(0) },
+            };
+          });
+          _gpuCacheTime = Date.now();
+          if (_gpuState !== 'fresh') { dbg('gpu snapshot fresh (' + _gpuCache.length + ' gpus)'); _gpuState = 'fresh'; }
+        } catch (e) {
+          if (_gpuState !== 'parse-error') { dbg('gpu parse error: ' + e.message); _gpuState = 'parse-error'; }
+        }
+      }
+    );
+  }
+  if (_gpuCacheTime > 0 && Date.now() - _gpuCacheTime > GPU_CACHE_TTL) { _gpuCache = []; _gpuCacheTime = 0; }
+  return _gpuCache;
 }
 
 function getSshTraffic() {
