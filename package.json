@@ -107,6 +107,20 @@
             "sparkMinutes": 5
           },
           "description": "Display settings"
+        },
+        "sysmonitor.terminalLines": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 10000,
+          "description": "Number of terminal lines to display in session view"
+        },
+        "sysmonitor.sessionAutoRefresh": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Auto-refresh interval in seconds for session terminal output"
         }
       }
     }

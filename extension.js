@@ -7,6 +7,8 @@ const { execSync, execFile } = require('child_process');
 
 const pkg = require(path.join(__dirname, 'package.json'));
 const EXTENSION_ID = `${pkg.publisher}.${pkg.name}`;
+const session = require(path.join(__dirname, 'session.js'));
+const sessionWebview = require(path.join(__dirname, 'session-webview.js'));
 
 const isSSH = !!(process.env.SSH_CLIENT || process.env.SSH_CONNECTION || process.env.SSH_TTY);
 const sshClientIp = (process.env.SSH_CONNECTION || '').split(/\s+/)[0] || '';
@@ -320,6 +322,8 @@ function refreshDiskCache(diskCfg, cb) {
 
 function getDiskInfo() { return _diskCache; }
 
+// ── 会话数据采集 → see session.js ──────────────────────────────────────────
+
 function getWebviewHtml(nonce, initCfg) {
   const cfgStr = JSON.stringify(JSON.stringify(initCfg || {}));
   return `<!DOCTYPE html>
@@ -497,6 +501,7 @@ function getWebviewHtml(nonce, initCfg) {
   .ctx-menu { position: fixed; z-index: 999; background: var(--card-bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 0; box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0,0,0,.3)); min-width: 120px; }
   .ctx-menu-item { padding: 4px 12px; font-size: 11px; cursor: pointer; white-space: nowrap; }
   .ctx-menu-item:hover { background: var(--vscode-list-hoverBackground, rgba(255,255,255,.04)); }
+  ${sessionWebview.getSessionCSS()}
 </style>
 </head>
 <body>
@@ -505,6 +510,7 @@ function getWebviewHtml(nonce, initCfg) {
 <div class="topbar">
   <button class="tb on" id="tab-perf-btn">性能</button>
   <button class="tb" id="tab-proc-btn">进程</button>
+  <button class="tb" id="tab-sess-btn">会话</button>
   <div class="spacer"></div>
   <span class="topbar-info" id="updated">--</span>
   <div class="topbar-right">
@@ -533,6 +539,10 @@ function getWebviewHtml(nonce, initCfg) {
   <div class="sett-section">
     <div class="sett-label" id="sett-display-label">显示</div>
     <div id="sett-display-body"></div>
+  </div>
+  <div class="sett-section">
+    <div class="sett-label" id="sett-sess-label">会话</div>
+    <div id="sett-sess-body"></div>
   </div>
   <div class="copyright">v${pkg.version} · © ${new Date().getFullYear()} Li Chenxi · ${pkg.license}<br><a href="https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor">Marketplace</a> · <a href="https://open-vsx.org/extension/LiChenxi/sysmonitor">Open VSX</a> · <a href="https://github.com/lcx-0504/sysmonitor">GitHub</a></div>
   </div>
@@ -622,9 +632,12 @@ function getWebviewHtml(nonce, initCfg) {
   </div>
 </div>
 
+${sessionWebview.getSessionHTML()}
+
 <script nonce="${nonce}">
   var vscode = acquireVsCodeApi();
   var zh = true, T = {}, paused = false;
+  var sessTr = ${JSON.stringify(sessionWebview.getSessionTranslations())};
 
   function colorClass(p) { return p >= 90 ? 'danger' : p >= 70 ? 'warn' : ''; }
   function setBar(id, pct) { var e = document.getElementById(id); if(e){e.style.width=pct+'%'; e.className='fill '+colorClass(pct);} }
@@ -650,6 +663,7 @@ function getWebviewHtml(nonce, initCfg) {
           diskLabel:'Disk',diskUsage:'Disk Usage',diskIO:'Disk I/O',diskIORead:'Read',diskIOWrite:'Write',diskNoData:'No disk data',diskFilter:'Mount Filter',diskDefault:'Default',diskMore:'More',diskAll:'All',diskCustom:'Custom',diskShowVirtual:'Exclude Virtual FS',diskShowVirtualTip:'tmpfs, sysfs, proc, devtmpfs, etc.',diskExcludeFs:'Exclude FS Type',diskExcludeFsTip:'e.g. vfat, ntfs, fuse',diskExcludePath:'Exclude Path Prefix',diskExcludePathTip:'e.g. /proc, /sys, /run',diskHideParent:'Leaf mounts only',diskHideParentTip:'e.g. if /autodl-fs and /autodl-fs/data both exist, only /autodl-fs/data is shown (useful on AutoDL, etc.)',
           displayLabel:'Display',chartsToggle:'Card Background Charts',sparkLabel:'Chart Duration',tabularNums:'Tabular Numbers',tabularNumsTip:'All digits have equal width for stable layout, but may appear slightly wider',
           pcpu:'CPU',pmem:'Memory',pgpu:'GPU',ppid:'PID',puser:'User',pname:'Process',pcpuPct:'CPU%',pmemCol:'Mem',pgpuCol:'GPU',pcount:'{n} processes',pnoGpu:'—',pcmd:'Command',filterHint:'Search...' };
+    Object.assign(T, sessTr[zh ? 'zh' : 'en']);
     document.getElementById('l-1m').textContent = '1' + T.min;
     document.getElementById('l-5m').textContent = '5' + T.min;
     document.getElementById('l-15m').textContent = '15' + T.min;
@@ -662,6 +676,8 @@ function getWebviewHtml(nonce, initCfg) {
     document.getElementById('copy-btn').textContent = T.copyEnv;
     document.getElementById('tab-perf-btn').textContent = T.perfTab;
     document.getElementById('tab-proc-btn').textContent = T.procTab;
+    document.getElementById('tab-sess-btn').textContent = T.sessTab;
+    ${sessionWebview.getSessionSetLangCalls()}
     document.getElementById('settings-btn').textContent = T.settBtn;
     document.getElementById('pause-btn').textContent = paused ? T.stopped : T.running;
     document.getElementById('proc-filter').placeholder = T.filterHint || '';
@@ -730,6 +746,8 @@ function getWebviewHtml(nonce, initCfg) {
       applyTabularNums();
       applyCharts();
       curInterval = data.interval || curInterval;
+      terminalLines = data.terminalLines || terminalLines;
+      sessionAutoRefresh = data.sessionAutoRefresh || sessionAutoRefresh;
       gpuCount = data.gpuCount || gpuCount;
       if (modalOpen) renderSettingsBody();
       return;
@@ -739,6 +757,7 @@ function getWebviewHtml(nonce, initCfg) {
       renderProcTable();
       return;
     }
+    if (handleSessionMessage(data)) return;
     if (data.cmd !== 'update') return;
     var d = data.payload;
     if (d.lang) setLang(d.lang);
@@ -969,10 +988,13 @@ function getWebviewHtml(nonce, initCfg) {
     document.getElementById('tab-'+name).classList.add('active');
     document.getElementById('tab-perf-btn').classList.toggle('on', name==='perf');
     document.getElementById('tab-proc-btn').classList.toggle('on', name==='proc');
+    document.getElementById('tab-sess-btn').classList.toggle('on', name==='sess');
     if (name === 'proc') vscode.postMessage({cmd:'needProcs'});
+    ${sessionWebview.getSessionTabSwitchCode()}
   }
   document.getElementById('tab-perf-btn').addEventListener('click',function(){switchTab('perf');});
   document.getElementById('tab-proc-btn').addEventListener('click',function(){switchTab('proc');});
+  document.getElementById('tab-sess-btn').addEventListener('click',function(){switchTab('sess');});
 
   // ── 暂停 ──
   document.getElementById('pause-btn').addEventListener('click',function(){
@@ -988,6 +1010,8 @@ function getWebviewHtml(nonce, initCfg) {
   var diskCfg = __initCfg.diskCfg || {mountFilter:'default',hideParentMounts:true};
   var displayCfg = __initCfg.displayCfg || {charts:true,tabularNums:true};
   var curInterval = __initCfg.interval || 2, gpuCount = __initCfg.gpuCount || 8, modalOpen = false;
+  var terminalLines = __initCfg.terminalLines || 20;
+  var sessionAutoRefresh = __initCfg.sessionAutoRefresh || 3;
   SPARK_WINDOW = (displayCfg.sparkMinutes || 5) * 60 * 1000;
 
   function applyCharts() {
@@ -1054,6 +1078,7 @@ function getWebviewHtml(nonce, initCfg) {
     document.getElementById('sett-bar-label').textContent = T.statusBar;
     document.getElementById('sett-disk-label').textContent = T.diskLabel;
     document.getElementById('sett-display-label').textContent = T.displayLabel;
+    document.getElementById('sett-sess-label').textContent = T.sessLabel;
     renderIntervalRow();
     renderSettingsBody();
   }
@@ -1267,6 +1292,56 @@ function getWebviewHtml(nonce, initCfg) {
         renderSettingsBody();
       });
     });
+
+    // Sessions settings
+    var sessBody = document.getElementById('sett-sess-body');
+    if (sessBody) {
+      var sh = '';
+      sh += '<div class="sett-row"><span style="font-size:10px;color:var(--muted);min-width:60px">' + T.sessTermLines + '</span>';
+      [10,20,30].forEach(function(n) {
+        sh += '<button class="tb' + (terminalLines === n ? ' on' : '') + '" data-act="term-lines" data-val="' + n + '">' + n + (zh ? ' 行' : ' lines') + '</button>';
+      });
+      sh += '</div>';
+      sh += '<div class="sett-row" style="margin-top:4px"><span style="font-size:10px;color:var(--muted);min-width:60px"></span>';
+      sh += '<input class="sett-input" id="term-lines-input" type="number" min="1" max="10000" value="' + terminalLines + '" placeholder="' + (zh ? '自定义行数' : 'Custom lines') + '" style="width:60px" />';
+      sh += '</div>';
+      sh += '<div class="sett-row" style="margin-top:8px"><span style="font-size:10px;color:var(--muted);min-width:60px">' + T.sessAutoRefresh + '</span>';
+      [0,1,3,5,10,30].forEach(function(s) {
+        var label = s === 0 ? T.sessAutoRefreshOff : s + 's';
+        sh += '<button class="tb' + (sessionAutoRefresh === s ? ' on' : '') + '" data-act="auto-refresh" data-val="' + s + '">' + label + '</button>';
+      });
+      sh += '</div>';
+      sessBody.innerHTML = sh;
+
+      sessBody.querySelectorAll('[data-act="term-lines"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          terminalLines = parseInt(this.dataset.val);
+          vscode.postMessage({cmd:'setConfig',key:'terminalLines',value:terminalLines});
+          renderSettingsBody();
+        });
+      });
+      var termLinesInput = document.getElementById('term-lines-input');
+      if (termLinesInput) {
+        termLinesInput.addEventListener('input', function() {
+          var n = parseInt(this.value);
+          if (!isNaN(n) && n >= 1 && n <= 10000) {
+            terminalLines = n;
+            vscode.postMessage({cmd:'setConfig',key:'terminalLines',value:terminalLines});
+          }
+        });
+        termLinesInput.addEventListener('change', function() {
+          renderSettingsBody();
+        });
+      }
+      sessBody.querySelectorAll('[data-act="auto-refresh"]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          sessionAutoRefresh = parseInt(this.dataset.val);
+          vscode.postMessage({cmd:'setConfig',key:'sessionAutoRefresh',value:sessionAutoRefresh});
+          if (sessionAutoRefresh > 0) startAutoRefresh(); else stopAutoRefresh();
+          renderSettingsBody();
+        });
+      });
+    }
   }
 
   function bindSettingsEvents(body, cfg) {
@@ -1434,6 +1509,12 @@ function getWebviewHtml(nonce, initCfg) {
   }
   renderProcToolbar();
 
+  // ── 会话 tab (see session-webview.js) ──
+  var handleSessionMessage = function(data) {
+    return (${sessionWebview.handleSessionWebviewMessage.toString()})(data);
+  };
+  ${sessionWebview.getSessionJS()}
+
   // ── 右键菜单 ──
   var ctxMenu = null;
   function removeCtxMenu() { if (ctxMenu) { ctxMenu.remove(); ctxMenu = null; } }
@@ -1485,8 +1566,10 @@ const CFG_DEFAULTS = {
   barCfg: { barEnabled: true, alignment: 'left', priority: 10, cpu: true, ram: false, disk: false, diskIO: 'off', net: 'off', ssh: false, gpu: { summary: true, showIdleIds: false, mode: 'off', cards: [], metric: 'both' } },
   diskCfg: { mountFilter: 'default', hideParentMounts: true },
   displayCfg: { charts: true, sparkMinutes: 5, tabularNums: true },
+  terminalLines: 20,
+  sessionAutoRefresh: 3,
 };
-const CFG_KEY_MAP = { interval: 'refreshInterval', barCfg: 'statusBar', diskCfg: 'disk', displayCfg: 'display' };
+const CFG_KEY_MAP = { interval: 'refreshInterval', barCfg: 'statusBar', diskCfg: 'disk', displayCfg: 'display', terminalLines: 'terminalLines', sessionAutoRefresh: 'sessionAutoRefresh' };
 let _cfgCache = null;
 let _selfWriting = false;
 let _dirtyKeys = new Set();
@@ -1499,6 +1582,8 @@ function _readSettingsOnce() {
     barCfg: c.get('statusBar') || CFG_DEFAULTS.barCfg,
     diskCfg: c.get('disk') || CFG_DEFAULTS.diskCfg,
     displayCfg: c.get('display') || CFG_DEFAULTS.displayCfg,
+    terminalLines: c.get('terminalLines', CFG_DEFAULTS.terminalLines),
+    sessionAutoRefresh: c.get('sessionAutoRefresh', CFG_DEFAULTS.sessionAutoRefresh),
   };
 }
 
@@ -1580,7 +1665,7 @@ class MonitorViewProvider {
     const nonce = Math.random().toString(36).slice(2, 18);
     const cfg = getConfig();
     const gpus = getAllGpus();
-    view.webview.html = getWebviewHtml(nonce, { interval: cfg.interval, barCfg: cfg.barCfg, diskCfg: cfg.diskCfg, displayCfg: cfg.displayCfg, gpuCount: gpus.length || 8 });
+    view.webview.html = getWebviewHtml(nonce, { interval: cfg.interval, barCfg: cfg.barCfg, diskCfg: cfg.diskCfg, displayCfg: cfg.displayCfg, terminalLines: cfg.terminalLines, sessionAutoRefresh: cfg.sessionAutoRefresh, gpuCount: gpus.length || 8 });
 
     view.webview.onDidReceiveMessage(msg => {
       if (msg.cmd === 'getConfig') {
@@ -1599,6 +1684,10 @@ class MonitorViewProvider {
           refreshDiskCache(msg.value, () => { if (this._tick) this._tick(); });
         } else if (msg.key === 'display') {
           setConfigValue('displayCfg', msg.value);
+        } else if (msg.key === 'terminalLines') {
+          setConfigValue('terminalLines', msg.value);
+        } else if (msg.key === 'sessionAutoRefresh') {
+          setConfigValue('sessionAutoRefresh', msg.value);
         }
       } else if (msg.cmd === 'openSettings') {
         vscode.commands.executeCommand('workbench.action.openSettings', 'sysmonitor');
@@ -1610,6 +1699,8 @@ class MonitorViewProvider {
         this._paused = !!msg.value;
       } else if (msg.cmd === 'needProcs') {
         this._pushProcs();
+      } else if (session.handleSessionMessage(msg, this)) {
+        // handled by session module
       }
     });
 
@@ -1698,6 +1789,7 @@ class MonitorViewProvider {
     const gpus = getAllGpus();
     this._view.webview.postMessage({
       cmd: 'config', interval: cfg.interval, barCfg: cfg.barCfg, diskCfg: cfg.diskCfg, displayCfg: cfg.displayCfg,
+      terminalLines: cfg.terminalLines, sessionAutoRefresh: cfg.sessionAutoRefresh,
       gpuCount: gpus.length || 8,
     });
   }
@@ -1794,6 +1886,7 @@ function activate(context) {
   _log = vscode.window.createOutputChannel('System Monitor');
   context.subscriptions.push(_log);
   dbg('activate');
+  session.setup(dbg, getConfig);
   const lang = vscode.env.language || '';
   const zh = lang.startsWith('zh');
 
