@@ -4,5 +4,6 @@
   "viewTitle": "系统监控",
   "viewName": "系统监控",
   "procsName": "进程",
-  "cmdOpen": "系统监控: 打开面板"
+  "cmdOpen": "系统监控: 打开面板",
+  "cmdOpenEditor": "系统监控: 在编辑器中打开"
 }

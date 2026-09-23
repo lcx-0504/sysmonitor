@@ -2,7 +2,7 @@
   "name": "sysmonitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "publisher": "LiChenxi",
   "license": "MIT",
   "icon": "icon.png",
@@ -16,6 +16,10 @@
   },
   "engines": {
     "vscode": "^1.70.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check-syntax.js && npm test"
   },
   "categories": [
     "Visualization",
@@ -59,8 +63,22 @@
         "command": "sysmonitor.openPanel",
         "title": "%cmdOpen%",
         "when": "remoteName || isLinux"
+      },
+      {
+        "command": "sysmonitor.openEditor",
+        "title": "%cmdOpenEditor%",
+        "icon": "$(open-in-product)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "sysmonitor.openEditor",
+          "when": "view == sysmonitor.panel",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "System Monitor",
       "properties": {
@@ -79,10 +97,13 @@
             "priority": 10,
             "cpu": true,
             "ram": true,
+            "disk": false,
+            "diskIO": "off",
             "net": "off",
             "ssh": false,
             "gpu": {
               "summary": true,
+              "showIdleIds": false,
               "mode": "off",
               "cards": [],
               "firstN": 2,
@@ -104,7 +125,18 @@
           "type": "object",
           "default": {
             "charts": true,
-            "sparkMinutes": 5
+            "sparkMinutes": 5,
+            "tabularNums": true,
+            "hiddenGroups": {
+              "system": false,
+              "disk": false,
+              "network": false,
+              "gpuSummary": false,
+              "gpuCards": false
+            },
+            "highlightMyGpus": true,
+            "showGpuPicker": true,
+            "showGpuUsers": true
           },
           "description": "Display settings"
         }

@@ -13,3 +13,6 @@ screenshots/
 .vscode/
 tmp/
 test/
+REFACTOR.md
+REFACTOR_CHECKLIST.md
+scripts/

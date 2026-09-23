@@ -4,5 +4,6 @@
   "viewTitle": "System Monitor",
   "viewName": "System Monitor",
   "procsName": "Processes",
-  "cmdOpen": "System Monitor: Open Panel"
+  "cmdOpen": "System Monitor: Open Panel",
+  "cmdOpenEditor": "System Monitor: Open in Editor"
 }

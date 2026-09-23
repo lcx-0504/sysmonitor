@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.0 — 2026-09-24
+
+- Added five independent visibility groups for the performance panel: CPU/RAM, disk, network/SSH, GPU overview, and GPU cards. Collection and status-bar data remain available when a group is hidden.
+- Added SSH TCP round-trip latency, shown with the same adaptive time units as other duration values.
+- Added GPU model names with leading NVIDIA, GeForce, and Tesla prefixes removed; per-card user VRAM labels ranked by usage; an optional theme-color border for GPUs used by the current user; and a switch for the idle-GPU picker. User labels show each user's total VRAM on that card and use the process-tag color thresholds.
+- Added a native view-title action to open multiple monitor Editor tabs with the extension icon. The sidebar and Editor views share live snapshots and process display preferences while keeping temporary view state independent.
+- Improved the process table with horizontal expansion controls for process names and commands, single-core/machine/both CPU modes, used/percent/both RAM modes, consistent left-aligned columns except PID, and complete copy text for combined cells.
+- Made background charts scroll continuously between samples without adding a foreground line. Unified capacity, rate, and duration formatting across the panel, status bar, process table, and tooltips using one decimal place and adaptive K/M/G/T or ms/s/m/h units.
+- Reworked the built-in settings with animated switches, segmented alignment controls, stable dropdown menus, and conditional GPU options. Disk filter presets continue to show their disabled custom-field previews.
+
+## 1.3.0 — 2026-09-23
+
+- Reorganized monitoring into asynchronous collectors, one refresh scheduler, a shared snapshot store, and separate configuration, view, status-bar, and Webview modules.
+- Added provider-based accelerator collection with stable device identities. NVIDIA GPU metrics and process data now update together after both collection steps complete.
+- Normalized existing settings with deep defaults and validation, and added a configurable 1–30 second refresh interval.
+- Fixed Linux kernel-thread names containing `/`, process sorting over the full process set while displaying the top 100, and process-table updates while its context menu is open.
+- Fixed default-route network double counting, SSH traffic directions, GPU count changes, GPU tag opacity, and GPU process identity matching.
+- Fixed Webview refreshes lost when a frontend helper replaced the browser's native `window.postMessage`.
+- Added automated syntax, configuration, collector, scheduler, accelerator, status-bar, Webview, localization, and packaging checks.
+
 ## 1.2.0 — 2026-04-16
 
 - **Fully async GPU pipeline**: All `nvidia-smi` calls are now non-blocking. GPU panel shows “Loading…” on first open, then data appears within seconds via instant callback. Merged UUID mapping into a single GPU query (2-step chain instead of 3). No more `execFileSync` — zero tick blocking from the very first frame. Inspired by @klay7w’s PR #1.

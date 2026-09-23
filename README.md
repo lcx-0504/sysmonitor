@@ -10,90 +10,84 @@
 
 [中文说明](README.zh-CN.md)
 
-A lightweight VS Code / Cursor extension for monitoring system resources on **remote/local Linux** (Remote-SSH, WSL, Dev Containers, local Linux, etc.).
+A lightweight VS Code / Cursor extension for monitoring **remote or local Linux** systems. Keep the monitor in the sidebar, open one or more Editor tabs, and put the metrics you need in the status bar.
 
-![Performance Tab](https://raw.githubusercontent.com/lcx-0504/sysmonitor/main/screenshots/perf.png)
+![System Monitor overview](https://raw.githubusercontent.com/lcx-0504/sysmonitor/main/screenshots/overview.png)
 
-## Features
+The screenshot shows the Chinese UI; the interface follows your VS Code display language.
 
-| Category | Details |
-|----------|---------|
-| **CPU** | Usage %, 1/5/15 min load, core count, sparkline chart |
-| **RAM** | Used / Available / Total, sparkline chart |
-| **Disk** | Mount points with progress bars, real-time R/W speed with sparkline, configurable filters |
-| **Network** | Upload & download speed, sparkline charts |
-| **SSH Traffic** | Upload & download through your SSH connection |
-| **GPU** | NVIDIA utilization, VRAM, temperature, power draw (multi-GPU) |
-| **GPU Picker** | Select idle GPUs, copy `CUDA_VISIBLE_DEVICES` with one click |
-| **Process Manager** | Sort by CPU / RAM / GPU, searchable, right-click to copy cell, row, or PID |
-| **Status Bar** | Customizable position, priority, and displayed metrics |
-| **Settings** | Built-in settings panel with live preview — no JSON editing needed |
-| **i18n** | Chinese & English, auto-detected |
+## Monitoring
 
-### Process Manager
+| Area | What it shows |
+|------|---------------|
+| **CPU and RAM** | CPU usage, 1/5/15-minute load and core count; used, available and total memory |
+| **Disk** | Mount-point capacity and usage, plus read/write speed |
+| **Network and SSH** | Server upload/download rates; SSH connection traffic and TCP round-trip latency |
+| **GPU** | Per-card utilization, VRAM, temperature, power, model, and users of VRAM |
+| **Processes** | PID, process name, user, CPU, RAM, GPU memory and command |
 
-![Process Manager](https://raw.githubusercontent.com/lcx-0504/sysmonitor/main/screenshots/procs.png)
+The performance panel has five independently hideable groups: CPU/RAM, disk, network/SSH, GPU overview, and GPU cards. Hiding a group changes only the panel layout; collection and status-bar data remain available. Background charts scroll smoothly between samples, can be turned off, and support a 1–30-minute window (5 minutes by default).
 
-- Sort by **CPU**, **RAM**, or **GPU** usage
-- Search by process name, PID, user, or command (`GPU0` / `#0` syntax to filter by GPU card)
-- Right-click context menu: **Copy Cell** / **Copy Row** (full command included) / **Copy PID**
+### GPU cards
 
-### Settings Panel
+NVIDIA GPUs are detected through `nvidia-smi`. Cards can appear or disappear while the monitor runs. Model labels omit leading NVIDIA, GeForce, and Tesla prefixes. Below each VRAM bar, user labels show accumulated VRAM per user, ordered by usage and colored by their share of the card; overflow is shown as `(+N)`. You can toggle these labels, the theme-colored border marking GPUs used by your processes, and the idle-GPU picker independently. The picker selects idle cards and copies `CUDA_VISIBLE_DEVICES`.
 
-![Settings](https://raw.githubusercontent.com/lcx-0504/sysmonitor/main/screenshots/settings.png)
+GPU card metrics and GPU process information are committed together after both collection steps complete, so the panel and process tags use a consistent GPU result.
 
-- **Refresh Interval** — 1s / 2s / 5s / 10s
-- **Status Bar** — Toggle visibility, position (left/right), priority, choose which metrics to display
-- **Disk Filter** — Default / More / All / Custom (exclude FS types, path prefixes, virtual FS)
-- **Display** — Enable/disable sparkline charts, chart duration (1–30 min)
+### Process manager
+
+Sort the full process set by CPU, RAM or GPU usage; the table displays the top 100 results. Search by process name, PID, user or command, or use `GPU0` / `#0` to filter by card. CPU cells switch between single-core percentage (default), whole-machine percentage and both; RAM cells switch between used capacity (default), percentage and both. Combined values stay in one cell and copy together. These two display preferences are shared between the sidebar and Editor tabs.
+
+Process-name and command columns expand horizontally from their headers. Only PID is right-aligned. Right-click to copy a cell, a complete row or a PID; the process table stays in place while its context menu is open. Linux `ps` supplies the process CPU percentage as a lifetime average; whole-machine mode divides that value by the logical core count.
+
+### Sidebar, Editor and status bar
+
+Use the native button in the view title to open as many Editor tabs as you need. They share the same collection and snapshots; each tab keeps its own chart history, process filter and other temporary view state. Pausing stops collection for the panel and status bar together.
+
+The status bar can show CPU, RAM, disk capacity or I/O, network and SSH rates, and a GPU summary or per-card statistics. Its visibility, side, priority and individual metrics are configurable. Capacity and speed use 1024-based K/M/G/T units with one decimal place (`/s` for speed); durations use ms, s, m and h.
 
 ## Quick Start
 
-1. Install the extension from [Marketplace](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor) or [Open VSX](https://open-vsx.org/extension/LiChenxi/sysmonitor)
-2. Open a **Linux** workspace — **Remote-SSH**, **WSL**, **Dev Container**, or a **local Linux** desktop
-3. The sidebar icon and status bar metrics appear automatically
+Install the extension from [Marketplace](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor) or [Open VSX](https://open-vsx.org/extension/LiChenxi/sysmonitor). What you see next depends on where VS Code runs the extension:
 
-> **Note**: The system must be **Linux**. On remote connections (SSH / WSL / Dev Container), the extension runs in the remote extension host. On local Linux, it reads system info directly. On non-Linux local machines, the extension offers to add itself to `remote.SSH.defaultExtensions` for auto-install on remote servers.
+- **Local Linux:** The System Monitor sidebar appears, and status-bar metrics start updating.
+- **Local macOS or Windows:** There is no local monitoring panel. The extension may show an optional notification offering to add itself to `remote.SSH.defaultExtensions`, so it can be installed automatically on future Remote-SSH servers. This does not start monitoring the local computer.
+- **Remote Linux:** Connect through Remote-SSH, WSL or a Dev Container, and install or enable the extension in that Linux environment. The System Monitor sidebar and status-bar metrics then appear for the remote system.
 
-### First launch
-
-- **Remote-SSH / local non-Linux**: The extension offers to add itself to `remote.SSH.defaultExtensions` so it auto-installs on every server you connect to.
-- **Local Linux**: The extension activates immediately and monitors the local system.
+Open **System Monitor** from the sidebar to view the full panel. Metrics are collected in the Linux extension host, whether it is local or remote.
 
 ## Configuration
 
-All settings are accessible via the **Settings** button in the sidebar panel. You can also edit `settings.json` directly:
+The built-in **Settings** panel uses switches, segmented controls and dropdowns, with immediate updates. Disk-filter presets keep their custom fields visible as disabled previews. The default refresh interval is 2 seconds; presets of 1, 2, 5 and 10 seconds and custom values from 1–30 seconds are available. Disk mount discovery runs every 10 seconds. Each collector skips a new run if its previous run is still in progress.
+
+Default display settings show all five groups, charts, GPU user labels, current-user GPU borders and the idle-GPU picker. Charts use a 5-minute window and tabular numbers are on. By default, the status bar shows CPU, RAM and the GPU summary; network, SSH, disk and per-card GPU statistics are off.
+
+You can also edit your VS Code **User** `settings.json`. This example **changes** the defaults to show network/SSH and GPUs used by your processes in the status bar, hide the disk group, and use a longer chart window:
 
 ```jsonc
 {
-  "sysmonitor.refreshInterval": 2,
+  "sysmonitor.refreshInterval": 5,
   "sysmonitor.statusBar": {
-    "barEnabled": true,
-    "alignment": "left",
-    "priority": 10,
-    "cpu": true,
-    "ram": true,
     "net": "both",
     "ssh": true,
     "gpu": {
-      "summary": true,
-      "mode": "all",
-      "metric": "both",
-      "skipIdle": false
+      "mode": "my"
     }
   },
-  "sysmonitor.disk": {
-    "mountFilter": "default",
-    "hideParentMounts": true
+  "sysmonitor.display": {
+    "sparkMinutes": 10,
+    "hiddenGroups": { "disk": true }
   }
 }
 ```
+
+Existing settings are merged with validated defaults, including settings saved by older versions. The built-in panel writes to User settings rather than workspace settings.
 
 ### GPU status bar modes
 
 | Mode | Description |
 |------|-------------|
-| `"off"` | No per-card stats |
+| `"off"` | No per-card stats (default) |
 | `"all"` | Show all cards |
 | `"first"` | Show first N cards (`"firstN": 4`) |
 | `"specify"` | Show specific cards (`"cards": [0, 1, 3]`) |
@@ -111,8 +105,8 @@ All settings are accessible via the **Settings** button in the sidebar panel. Yo
 ## Requirements
 
 - Linux (remote or local)
-- NVIDIA GPU monitoring requires `nvidia-smi`
-- SSH traffic monitoring requires `ss` (remote connections only)
+- `nvidia-smi` for NVIDIA GPU monitoring
+- `ss` for SSH traffic and latency on Remote-SSH connections
 
 ## Contributors
 
