@@ -115,14 +115,21 @@
   .disk-item:last-child { margin-bottom: 0; }
   .disk-header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 3px; }
   .disk-mount { font-size: 11px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+  .disk-alert { flex: 0 0 auto; border: 0; padding: 0; background: transparent; color: var(--muted); opacity: .65; font: 400 12px/1 var(--vscode-font-family, sans-serif); cursor: default; }
+  .disk-header-alert { display: none; }
+  .disk-alert:hover, .disk-alert:focus-visible { color: var(--accent); opacity: 1; }
   .disk-info { flex: 0 0 auto; font-size: 10px; color: var(--muted); white-space: nowrap; display: flex; align-items: baseline; gap: 6px; }
+  .disk-usage-wrap { display: inline-flex; align-items: baseline; gap: 3px; }
   .disk-footer { display: none; justify-content: space-between; align-items: baseline; margin-top: 2px; }
   .disk-meta { font-size: 10px; color: var(--muted); }
   .disk-pct { font-size: 10px; font-weight: 600; }
+  .disk-track { position: relative; }
+  .disk-reserved { position: absolute; top: 0; left: 0; height: 100%; background: var(--muted); transition: width var(--metric-transition); }
   #disk-io-val { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   @container (max-width: 200px) {
     .disk-info { display: none; }
     .disk-footer { display: flex; }
+    .disk-header-alert { display: inline-flex; }
   }
   .gpu-mini { flex: 1 1 180px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); position: relative; overflow: hidden; }
   .gpu-mini.my-gpu { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -146,10 +153,17 @@
   .gpu-user.tag-accent { background: color-mix(in srgb, var(--accent) 24%, transparent); }
   .gpu-user.tag-warn { background: color-mix(in srgb, var(--warn) 24%, transparent); }
   .gpu-user.tag-danger { background: color-mix(in srgb, var(--danger) 24%, transparent); }
-  .gpu-user-more { flex: 0 0 auto; line-height: 14px; }
+  .gpu-user-more { flex: 0 0 auto; border: 0; padding: 0; background: transparent; color: var(--muted); font: inherit; line-height: 14px; cursor: default; }
+  .gpu-user-more:hover, .gpu-user-more:focus-visible { color: var(--accent); }
   .gpu-info { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 14px; width: 14px; height: 14px; padding: 0; border: 0; background: transparent; color: var(--muted); opacity: .55; font: 400 13px/1 var(--vscode-font-family, sans-serif); cursor: default; }
   .gpu-info:hover, .gpu-info:focus-visible { color: var(--accent); opacity: 1; }
-  .gpu-info-popover { position: fixed; z-index: 90; padding: 4px 7px; border: 1px solid var(--vscode-editorHoverWidget-border, var(--border)); border-radius: 4px; background: var(--vscode-editorHoverWidget-background, var(--card-bg)); color: var(--vscode-editorHoverWidget-foreground, var(--text)); box-shadow: 0 3px 12px var(--vscode-widget-shadow, rgba(0,0,0,.2)); font-size: 10px; white-space: nowrap; pointer-events: none; }
+  .gpu-info-popover { position: fixed; z-index: 90; padding: 5px; border: 1px solid var(--vscode-editorHoverWidget-border, var(--border)); border-radius: 4px; background: var(--vscode-editorHoverWidget-background, var(--card-bg)); color: var(--vscode-editorHoverWidget-foreground, var(--text)); box-shadow: 0 3px 12px var(--vscode-widget-shadow, rgba(0,0,0,.2)); font-size: 10px; white-space: nowrap; pointer-events: none; }
+  .detail-popover.stacked { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .detail-popover.disk-breakdown { display: grid; grid-template-columns: max-content max-content; column-gap: 12px; row-gap: 3px; }
+  .disk-breakdown-label { text-align: left; }
+  .disk-breakdown-value { text-align: right; font-variant-numeric: tabular-nums; }
+  .detail-popover[hidden] { display: none; }
+  .detail-popover .gpu-user { max-width: min(240px, calc(100vw - 24px)); }
   .gpu-link { font-size: 10px; color: var(--text); cursor: pointer; opacity: .7; transition: opacity .15s; white-space: nowrap; }
   .gpu-link:hover { opacity: 1; text-decoration: underline; color: var(--accent); }
   .capsules { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; margin-bottom: 4px; }

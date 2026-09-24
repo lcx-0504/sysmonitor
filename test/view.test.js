@@ -251,6 +251,26 @@ test('mount filtering is applied once before both views consume a snapshot', () 
   assert.deepEqual(buildMonitorViewModel(snapshot, 'en', { hideParentMounts: false }).performance.disks.map((disk) => disk.mount), ['/', '/data', '/data/child']);
 });
 
+test('disk breakdown, occupied ratio and bar segments use the same capacity snapshot', () => {
+  const gib = 1024 ** 3;
+  const snapshot = {
+    diskTopology: { value: [{ mountPath: '/data', usedBytes: 70 * gib, availableBytes: 25 * gib, totalBytes: 100 * gib, usagePercent: 70 }] },
+    accelerators: { status: 'ready', value: { devices: [], usagesByPid: new Map(), currentUserDeviceKeys: [] } },
+  };
+  const disk = buildMonitorViewModel(snapshot, 'en').performance.disks[0];
+  assert.equal(disk.reservedStr, '5.0G');
+  assert.equal(disk.usedStr, '70.0G');
+  assert.equal(disk.availableStr, '25.0G');
+  assert.equal(disk.occupiedStr, '75.0G');
+  assert.equal(disk.totalStr, '100.0G');
+  assert.equal(disk.reservedPct, 5);
+  assert.equal(disk.occupiedPct, 75);
+  assert.equal(disk.pct, 75);
+  snapshot.diskTopology.value[0].usedBytes = 85 * gib;
+  snapshot.diskTopology.value[0].availableBytes = 10 * gib;
+  assert.equal(buildMonitorViewModel(snapshot, 'en').performance.disks[0].pct, 90);
+});
+
 test('GPU card, process tag and user capsule use the same rounded memory percentage', () => {
   const gib = 1024 ** 3;
   const usedBytes = 71.8 * gib;
@@ -294,11 +314,11 @@ test('GPU footer shows users with a compact info button or falls back to stats',
   const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
   const script = readWebviewScript();
   const footer = script.slice(script.indexOf('  function gpuStatsDescription('), script.indexOf('  var gpuInfoPopover ='));
-  const line = { style: {}, clientWidth: 180, scrollWidth: 100, children: [1], replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); } };
+  const line = { style: {}, dataset: {}, clientWidth: 180, scrollWidth: 100, children: [1], replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); } };
   const info = { style: {}, setAttribute(name, value) { this[name] = value; } };
   const stats = { style: {} };
   const elements = { 'gpu-users-0': line, 'gpu-info-0': info, 'gpu-stats-0': stats };
-  const context = { document: { getElementById: (id) => elements[id], createElement: () => ({}) }, displayCfg: { showGpuUsers: true }, T: { tempLabel: '温度', pwLabel: '功耗' }, activeGpuInfoButton: null, hideGpuInfoPopover() {} };
+  const context = { document: { getElementById: (id) => elements[id], createElement: () => ({}) }, displayCfg: { showGpuUsers: true }, T: { tempLabel: '温度', pwLabel: '功耗' }, activeGpuInfoButton: null, activeDetailButton: null, hideGpuInfoPopover() {}, hideDetailPopover() {} };
   const colors = script.slice(script.indexOf('  function colorClass('), script.indexOf('  function setBar('));
   vm.runInNewContext(`${colors}\n${footer}\nthis.renderGpuUsers = renderGpuUsers; this.gpuStatsMarkup = gpuStatsMarkup;`, context);
   context.renderGpuUsers({ idx: 0, users: [] });
@@ -357,12 +377,137 @@ test('GPU info appears immediately and refreshes while hovered', () => {
   context.show(button);
   assert.equal(popover.hidden, false);
   assert.equal(popover.textContent, '温度 35°C');
+  assert.equal(popover.style.left, '30px');
   assert.equal(popover.style.top, '74px');
   gpu.temp = 36;
   context.refresh();
   assert.equal(popover.textContent, '温度 36°C');
   context.hide(button);
   assert.equal(popover.hidden, true);
+});
+
+test('GPU overflow reveals hidden users as stacked threshold-colored capsules', () => {
+  const script = readWebviewScript();
+  const footer = script.slice(script.indexOf('  function gpuStatsDescription('), script.indexOf('  var gpuInfoPopover ='));
+  const colors = script.slice(script.indexOf('  function colorClass('), script.indexOf('  function setBar('));
+  const line = {
+    dataset: {}, style: {}, clientWidth: 85, children: [],
+    get scrollWidth() { return this.children.reduce((sum, child) => sum + child.textContent.length * 5, 0) + Math.max(0, this.children.length - 1) * 4; },
+    replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); },
+  };
+  const info = { style: {}, setAttribute() {} };
+  const stats = { style: {} };
+  const elements = { 'gpu-users-0': line, 'gpu-info-0': info, 'gpu-stats-0': stats };
+  let tooltipRefreshes = 0;
+  const context = {
+    document: { getElementById: (id) => elements[id], createElement: () => ({ dataset: {} }) },
+    displayCfg: { showGpuUsers: true }, T: { tempLabel: 'Temp', pwLabel: 'Power' },
+    activeDetailButton: null, bindDetailPopoverButton(button) { button.bound = true; }, hideDetailPopover() {}, refreshDetailPopover() { tooltipRefreshes++; },
+  };
+  vm.runInNewContext(`${colors}\n${footer}\nthis.renderGpuUsers = renderGpuUsers;`, context);
+  context.renderGpuUsers({ idx: 0, users: [
+    { name: 'alice', usedStr: '5.0G', percent: 6 },
+    { name: 'bob', usedStr: '72.0G', percent: 90 },
+  ] });
+  assert.equal(line.children[0].className, 'gpu-user tag-accent');
+  const more = line.children[1];
+  assert.equal(more.textContent, '(+1)');
+  assert.equal(more.dataset.gpuMoreStart, '1');
+  assert.equal(more.bound, true);
+  context.renderGpuUsers({ idx: 0, users: [
+    { name: 'alice', usedStr: '5.0G', percent: 6 },
+    { name: 'bob', usedStr: '72.0G', percent: 90 },
+  ] });
+  assert.equal(line.children[1], more);
+  context.activeDetailButton = more;
+  context.renderGpuUsers({ idx: 0, users: [
+    { name: 'alice', usedStr: '5.0G', percent: 6 },
+    { name: 'bob', usedStr: '72.1G', percent: 90 },
+  ] });
+  assert.equal(line.children[1], more);
+  assert.equal(tooltipRefreshes, 1);
+
+  const detailCode = script.slice(script.indexOf('  var detailPopover ='), script.indexOf('  function applyCharts()'));
+  const popover = {
+    style: {}, hidden: true, offsetWidth: 120, offsetHeight: 30, children: [],
+    classList: { names: new Set(), add(name) { this.names.add(name); }, remove(name) { this.names.delete(name); } },
+    replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); },
+  };
+  const handlers = {};
+  const button = {
+    dataset: { gpuMore: '0', gpuMoreStart: '1' }, style: {}, isConnected: true,
+    getClientRects: () => [{}], getBoundingClientRect: () => ({ left: 166, width: 14, right: 180, top: 100, bottom: 114 }),
+    addEventListener(name, handler) { handlers[name] = handler; },
+  };
+  const detailContext = {
+    document: { createElement: (tag) => tag === 'div' ? popover : {}, body: { appendChild() {} } },
+    window: { innerWidth: 300, innerHeight: 200, addEventListener() {} },
+    lastGpuPayload: [{ idx: 0, users: [{ name: 'alice', usedStr: '5.0G', percent: 6 }, { name: 'bob', usedStr: '72.0G', percent: 90 }] }],
+    lastDiskPayload: [], T: { diskReserved: '预留', used: '已用', avail: '可用', total: '总计' },
+  };
+  vm.runInNewContext(`${colors}\n${detailCode}\nthis.bind = bindDetailPopoverButton; this.refresh = refreshDetailPopover;`, detailContext);
+  detailContext.bind(button);
+  handlers.mouseenter();
+  assert.equal(popover.hidden, false);
+  assert.equal(popover.style.left, '113px');
+  assert.equal(popover.children[0].textContent, 'bob (72.0G)');
+  assert.equal(popover.children[0].className, 'gpu-user tag-danger');
+  handlers.mouseleave();
+  assert.equal(popover.hidden, true);
+
+  detailContext.lastDiskPayload = [{ pct: 75, reservedStr: '5.0G', usedStr: '70.0G', availableStr: '25.0G', totalStr: '100.0G' }];
+  button.dataset = { diskInfo: '0' };
+  handlers.mouseenter();
+  assert.equal(popover.hidden, false);
+  assert.equal(popover.style.left, '60px');
+  assert.equal(popover.classList.names.has('disk-breakdown'), true);
+  assert.deepEqual(popover.children.map((child) => child.textContent), ['预留', '5.0G', '已用', '70.0G', '可用', '25.0G', '总计', '100.0G']);
+  detailContext.lastDiskPayload[0].availableStr = '24.0G';
+  detailContext.refresh();
+  assert.equal(popover.children[5].textContent, '24.0G');
+  detailContext.lastDiskPayload = [];
+  detailContext.refresh();
+  assert.equal(popover.hidden, true);
+});
+
+test('disk always shows a rightmost breakdown trigger and reserved-first segments', () => {
+  const performanceScript = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview-performance.js'), 'utf8');
+  const renderCode = performanceScript.slice(performanceScript.indexOf('  function diskBreakdownDescription('));
+  const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
+  const card = { style: {} };
+  const body = { innerHTML: '', querySelectorAll: () => [] };
+  const segments = { 'disk-reserved-0': { style: {} }, 'disk-fill-0': { style: {} } };
+  const context = {
+    document: { getElementById: (id) => id === 'disk-card' ? card : id === 'disk-body' ? body : segments[id] },
+    renderedDiskKeys: [], lastDiskPayload: [], T: { diskReserved: '预留', used: '已用', avail: '可用', total: '总计' },
+    colorClass: (pct) => pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : '',
+    esc: (value) => value, bindDetailPopoverButton() {}, requestAnimationFrame(callback) { callback(); }, refreshDetailPopover() {},
+  };
+  vm.runInNewContext(`${renderCode}\nthis.renderDisk = renderDisk; this.updateDiskBar = updateDiskBar;`, context);
+  context.renderDisk([{ mount: '/data', occupiedStr: '75.0G', reservedStr: '5.0G', usedStr: '70.0G', availableStr: '25.0G', totalStr: '100.0G', reservedPct: 5, occupiedPct: 75, pct: 75 }]);
+  assert.match(body.innerHTML, /disk-mount[^>]*>\/data<\/span><button class="disk-alert disk-header-alert"[^>]*>ⓘ<\/button><span class="disk-info"><span class="disk-meta"[^>]*>75\.0G \/ 100\.0G<\/span><span class="disk-usage-wrap"><span class="disk-pct warn"[^>]*>75%<\/span><button class="disk-alert"/);
+  assert.equal((body.innerHTML.match(/class="disk-alert(?: disk-header-alert)?"/g) || []).length, 2);
+  assert.doesNotMatch(body.innerHTML, /style="display:none"/);
+  assert.match(body.innerHTML, /disk-track"><div class="fill warn"[^>]*><\/div><div class="disk-reserved"/);
+  assert.equal(segments['disk-reserved-0'].style.width, '5%');
+  assert.equal(segments['disk-fill-0'].style.width, '75%');
+  context.updateDiskBar({ reservedPct: 0.1, occupiedPct: 70.1, pct: 70 }, 0);
+  assert.equal(segments['disk-reserved-0'].style.width, '0.1%');
+  assert.equal(segments['disk-fill-0'].style.width, '70.1%');
+  context.updateDiskBar({ reservedPct: 40, occupiedPct: 40.1, pct: 40 }, 0);
+  assert.equal(segments['disk-reserved-0'].style.width, '40%');
+  assert.equal(segments['disk-fill-0'].style.width, '40.1%');
+  assert.match(style, /\.gpu-info-popover\s*\{[^}]*padding:\s*5px;/);
+  assert.match(style, /\.disk-track\s*\{[^}]*position:\s*relative;/);
+  assert.match(style, /\.disk-reserved\s*\{[^}]*position:\s*absolute;[^}]*background:\s*var\(--muted\);/);
+  assert.match(style, /\.fill\s*\{[^}]*border-radius:\s*2px;/);
+  assert.match(style, /\.detail-popover\.disk-breakdown\s*\{[^}]*display:\s*grid;/);
+  assert.match(style, /\.disk-breakdown-value\s*\{[^}]*text-align:\s*right;/);
+  assert.match(style, /\.disk-alert\s*\{[^}]*cursor:\s*default;/);
+  assert.match(style.slice(style.indexOf('@container (max-width: 200px)'), style.indexOf('  .gpu-mini')), /\.disk-header-alert\s*\{\s*display:\s*inline-flex;/);
+  assert.match(style, /\.gpu-user-more\s*\{[^}]*cursor:\s*default;/);
+  context.renderDisk([{ mount: '/other', occupiedStr: '70.0G', reservedStr: '0.0K', usedStr: '70.0G', availableStr: '30.0G', totalStr: '100.0G', reservedPct: 0, occupiedPct: 70, pct: 70 }]);
+  assert.match(body.innerHTML, /class="track disk-track"/);
 });
 
 test('returning to the performance tab redraws GPU user capsules', () => {

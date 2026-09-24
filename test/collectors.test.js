@@ -11,6 +11,7 @@ const { NetworkCollector } = require('../src/collectors/network-collector');
 const { DiskIoCollector } = require('../src/collectors/disk-io-collector');
 const { ProcessCollector } = require('../src/collectors/process-collector');
 const { DiskTopologyCollector } = require('../src/collectors/disk-topology-collector');
+const { parseDfOutput } = require('../src/domain/disk');
 
 test('network parser selects default-route interfaces and avoids bridge/veth double counting', () => {
   const routes = 'Iface Destination Gateway Flags RefCnt Use Metric Mask\neth0 00000000 01010101 0003 0 0 0 00000000\ndocker0 0000A8C0 00000000 0001 0 0 0 00FFFFFF\n';
@@ -131,6 +132,9 @@ test('network and disk I/O collectors calculate rates only after a valid baselin
 test('process and disk topology collectors use async command adapters', async () => {
   const processCollector = new ProcessCollector({ commandRunner: { execFile: async () => ({ stdout: '7 root 1.0 2048 Sun Jul 13 12:34:56 2026 /bin/test --flag\n' }) }, osModule: { totalmem: () => 1024 * 1024 * 1024 } });
   assert.equal((await processCollector.collect())[0].processName, 'test');
-  const topologyCollector = new DiskTopologyCollector({ commandRunner: { execFile: async () => ({ stdout: JSON.stringify({ filesystems: [{ fstype: 'ext4', size: 1000, used: 500, 'use%': '50%', target: '/data' }] }) }) }, getDiskConfig: () => ({ mountFilter: 'all' }) });
-  assert.deepEqual(await topologyCollector.collect(), [{ mountPath: '/data', fileSystemType: 'ext4', totalBytes: 1000, usedBytes: 500, usagePercent: 50 }]);
+  let args;
+  const topologyCollector = new DiskTopologyCollector({ commandRunner: { execFile: async (_command, commandArgs) => { args = commandArgs; return { stdout: JSON.stringify({ filesystems: [{ fstype: 'ext4', size: 1000, used: 500, avail: 400, 'use%': '56%', target: '/data' }] }) }; } }, getDiskConfig: () => ({ mountFilter: 'all' }) });
+  assert.deepEqual(await topologyCollector.collect(), [{ mountPath: '/data', fileSystemType: 'ext4', totalBytes: 1000, usedBytes: 500, availableBytes: 400, usagePercent: 56 }]);
+  assert.match(args.join(','), /AVAIL/);
+  assert.deepEqual(parseDfOutput('Filesystem Type 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 ext4 1000 500 400 56% /data\n', { mountFilter: 'all' }), [{ mountPath: '/data', fileSystemType: 'ext4', totalBytes: 1024000, usedBytes: 512000, availableBytes: 409600, usagePercent: 56 }]);
 });

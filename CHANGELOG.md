@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.2 — 2026-09-24
+
+- Kept rate-chart scaling tied to the visible time window so incoming samples do not abruptly rescale the entire chart.
+- Split the Webview into smaller performance, process, and settings modules, and aligned GPU user-memory colors with process tags and card thresholds.
+- Added stacked hover details for overflowed GPU user labels and compact hover details for disk capacity, with consistent popover spacing and non-clickable cursor behavior.
+- Reworked disk capacity around total, used, and available bytes: a reserved/used/available segmented bar, an occupied-to-total value and percentage, and an always-available four-row breakdown. The reserved segment uses the current theme, and narrow layouts place its info icon beside the mount path.
+- Rendered disk capacity with a rounded occupied bar and a square-ended reserved overlay, keeping the same shape at very small segment sizes.
+
 ## 1.4.1 — 2026-09-24
 
 - Aligned chart color transitions with the metric bars while keeping time-based scrolling independent.

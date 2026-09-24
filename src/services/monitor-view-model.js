@@ -56,7 +56,20 @@ function buildProcessRows(processes, acceleratorData, coreCount) {
 }
 
 function buildDisks(topology, diskConfig) {
-  let disks = topology.map((disk) => ({ mount: disk.mountPath, usedStr: formatDiskBytes(disk.usedBytes), totalStr: formatDiskBytes(disk.totalBytes), pct: disk.usagePercent }));
+  let disks = topology.map((disk) => {
+    const totalBytes = Math.max(0, numeric(disk.totalBytes));
+    const usedBytes = Math.max(0, numeric(disk.usedBytes));
+    const availableBytes = Math.min(totalBytes, Math.max(0, disk.availableBytes === undefined ? totalBytes - usedBytes : numeric(disk.availableBytes)));
+    const reservedBytes = Math.max(0, totalBytes - usedBytes - availableBytes);
+    const occupiedBytes = totalBytes - availableBytes;
+    return {
+      mount: disk.mountPath,
+      occupiedStr: formatDiskBytes(occupiedBytes), usedStr: formatDiskBytes(usedBytes), availableStr: formatDiskBytes(availableBytes), reservedStr: formatDiskBytes(reservedBytes), totalStr: formatDiskBytes(totalBytes),
+      reservedPct: totalBytes > 0 ? reservedBytes / totalBytes * 100 : 0,
+      occupiedPct: totalBytes > 0 ? occupiedBytes / totalBytes * 100 : 0,
+      pct: roundedPercent(occupiedBytes, totalBytes),
+    };
+  });
   if (diskConfig.hideParentMounts !== false) {
     const mounts = disks.map((disk) => disk.mount);
     disks = disks.filter((disk) => disk.mount === '/' || !mounts.some((mount) => mount !== disk.mount && mount.startsWith(`${disk.mount}/`)));

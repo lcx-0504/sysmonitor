@@ -21,16 +21,20 @@ The screenshot shows the Chinese UI; the interface follows your VS Code display 
 | Area | What it shows |
 |------|---------------|
 | **CPU and RAM** | CPU usage, 1/5/15-minute load and core count; used, available and total memory |
-| **Disk** | Mount-point capacity and usage, plus read/write speed |
+| **Disk** | Mount-point occupied, used, reserved and available capacity, plus read/write speed |
 | **Network and SSH** | Server upload/download rates; SSH connection traffic and TCP round-trip latency |
 | **GPU** | Per-card utilization, VRAM, temperature, power, model, and users of VRAM |
 | **Processes** | PID, process name, user, CPU, RAM, GPU memory and command |
 
 The performance panel has five independently hideable groups: CPU/RAM, disk, network/SSH, GPU overview, and GPU cards. Hiding a group changes only the panel layout; collection and status-bar data remain available. Background charts scroll smoothly between samples, can be turned off, and support a 1–30-minute window (5 minutes by default).
 
+### Disk capacity
+
+Each mount's bar shows reserved space in gray, used space in the normal threshold color, and remaining available space as the unfilled portion. The value beside the bar is `(total − available) / total`; the percentage uses the same occupied-to-total ratio, turning yellow at 70% and red at 90%. Hover over `ⓘ` for reserved, used, available and total capacities. “Reserved” is the display name for `total − used − available`; it includes space unavailable to ordinary users regardless of the filesystem's reason. In narrow panels, the info icon moves to the mount-path row.
+
 ### GPU cards
 
-NVIDIA GPUs are detected through `nvidia-smi`. Cards can appear or disappear while the monitor runs. Model labels omit leading NVIDIA, GeForce, and Tesla prefixes. Below each VRAM bar, user labels show accumulated VRAM per user, ordered by usage and colored by their share of the card; overflow is shown as `(+N)`. You can toggle these labels, the theme-colored border marking GPUs used by your processes, and the idle-GPU picker independently. The picker selects idle cards and copies `CUDA_VISIBLE_DEVICES`.
+NVIDIA GPUs are detected through `nvidia-smi`. Cards can appear or disappear while the monitor runs. Model labels omit leading NVIDIA, GeForce, and Tesla prefixes. Below each VRAM bar, user labels show accumulated VRAM per user, ordered by usage and colored by their share of the card; hover over `(+N)` to see hidden users in a stacked list. You can toggle these labels, the theme-colored border marking GPUs used by your processes, and the idle-GPU picker independently. The picker selects idle cards and copies `CUDA_VISIBLE_DEVICES`.
 
 GPU card metrics and GPU process information are committed together after both collection steps complete, so the panel and process tags use a consistent GPU result.
 

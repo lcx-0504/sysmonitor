@@ -34,7 +34,9 @@ function parseFindmntOutput(raw, diskConfig) {
   return filesystems.reduce((mounts, entry) => {
     const fileSystemType = entry.fstype || ''; const mountPath = entry.target || '';
     if (shouldExclude(fileSystemType, mountPath, diskConfig) || !entry.size) return mounts;
-    mounts.push({ mountPath, fileSystemType, totalBytes: Number(entry.size), usedBytes: Number(entry.used) || 0, usagePercent: Number.parseInt(entry['use%'], 10) || 0 });
+    const totalBytes = Number(entry.size); const usedBytes = Number(entry.used) || 0;
+    const availableBytes = entry.avail === undefined ? Math.max(0, totalBytes - usedBytes) : Number(entry.avail) || 0;
+    mounts.push({ mountPath, fileSystemType, totalBytes, usedBytes, availableBytes, usagePercent: Number.parseInt(entry['use%'], 10) || 0 });
     return mounts;
   }, []);
 }
@@ -43,10 +45,10 @@ function parseDfOutput(raw, diskConfig) {
   return raw.trim().split('\n').slice(1).reduce((mounts, line) => {
     const fields = line.trim().split(/\s+/); if (fields.length < 7) return mounts;
     const [source, fileSystemType, blocks, used, available, percent, ...mountParts] = fields;
-    void source; void available;
+    void source;
     const mountPath = mountParts.join(' '); const totalBytes = Number(blocks) * 1024;
     if (!totalBytes || shouldExclude(fileSystemType, mountPath, diskConfig)) return mounts;
-    mounts.push({ mountPath, fileSystemType, totalBytes, usedBytes: Number(used) * 1024, usagePercent: Number.parseInt(percent, 10) || 0 });
+    mounts.push({ mountPath, fileSystemType, totalBytes, usedBytes: Number(used) * 1024, availableBytes: Number(available) * 1024, usagePercent: Number.parseInt(percent, 10) || 0 });
     return mounts;
   }, []);
 }
