@@ -60,20 +60,30 @@
     var progress = Math.max(0, Math.min(1, (Date.now() - latest.t) / Math.max(1, (curInterval || 2) * 1000)));
     return previous.t + (latest.t - previous.t) * progress;
   }
-  function sparkPaths(hist, maxVal) {
+  function sparkInterpolatedValue(before, after, time) {
+    var span = after.t - before.t;
+    return span > 0 ? before.v + (after.v - before.v) * (time - before.t) / span : after.v;
+  }
+  function sparkPaths(hist, maxVal, viewTime) {
     if (hist.length < 2) return null;
-    var now = sparkDisplayTime(hist);
+    var now = viewTime === undefined ? sparkDisplayTime(hist) : viewTime;
     var t0 = now - SPARK_WINDOW;
     var pts = [];
     var firstInside = 0;
     while (firstInside < hist.length && hist[firstInside].t < t0) firstInside++;
     if (firstInside > 0 && firstInside < hist.length) {
       var before = hist[firstInside - 1], after = hist[firstInside];
-      var span = after.t - before.t;
-      var startValue = span > 0 ? before.v + (after.v - before.v) * (t0 - before.t) / span : after.v;
+      var startValue = sparkInterpolatedValue(before, after, t0);
       pts.push('0,' + (100 - Math.min(startValue / maxVal * 100, 100)).toFixed(1));
     }
     for (var i = firstInside; i < hist.length; i++) {
+      if (hist[i].t > now) {
+        if (i > 0 && hist[i - 1].t <= now) {
+          var endValue = sparkInterpolatedValue(hist[i - 1], hist[i], now);
+          pts.push('100,' + (100 - Math.min(endValue / maxVal * 100, 100)).toFixed(1));
+        }
+        break;
+      }
       var x = ((hist[i].t - t0) / SPARK_WINDOW * 100).toFixed(4);
       var y = (100 - Math.min(hist[i].v / maxVal * 100, 100)).toFixed(1);
       pts.push(x + ',' + y);
@@ -83,17 +93,38 @@
     var area = line + 'L' + pts[pts.length-1].split(',')[0] + ',100L' + pts[0].split(',')[0] + ',100Z';
     return { line: line, area: area };
   }
-  function renderSpark(areaEl, lineEl, hist, maxVal, color) {
-    var p = sparkPaths(hist, maxVal);
+  function renderSpark(areaEl, lineEl, hist, maxVal, color, viewTime) {
+    var p = sparkPaths(hist, maxVal, viewTime);
     if (!p) { areaEl.removeAttribute('d'); return; }
     areaEl.setAttribute('d', p.area);
     areaEl.style.fill = color;
     areaEl.setAttribute('fill-opacity', document.body.classList.contains('vscode-dark') ? '0.12' : '0.06');
   }
-  function sparkMaximum(first, second) {
-    var maximum = 1;
-    [first, second].forEach(function(series) { if (series) series.forEach(function(point) { if (point.v > maximum) maximum = point.v; }); });
+  function sparkVisibleMaximum(hist, now) {
+    if (!hist) return 0;
+    var start = now - SPARK_WINDOW;
+    var maximum = 0;
+    for (var i = 0; i < hist.length; i++) {
+      var point = hist[i];
+      if (point.t >= start && point.t <= now && point.v > maximum) maximum = point.v;
+      if (i === 0) continue;
+      var before = hist[i - 1];
+      if (before.t < start && point.t > start) maximum = Math.max(maximum, sparkInterpolatedValue(before, point, start));
+      if (before.t <= now && point.t > now) maximum = Math.max(maximum, sparkInterpolatedValue(before, point, now));
+    }
     return maximum;
+  }
+  function sparkMaximum(first, second, viewTime) {
+    var timeline = first && first.length >= 2 ? first : (second || []);
+    var now = viewTime === undefined ? sparkDisplayTime(timeline) : viewTime;
+    return Math.max(1, sparkVisibleMaximum(first, now), sparkVisibleMaximum(second, now));
+  }
+  function renderRatePair(first, second, firstAreaId, secondAreaId, firstColor, secondColor) {
+    var timeline = first.length >= 2 ? first : second;
+    var now = sparkDisplayTime(timeline);
+    var maximum = sparkMaximum(first, second, now);
+    renderSpark(document.getElementById(firstAreaId), null, first, maximum, firstColor, now);
+    renderSpark(document.getElementById(secondAreaId), null, second, maximum, secondColor, now);
   }
   var lastSparkFrame = 0;
   function animateSparks(frameTime) {
@@ -101,12 +132,9 @@
       lastSparkFrame = frameTime;
       renderSpark(document.getElementById('cpu-spark-area'), null, cpuHist, 100, sparkColor(cpuHist.length ? cpuHist[cpuHist.length - 1].v : 0));
       renderSpark(document.getElementById('ram-spark-area'), null, ramHist, 100, sparkColor(ramHist.length ? ramHist[ramHist.length - 1].v : 0));
-      renderSpark(document.getElementById('net-spark-tx-area'), null, netTxHist, sparkMaximum(netTxHist, netRxHist), 'var(--warn)');
-      renderSpark(document.getElementById('net-spark-rx-area'), null, netRxHist, sparkMaximum(netTxHist, netRxHist), 'var(--accent)');
-      renderSpark(document.getElementById('ssh-spark-tx-area'), null, sshTxHist, sparkMaximum(sshTxHist, sshRxHist), 'var(--warn)');
-      renderSpark(document.getElementById('ssh-spark-rx-area'), null, sshRxHist, sparkMaximum(sshTxHist, sshRxHist), 'var(--accent)');
-      renderSpark(document.getElementById('disk-spark-r-area'), null, diskRHist, sparkMaximum(diskRHist, diskWHist), 'var(--warn)');
-      renderSpark(document.getElementById('disk-spark-w-area'), null, diskWHist, sparkMaximum(diskRHist, diskWHist), 'var(--accent)');
+      renderRatePair(netTxHist, netRxHist, 'net-spark-tx-area', 'net-spark-rx-area', 'var(--warn)', 'var(--accent)');
+      renderRatePair(sshTxHist, sshRxHist, 'ssh-spark-tx-area', 'ssh-spark-rx-area', 'var(--warn)', 'var(--accent)');
+      renderRatePair(diskRHist, diskWHist, 'disk-spark-r-area', 'disk-spark-w-area', 'var(--warn)', 'var(--accent)');
       Object.keys(gpuHist).forEach(function(index) {
         var series = gpuHist[index];
         var area = document.getElementById('gpu-spark-area-' + index);
@@ -184,11 +212,7 @@
       }
       pushHist(diskRHist, performance.diskIo.readBytesPerSecond || 0);
       pushHist(diskWHist, performance.diskIo.writeBytesPerSecond || 0);
-      var diskMax = 1;
-      diskRHist.forEach(function(p) { if (p.v > diskMax) diskMax = p.v; });
-      diskWHist.forEach(function(p) { if (p.v > diskMax) diskMax = p.v; });
-      renderSpark(document.getElementById('disk-spark-r-area'), null, diskRHist, diskMax, 'var(--warn)');
-      renderSpark(document.getElementById('disk-spark-w-area'), null, diskWHist, diskMax, 'var(--accent)');
+      renderRatePair(diskRHist, diskWHist, 'disk-spark-r-area', 'disk-spark-w-area', 'var(--warn)', 'var(--accent)');
     }
 
     var sshCard = document.getElementById('ssh-card');
@@ -203,11 +227,7 @@
       document.getElementById('ssh-latency').title = T.latency + ' · TCP RTT';
       pushHist(sshTxHist, performance.sshTraffic.uploadBytesPerSecond || 0);
       pushHist(sshRxHist, performance.sshTraffic.downloadBytesPerSecond || 0);
-      var sshMax = 1;
-      sshTxHist.forEach(function(p) { if (p.v > sshMax) sshMax = p.v; });
-      sshRxHist.forEach(function(p) { if (p.v > sshMax) sshMax = p.v; });
-      renderSpark(document.getElementById('ssh-spark-tx-area'), null, sshTxHist, sshMax, 'var(--warn)');
-      renderSpark(document.getElementById('ssh-spark-rx-area'), null, sshRxHist, sshMax, 'var(--accent)');
+      renderRatePair(sshTxHist, sshRxHist, 'ssh-spark-tx-area', 'ssh-spark-rx-area', 'var(--warn)', 'var(--accent)');
       document.getElementById('net-up-label').textContent = T.up;
       document.getElementById('net-down-label').textContent = T.down;
       document.getElementById('ssh-up-label').textContent = T.up;
@@ -320,11 +340,7 @@
     document.getElementById('net-rx').textContent = performance.network.receiveText;
     pushHist(netTxHist, performance.network.transmitBytesPerSecond || 0);
     pushHist(netRxHist, performance.network.receiveBytesPerSecond || 0);
-    var netMax = 1;
-    netTxHist.forEach(function(p) { if (p.v > netMax) netMax = p.v; });
-    netRxHist.forEach(function(p) { if (p.v > netMax) netMax = p.v; });
-    renderSpark(document.getElementById('net-spark-tx-area'), null, netTxHist, netMax, 'var(--warn)');
-    renderSpark(document.getElementById('net-spark-rx-area'), null, netRxHist, netMax, 'var(--accent)');
+    renderRatePair(netTxHist, netRxHist, 'net-spark-tx-area', 'net-spark-rx-area', 'var(--warn)', 'var(--accent)');
 
     var freeCard = document.getElementById('free-gpu-card');
     var capsElem = document.getElementById('gpu-capsules');

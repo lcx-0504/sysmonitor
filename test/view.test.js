@@ -412,6 +412,36 @@ test('spark area grows from real samples, then interpolates the left boundary af
   assert.equal(retained[0].t, 1000);
 });
 
+test('rate chart scale follows only the visible viewport, including interpolated edges', () => {
+  const script = readWebviewScript();
+  for (const pair of ['netTxHist, netRxHist', 'sshTxHist, sshRxHist', 'diskRHist, diskWHist']) {
+    assert.equal(script.split(`renderRatePair(${pair},`).length - 1, 2);
+  }
+  const geometry = script.slice(script.indexOf('  function sparkDisplayTime('), script.indexOf('  function renderSpark('));
+  const maximum = script.slice(script.indexOf('  function sparkVisibleMaximum('), script.indexOf('  var lastSparkFrame'));
+  let now = 5000;
+  const context = { Date: { now: () => now }, curInterval: 2, SPARK_WINDOW: 2000 };
+  vm.runInNewContext(`${geometry}\n${maximum}\nthis.maximum = sparkMaximum; this.paths = sparkPaths;`, context);
+
+  const enteringPeak = [{ t: 1000, v: 10 }, { t: 3000, v: 10 }, { t: 5000, v: 100 }];
+  assert.equal(context.maximum(enteringPeak, []), 10);
+  now = 6000;
+  assert.equal(context.maximum(enteringPeak, []), 55);
+  assert.match(context.paths(enteringPeak, 55).area, /L100,0\.0L100,100/);
+  now = 7000;
+  assert.equal(context.maximum(enteringPeak, []), 100);
+
+  const leavingPeak = [{ t: 1000, v: 100 }, { t: 3000, v: 10 }, { t: 5000, v: 10 }];
+  now = 5000;
+  assert.equal(context.maximum(leavingPeak, []), 100);
+  now = 6000;
+  assert.equal(context.maximum(leavingPeak, []), 55);
+  now = 7000;
+  assert.equal(context.maximum(leavingPeak, []), 10);
+
+  assert.equal(context.maximum([{ t: 1000, v: 2 }, { t: 3000, v: 2 }, { t: 5000, v: 2 }], enteringPeak), 100);
+});
+
 test('process display preferences are shared across sidebar and editor clients', async () => {
   const updates = [];
   const messages = [];
