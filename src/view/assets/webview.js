@@ -3,6 +3,7 @@
   var zh = true, T = {}, paused = false;
 
   function colorClass(p) { return p >= 90 ? 'danger' : p >= 70 ? 'warn' : ''; }
+  function tagColorClass(p) { return 'tag-' + (colorClass(p) || 'accent'); }
   function setBar(id, percent) { var barElement = document.getElementById(id); if (barElement) { barElement.style.width = percent + '%'; barElement.className = 'fill ' + colorClass(percent); } }
 
   function setLang(lang) {
@@ -148,43 +149,41 @@
       if (modalOpen && !settingMenu) renderSettingsBody();
       return;
     }
-    if (data.cmd === 'procs') {
-      if (ctxMenu) pendingProcData = data.data || [];
-      else { procData = data.data || []; renderProcTable(); }
-      return;
-    }
-    if (data.cmd !== 'update') return;
-    var snapshotPayload = data.payload;
-    lastGpuPayload = snapshotPayload.gpus || [];
-    if (snapshotPayload.lang) setLang(snapshotPayload.lang);
+    if (data.cmd !== 'snapshot') return;
+    var viewModel = data.viewModel;
+    var performance = viewModel.performance;
+    if (performance.language) setLang(performance.language);
+    if (ctxMenu) pendingProcData = viewModel.processes || [];
+    else { procData = viewModel.processes || []; renderProcTable(); }
+    lastGpuPayload = performance.gpus || [];
 
-    document.getElementById('cpu-val').textContent = snapshotPayload.cpu + '%';
-    setBar('cpu-bar', snapshotPayload.cpu);
-    document.getElementById('load-1').textContent = snapshotPayload.load1 + ' / ' + snapshotPayload.cpuCores + T.cores;
-    document.getElementById('load-5').textContent = snapshotPayload.load5 + ' / ' + snapshotPayload.cpuCores + T.cores;
-    document.getElementById('load-15').textContent = snapshotPayload.load15 + ' / ' + snapshotPayload.cpuCores + T.cores;
-    pushHist(cpuHist, snapshotPayload.cpu);
-    renderSpark(document.getElementById('cpu-spark-area'), null, cpuHist, 100, sparkColor(snapshotPayload.cpu));
+    document.getElementById('cpu-val').textContent = performance.cpu.usagePercent + '%';
+    setBar('cpu-bar', performance.cpu.usagePercent);
+    document.getElementById('load-1').textContent = performance.cpu.loadAverage.oneMinute + ' / ' + performance.cpu.coreCount + T.cores;
+    document.getElementById('load-5').textContent = performance.cpu.loadAverage.fiveMinutes + ' / ' + performance.cpu.coreCount + T.cores;
+    document.getElementById('load-15').textContent = performance.cpu.loadAverage.fifteenMinutes + ' / ' + performance.cpu.coreCount + T.cores;
+    pushHist(cpuHist, performance.cpu.usagePercent);
+    renderSpark(document.getElementById('cpu-spark-area'), null, cpuHist, 100, sparkColor(performance.cpu.usagePercent));
 
-    document.getElementById('mem-val').textContent = snapshotPayload.mem.percent + '%';
-    setBar('mem-bar', snapshotPayload.mem.percent);
-    document.getElementById('mem-used').textContent = snapshotPayload.mem.usedStr;
-    document.getElementById('mem-avail').textContent = snapshotPayload.mem.availStr;
-    document.getElementById('mem-total').textContent = snapshotPayload.mem.totalStr;
-    pushHist(ramHist, snapshotPayload.mem.percent);
-    renderSpark(document.getElementById('ram-spark-area'), null, ramHist, 100, sparkColor(snapshotPayload.mem.percent));
+    document.getElementById('mem-val').textContent = performance.memory.usagePercent + '%';
+    setBar('mem-bar', performance.memory.usagePercent);
+    document.getElementById('mem-used').textContent = performance.memory.usedText;
+    document.getElementById('mem-avail').textContent = performance.memory.availableText;
+    document.getElementById('mem-total').textContent = performance.memory.totalText;
+    pushHist(ramHist, performance.memory.usagePercent);
+    renderSpark(document.getElementById('ram-spark-area'), null, ramHist, 100, sparkColor(performance.memory.usagePercent));
 
-    renderDisk(snapshotPayload.disks);
+    renderDisk(performance.disks);
 
     // disk I/O
-    if (snapshotPayload.diskIO) {
+    if (performance.diskIo) {
       var dioEl = document.getElementById('disk-io-val');
       if (dioEl) {
-        dioEl.textContent = snapshotPayload.diskIO.totalStr;
-        dioEl.title = 'Read ' + snapshotPayload.diskIO.rStr + '  Write ' + snapshotPayload.diskIO.wStr;
+        dioEl.textContent = performance.diskIo.totalText;
+        dioEl.title = 'Read ' + performance.diskIo.readText + '  Write ' + performance.diskIo.writeText;
       }
-      pushHist(diskRHist, snapshotPayload.diskIO.r || 0);
-      pushHist(diskWHist, snapshotPayload.diskIO.w || 0);
+      pushHist(diskRHist, performance.diskIo.readBytesPerSecond || 0);
+      pushHist(diskWHist, performance.diskIo.writeBytesPerSecond || 0);
       var diskMax = 1;
       diskRHist.forEach(function(p) { if (p.v > diskMax) diskMax = p.v; });
       diskWHist.forEach(function(p) { if (p.v > diskMax) diskMax = p.v; });
@@ -194,16 +193,16 @@
 
     var sshCard = document.getElementById('ssh-card');
     var netTitle = document.getElementById('net-title');
-    if (snapshotPayload.ssh && snapshotPayload.ssh.isSSH) {
+    if (performance.sshTraffic && performance.sshTraffic.isSsh) {
       netTitle.textContent = T.srvNet;
       sshCard.style.display = '';
       document.getElementById('ssh-label').textContent = T.localSSH;
-      document.getElementById('ssh-tx').textContent = snapshotPayload.ssh.txStr;
-      document.getElementById('ssh-rx').textContent = snapshotPayload.ssh.rxStr;
-      document.getElementById('ssh-latency').textContent = snapshotPayload.ssh.latencyStr;
+      document.getElementById('ssh-tx').textContent = performance.sshTraffic.uploadText;
+      document.getElementById('ssh-rx').textContent = performance.sshTraffic.downloadText;
+      document.getElementById('ssh-latency').textContent = performance.sshTraffic.latencyText;
       document.getElementById('ssh-latency').title = T.latency + ' · TCP RTT';
-      pushHist(sshTxHist, snapshotPayload.ssh.tx || 0);
-      pushHist(sshRxHist, snapshotPayload.ssh.rx || 0);
+      pushHist(sshTxHist, performance.sshTraffic.uploadBytesPerSecond || 0);
+      pushHist(sshRxHist, performance.sshTraffic.downloadBytesPerSecond || 0);
       var sshMax = 1;
       sshTxHist.forEach(function(p) { if (p.v > sshMax) sshMax = p.v; });
       sshRxHist.forEach(function(p) { if (p.v > sshMax) sshMax = p.v; });
@@ -221,26 +220,24 @@
     }
 
     var gpuBody = document.getElementById('gpu-body');
-    var nextGpuCount = snapshotPayload.gpus ? snapshotPayload.gpus.length : 0;
+    var nextGpuCount = performance.gpus ? performance.gpus.length : 0;
     if (nextGpuCount !== gpuCount) { gpuCount = nextGpuCount; if (modalOpen && !settingMenu) renderSettingsBody(); }
-    if (snapshotPayload.gpus && snapshotPayload.gpus.length) {
-      var gpuKeys = snapshotPayload.gpus.map(function(g) { return g.idx; });
-      var gpuIdentityKeys = snapshotPayload.gpus.map(function(g) { return g.deviceKey || String(g.idx); });
+    if (performance.gpus && performance.gpus.length) {
+      var gpuKeys = performance.gpus.map(function(g) { return g.idx; });
+      var gpuIdentityKeys = performance.gpus.map(function(g) { return g.deviceKey || String(g.idx); });
       Object.keys(selectedGpus).forEach(function(index) { if (gpuKeys.indexOf(parseInt(index)) < 0) delete selectedGpus[index]; });
       Object.keys(gpuHist).forEach(function(index) { if (gpuKeys.indexOf(parseInt(index)) < 0) delete gpuHist[index]; });
       var gpuSame = gpuIdentityKeys.length === renderedAcceleratorKeys.length && gpuIdentityKeys.every(function(k, i) { return k === renderedAcceleratorKeys[i]; });
-      snapshotPayload.gpus.forEach(function(g) {
+      performance.gpus.forEach(function(g) {
         if (!gpuHist[g.idx]) gpuHist[g.idx] = [];
         pushHist(gpuHist[g.idx], parseInt(g.util) || 0);
       });
       if (!gpuSame) {
         renderedAcceleratorKeys = gpuIdentityKeys;
         var ghtml = '';
-        snapshotPayload.gpus.forEach(function(g) {
+        performance.gpus.forEach(function(g) {
           var util = parseInt(g.util) || 0;
-          var mu = parseInt(g.memUsed) || 0;
-          var mt = parseInt(g.memTotal) || 1;
-          var memPct = Math.min(100, Math.round(mu / mt * 100));
+          var memPct = g.memPct;
           ghtml += '<div class="gpu-mini" data-mine="' + (g.isMine ? '1' : '0') + '">'
             + '<svg class="spark-bg" id="gpu-spark-' + g.idx + '" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="gpu-spark-area-' + g.idx + '" /></svg>'
             + '<div class="gpu-title"><span class="gpu-name">GPU ' + g.idx + '</span><span class="gpu-sub" title="' + esc(g.name) + '"><bdo dir="ltr" id="gpu-name-text-' + g.idx + '">' + esc(g.displayName || g.name) + '</bdo></span></div>'
@@ -253,7 +250,7 @@
             + '<button class="gpu-info" id="gpu-info-' + g.idx + '" data-gpu-info="' + g.idx + '" type="button" aria-label="">ⓘ</button></div></div>';
         });
         gpuBody.innerHTML = ghtml;
-        snapshotPayload.gpus.forEach(function(g) { renderGpuUsers(g); });
+        performance.gpus.forEach(function(g) { renderGpuUsers(g); });
         applyCharts();
         gpuBody.querySelectorAll('.gpu-info').forEach(function(button) {
           button.addEventListener('mouseenter', function() { showGpuInfoPopover(button); });
@@ -274,10 +271,9 @@
           });
         });
         requestAnimationFrame(function() {
-          snapshotPayload.gpus.forEach(function(g) {
+          performance.gpus.forEach(function(g) {
             var util = parseInt(g.util) || 0;
-            var mu = parseInt(g.memUsed) || 0, mt = parseInt(g.memTotal) || 1;
-            var memPct = Math.min(100, Math.round(mu / mt * 100));
+            var memPct = g.memPct;
             var ub = document.getElementById('gpu-util-' + g.idx);
             var mb = document.getElementById('gpu-mem-' + g.idx);
             if (ub) ub.style.width = util + '%';
@@ -287,10 +283,9 @@
           });
         });
       } else {
-        snapshotPayload.gpus.forEach(function(g) {
+        performance.gpus.forEach(function(g) {
           var util = parseInt(g.util) || 0;
-          var mu = parseInt(g.memUsed) || 0, mt = parseInt(g.memTotal) || 1;
-          var memPct = Math.min(100, Math.round(mu / mt * 100));
+          var memPct = g.memPct;
           var ub = document.getElementById('gpu-util-' + g.idx);
           var mb = document.getElementById('gpu-mem-' + g.idx);
           if (ub) { ub.style.width = util + '%'; ub.className = 'fill ' + colorClass(util); }
@@ -321,10 +316,10 @@
     }
     refreshGpuInfoPopover();
 
-    document.getElementById('net-tx').textContent = snapshotPayload.net.txStr;
-    document.getElementById('net-rx').textContent = snapshotPayload.net.rxStr;
-    pushHist(netTxHist, snapshotPayload.net.tx || 0);
-    pushHist(netRxHist, snapshotPayload.net.rx || 0);
+    document.getElementById('net-tx').textContent = performance.network.transmitText;
+    document.getElementById('net-rx').textContent = performance.network.receiveText;
+    pushHist(netTxHist, performance.network.transmitBytesPerSecond || 0);
+    pushHist(netRxHist, performance.network.receiveBytesPerSecond || 0);
     var netMax = 1;
     netTxHist.forEach(function(p) { if (p.v > netMax) netMax = p.v; });
     netRxHist.forEach(function(p) { if (p.v > netMax) netMax = p.v; });
@@ -334,7 +329,7 @@
     var freeCard = document.getElementById('free-gpu-card');
     var capsElem = document.getElementById('gpu-capsules');
     var actElem = document.getElementById('capsule-actions');
-    if (snapshotPayload.gpus && snapshotPayload.gpus.length) {
+    if (performance.gpus && performance.gpus.length) {
       freeCard.style.display = '';
       freeCard.querySelector('.card-head').style.marginBottom = '';
       capsElem.style.display = '';
@@ -343,9 +338,7 @@
       var caps = document.getElementById('gpu-capsules');
       var freeCount = 0;
       var capsHtml = '';
-      snapshotPayload.gpus.forEach(function(g) {
-        var util = parseInt(g.util) || 0;
-        var memPct = g.memTotal > 0 ? Math.round((parseInt(g.memUsed) || 0) / g.memTotal * 100) : 0;
+      performance.gpus.forEach(function(g) {
         var isFree = g.isIdle === true;
         if (isFree) freeCount++;
         var cls = isFree ? (selectedGpus[g.idx] ? 'cap sel' : 'cap') : 'cap busy';
@@ -353,14 +346,14 @@
       });
       caps.innerHTML = capsHtml;
       document.getElementById('gpu-summary').textContent = zh
-        ? freeCount + ' 空闲 / ' + snapshotPayload.gpus.length + ' 张'
-        : freeCount + ' free / ' + snapshotPayload.gpus.length + ' GPUs';
+        ? freeCount + ' 空闲 / ' + performance.gpus.length + ' 张'
+        : freeCount + ' free / ' + performance.gpus.length + ' GPUs';
       updateCopyBtn();
-      lastFreeIdxs = snapshotPayload.gpus.filter(function(g) { return g.isIdle === true; }).map(function(g){ return g.idx; });
+      lastFreeIdxs = performance.gpus.filter(function(g) { return g.isIdle === true; }).map(function(g){ return g.idx; });
     } else {
       freeCard.style.display = '';
       freeCard.querySelector('.card-head').style.marginBottom = '0';
-      document.getElementById('gpu-summary').textContent = snapshotPayload.gpuLoading ? (zh ? '加载中…' : 'Loading…') : (zh ? '无 GPU' : 'No GPU');
+      document.getElementById('gpu-summary').textContent = performance.gpuLoading ? (zh ? '加载中…' : 'Loading…') : (zh ? '无 GPU' : 'No GPU');
       capsElem.style.display = 'none';
       actElem.style.display = 'none';
       gpuBody.style.display = 'none';
@@ -406,7 +399,6 @@
     document.getElementById('tab-'+name).classList.add('active');
     document.getElementById('tab-perf-btn').classList.toggle('on', name==='perf');
     document.getElementById('tab-proc-btn').classList.toggle('on', name==='proc');
-    if (name === 'proc') sendToExtension({cmd:'needProcs'});
     if (name === 'perf') requestAnimationFrame(function() { lastGpuPayload.forEach(renderGpuUsers); });
   }
   document.getElementById('tab-perf-btn').addEventListener('click',function(){switchTab('perf');});
@@ -420,7 +412,7 @@
     sendToExtension({cmd:'pause',value:paused});
   });
 
-  // ── 设置模态 ──
+  // ── 共享状态 ──
   var __initCfg = JSON.parse(atob(document.body.dataset.config));
   var barCfg = __initCfg.barCfg || {};
   var diskCfg = __initCfg.diskCfg || {};
@@ -430,753 +422,3 @@
   var expandedColumns = { name: false, cmd: false };
   var curInterval = __initCfg.interval || 2, gpuCount = typeof __initCfg.gpuCount === 'number' ? __initCfg.gpuCount : 0, modalOpen = false;
   SPARK_WINDOW = (displayCfg.sparkMinutes || 5) * 60 * 1000;
-
-  function applyGroupVisibility() {
-    var hidden = displayCfg.hiddenGroups || {};
-    var pickerVisible = displayCfg.showGpuPicker !== false && lastGpuPayload.length > 0;
-    document.getElementById('system-row').style.display = hidden.system ? 'none' : '';
-    document.getElementById('disk-card').style.display = hidden.disk || !renderedDiskKeys || !renderedDiskKeys.length ? 'none' : '';
-    document.getElementById('network-row').style.display = hidden.network ? 'none' : '';
-    document.getElementById('free-gpu-card').style.display = hidden.gpuSummary ? 'none' : '';
-    document.querySelector('#free-gpu-card .card-head').style.marginBottom = pickerVisible ? '' : '0';
-    document.getElementById('gpu-body').style.display = hidden.gpuCards || !lastGpuPayload.length ? 'none' : '';
-    document.getElementById('gpu-capsules').style.display = pickerVisible ? '' : 'none';
-    document.getElementById('capsule-actions').style.display = pickerVisible ? '' : 'none';
-    document.querySelectorAll('.gpu-mini').forEach(function(card) { card.classList.toggle('my-gpu', displayCfg.highlightMyGpus !== false && card.dataset.mine === '1'); });
-    if (!hidden.gpuCards) lastGpuPayload.forEach(renderGpuUsers);
-    if (gpuInfoPopover) refreshGpuInfoPopover();
-  }
-  function gpuStatsDescription(gpu) {
-    var details = T.tempLabel + ' ' + (gpu.temp || 0) + '°C';
-    if (gpu.power) details += ' · ' + T.pwLabel + ' ' + gpu.power.draw + '/' + gpu.power.limit + 'W';
-    return details;
-  }
-  function gpuStatsMarkup(gpu) {
-    var temp = (gpu.temp || 0) + '°C';
-    var html = '<span>' + T.tempLabel + ' <b>' + temp + '</b></span>';
-    if (gpu.power) {
-      var power = gpu.power.draw + '/' + gpu.power.limit + 'W';
-      html += '<span>' + T.pwLabel + ' <b>' + power + '</b></span>';
-    }
-    return html;
-  }
-  function renderGpuUsers(gpu) {
-    var line = document.getElementById('gpu-users-' + gpu.idx);
-    if (!line) return;
-    var users = gpu.users || [];
-    var showUsers = displayCfg.showGpuUsers !== false && users.length > 0;
-    var stats = document.getElementById('gpu-stats-' + gpu.idx);
-    var info = document.getElementById('gpu-info-' + gpu.idx);
-    line.style.display = showUsers ? 'flex' : 'none';
-    if (stats) stats.style.display = showUsers ? 'none' : 'flex';
-    if (info) {
-      info.style.display = showUsers ? 'inline-flex' : 'none';
-      info.setAttribute('aria-label', gpuStatsDescription(gpu));
-      if (!showUsers && activeGpuInfoButton === info) hideGpuInfoPopover(info);
-    }
-    if (!showUsers) { line.replaceChildren(); return; }
-    if (!line.clientWidth) return;
-    for (var visible = users.length; visible >= 0; visible--) {
-      line.replaceChildren();
-      users.slice(0, visible).forEach(function(user) {
-        var chip = document.createElement('span');
-        chip.className = 'gpu-user ' + (user.percent >= 90 ? 'tag-danger' : user.percent >= 70 ? 'tag-warn' : 'tag-accent');
-        chip.textContent = user.name + ' (' + user.usedStr + ')';
-        chip.title = chip.textContent;
-        line.appendChild(chip);
-      });
-      if (visible < users.length) {
-        var more = document.createElement('span');
-        more.className = 'gpu-user-more';
-        more.textContent = '(+' + (users.length - visible) + ')';
-        line.appendChild(more);
-      }
-      if (line.scrollWidth <= line.clientWidth + 1) break;
-    }
-  }
-  var gpuInfoPopover = document.createElement('div');
-  gpuInfoPopover.className = 'gpu-info-popover';
-  gpuInfoPopover.hidden = true;
-  document.body.appendChild(gpuInfoPopover);
-  var activeGpuInfoButton = null;
-  function hideGpuInfoPopover(button) {
-    if (button && activeGpuInfoButton !== button) return;
-    activeGpuInfoButton = null;
-    gpuInfoPopover.hidden = true;
-  }
-  function refreshGpuInfoPopover() {
-    var button = activeGpuInfoButton;
-    if (!button) return;
-    if (!button.isConnected || button.style.display === 'none' || !button.getClientRects().length) { hideGpuInfoPopover(); return; }
-    var gpu = lastGpuPayload.find(function(device) { return String(device.idx) === button.dataset.gpuInfo; });
-    if (!gpu) { hideGpuInfoPopover(); return; }
-    gpuInfoPopover.textContent = gpuStatsDescription(gpu);
-    gpuInfoPopover.hidden = false;
-    var bounds = button.getBoundingClientRect();
-    gpuInfoPopover.style.left = Math.max(4, Math.min(bounds.right - gpuInfoPopover.offsetWidth, window.innerWidth - gpuInfoPopover.offsetWidth - 4)) + 'px';
-    var above = bounds.top - gpuInfoPopover.offsetHeight - 6;
-    gpuInfoPopover.style.top = (above >= 4 ? above : bounds.bottom + 6) + 'px';
-  }
-  function showGpuInfoPopover(button) {
-    activeGpuInfoButton = button;
-    refreshGpuInfoPopover();
-  }
-  window.addEventListener('resize', function() { lastGpuPayload.forEach(renderGpuUsers); refreshGpuInfoPopover(); });
-  window.addEventListener('blur', function() { hideGpuInfoPopover(); });
-
-  function applyCharts() {
-    var vis = displayCfg.charts !== false ? '' : 'none';
-    document.querySelectorAll('.spark-bg').forEach(function(el) { el.style.display = vis; });
-  }
-  applyCharts();
-
-  function applyTabularNums() {
-    document.body.style.fontVariantNumeric = displayCfg.tabularNums !== false ? 'tabular-nums' : '';
-  }
-  applyTabularNums();
-
-  // ── 磁盘渲染 ──
-  var renderedDiskKeys = [], renderedAcceleratorKeys = [];
-  function renderDisk(disks) {
-    var card = document.getElementById('disk-card');
-    var el = document.getElementById('disk-body');
-    if (!disks || !disks.length) { card.style.display = 'none'; renderedDiskKeys = []; return; }
-    card.style.display = '';
-    var keys = disks.map(function(d) { return d.mount; });
-    var same = keys.length === renderedDiskKeys.length && keys.every(function(k, i) { return k === renderedDiskKeys[i]; });
-    if (!same) {
-      renderedDiskKeys = keys;
-      var h = '';
-      disks.forEach(function(d, i) {
-        var cls = colorClass(d.pct);
-        h += '<div class="disk-item">'
-          + '<div class="disk-header"><span class="disk-mount" title="' + esc(d.mount) + '">' + esc(d.mount) + '</span>'
-          + '<span class="disk-info"><span class="disk-meta" id="disk-meta-' + i + '">' + d.usedStr + ' / ' + d.totalStr + '</span><span class="disk-pct ' + cls + '" id="disk-pct-' + i + '">' + d.pct + '%</span></span></div>'
-          + '<div class="track"><div class="fill ' + cls + '" id="disk-fill-' + i + '"></div></div>'
-          + '<div class="disk-footer"><span class="disk-meta" id="disk-fmeta-' + i + '">' + d.usedStr + ' / ' + d.totalStr + '</span><span class="disk-pct ' + cls + '" id="disk-fpct-' + i + '">' + d.pct + '%</span></div>'
-          + '</div>';
-      });
-      el.innerHTML = h;
-      requestAnimationFrame(function() {
-        disks.forEach(function(d, i) {
-          var fill = document.getElementById('disk-fill-' + i);
-          if (fill) fill.style.width = d.pct + '%';
-        });
-      });
-    } else {
-      disks.forEach(function(d, i) {
-        var cls = colorClass(d.pct);
-        var fill = document.getElementById('disk-fill-' + i);
-        if (fill) { fill.style.width = d.pct + '%'; fill.className = 'fill ' + cls; }
-        var meta = document.getElementById('disk-meta-' + i);
-        if (meta) meta.textContent = d.usedStr + ' / ' + d.totalStr;
-        var pct = document.getElementById('disk-pct-' + i);
-        if (pct) { pct.textContent = d.pct + '%'; pct.className = 'disk-pct ' + cls; }
-        var fmeta = document.getElementById('disk-fmeta-' + i);
-        if (fmeta) fmeta.textContent = d.usedStr + ' / ' + d.totalStr;
-        var fpct = document.getElementById('disk-fpct-' + i);
-        if (fpct) { fpct.textContent = d.pct + '%'; fpct.className = 'disk-pct ' + cls; }
-      });
-    }
-  }
-
-  var modalBody = document.getElementById('modal-body');
-  var modalScrollbar = document.getElementById('modal-scrollbar');
-  var modalScrollbarThumb = document.getElementById('modal-scrollbar-thumb');
-  var modalDragOffset = null;
-  function updateModalScrollbar() {
-    if (!modalOpen) return;
-    var viewport = modalBody.clientHeight;
-    var overflow = modalBody.scrollHeight - viewport;
-    modalScrollbar.hidden = overflow <= 1;
-    if (modalScrollbar.hidden) return;
-    modalScrollbar.style.top = modalBody.offsetTop + 'px';
-    modalScrollbar.style.height = viewport + 'px';
-    var thumbHeight = Math.min(viewport, Math.max(28, Math.round(viewport * viewport / modalBody.scrollHeight)));
-    modalScrollbarThumb.style.height = thumbHeight + 'px';
-    modalScrollbarThumb.style.transform = 'translateY(' + Math.round((viewport - thumbHeight) * modalBody.scrollTop / overflow) + 'px)';
-  }
-  function scrollModalFromPointer(event) {
-    var bounds = modalScrollbar.getBoundingClientRect();
-    var travel = bounds.height - modalScrollbarThumb.offsetHeight;
-    if (travel <= 0) return;
-    var progress = Math.max(0, Math.min(1, (event.clientY - bounds.top - modalDragOffset) / travel));
-    modalBody.scrollTop = progress * (modalBody.scrollHeight - modalBody.clientHeight);
-  }
-  modalScrollbar.addEventListener('pointerdown', function(event) {
-    if (modalScrollbar.hidden) return;
-    event.preventDefault();
-    var thumbBounds = modalScrollbarThumb.getBoundingClientRect();
-    modalDragOffset = event.target === modalScrollbarThumb ? event.clientY - thumbBounds.top : thumbBounds.height / 2;
-    modalScrollbar.classList.add('dragging');
-    modalScrollbar.setPointerCapture(event.pointerId);
-    scrollModalFromPointer(event);
-  });
-  modalScrollbar.addEventListener('pointermove', function(event) {
-    if (modalDragOffset !== null) scrollModalFromPointer(event);
-  });
-  function endModalScrollbarDrag(event) {
-    modalDragOffset = null;
-    modalScrollbar.classList.remove('dragging');
-    if (modalScrollbar.hasPointerCapture(event.pointerId)) modalScrollbar.releasePointerCapture(event.pointerId);
-  }
-  modalScrollbar.addEventListener('pointerup', endModalScrollbarDrag);
-  modalScrollbar.addEventListener('pointercancel', endModalScrollbarDrag);
-  modalBody.addEventListener('scroll', updateModalScrollbar);
-  window.addEventListener('resize', updateModalScrollbar);
-
-  function openModal() {
-    modalOpen = true;
-    document.getElementById('modal-mask').classList.add('open');
-    document.getElementById('modal-title-text').textContent = T.settTitle;
-    document.getElementById('sett-interval-label').textContent = T.interval;
-    document.getElementById('sett-bar-label').textContent = T.statusBar;
-    document.getElementById('sett-disk-label').textContent = T.diskLabel;
-    document.getElementById('sett-display-label').textContent = T.displayLabel;
-    renderIntervalRow();
-    renderSettingsBody();
-    requestAnimationFrame(updateModalScrollbar);
-  }
-  function closeModal() { closeSettingMenu(); modalOpen = false; modalScrollbar.hidden = true; document.getElementById('modal-mask').classList.remove('open'); }
-  document.getElementById('settings-btn').addEventListener('click', openModal);
-  document.getElementById('modal-close').addEventListener('click', closeModal);
-  document.getElementById('modal-mask').addEventListener('click', function(e){ if (e.target===this) closeModal(); });
-  document.getElementById('open-vsc-settings').addEventListener('click', function(){ sendToExtension({cmd:'openSettings'}); });
-  document.addEventListener('click', function(e) {
-    var a = e.target.closest('a[href]');
-    if (a && a.href) { e.preventDefault(); sendToExtension({cmd:'openLink', url:a.href}); }
-  });
-
-  function renderIntervalRow() {
-    var row = document.getElementById('interval-row');
-    row.innerHTML = '';
-    [1,2,5,10].forEach(function(s) {
-      var b = document.createElement('button');
-      b.className = 'tb' + (curInterval===s?' on':'');
-      b.textContent = s+(zh?'秒':'s');
-      b.addEventListener('click', function(){ curInterval=s; renderIntervalRow(); sendToExtension({cmd:'setConfig',key:'refreshInterval',value:s}); });
-      row.appendChild(b);
-    });
-    var custom = document.createElement('input');
-    custom.className = 'sett-input';
-    custom.type = 'number';
-    custom.min = '1'; custom.max = '30'; custom.value = curInterval;
-    custom.title = zh ? '自定义秒数（1–30）' : 'Custom seconds (1–30)';
-    custom.addEventListener('change', function() {
-      var value = Math.max(1, Math.min(30, parseInt(this.value) || 2));
-      curInterval = value;
-      sendToExtension({cmd:'setConfig',key:'refreshInterval',value:value});
-      renderIntervalRow();
-    });
-    row.appendChild(custom);
-  }
-
-  function getCfg() { return barCfg; }
-  var configPushTimer = null;
-  function pushCfg() {
-    if (configPushTimer) clearTimeout(configPushTimer);
-    configPushTimer = setTimeout(function() {
-      configPushTimer = null;
-      sendToExtension({cmd:'setConfig',key:'statusBar',value:barCfg});
-    }, 300);
-  }
-
-  function settingRow(label, control, hint, wideControl) {
-    return '<div class="setting-row"><span class="setting-info"><span class="setting-title"' + (hint ? ' title="' + esc(hint) + '"' : '') + '>' + label + '</span>' + (hint ? '<small>' + esc(hint) + '</small>' : '') + '</span><span class="setting-control' + (wideControl ? ' wide' : '') + '">' + control + '</span></div>';
-  }
-  function switchButton(action, enabled, key, disabled) {
-    return '<button type="button" class="setting-switch' + (enabled ? ' on' : '') + '" role="switch" aria-checked="' + enabled + '" data-act="' + action + '"' + (key ? ' data-key="' + key + '"' : '') + (disabled ? ' disabled' : '') + '><span></span></button>';
-  }
-  function selectControl(action, current, options, key) {
-    var selected = options.find(function(option) { return option[0] === current; }) || options[0];
-    return '<span class="setting-select-wrap"><span class="setting-select-sizer" aria-hidden="true">' + options.map(function(option) { return '<span>' + esc(option[1]) + '</span>'; }).join('') + '</span><button type="button" class="setting-select" data-act="' + action + '" data-value="' + esc(current) + '"' + (key ? ' data-key="' + key + '"' : '') + ' aria-haspopup="listbox" aria-expanded="false"><span>' + esc(selected[1]) + '</span><span aria-hidden="true">⌄</span></button><span class="setting-select-options" hidden>' + options.map(function(option) { return '<button type="button" data-value="' + esc(option[0]) + '"' + (current === option[0] ? ' class="selected"' : '') + '>' + esc(option[1]) + '</button>'; }).join('') + '</span></span>';
-  }
-
-  var settingMenu = null, settingMenuTrigger = null;
-  function closeSettingMenu() {
-    if (settingMenu) settingMenu.remove();
-    if (settingMenuTrigger) settingMenuTrigger.setAttribute('aria-expanded', 'false');
-    settingMenu = null; settingMenuTrigger = null;
-  }
-  function openSettingMenu(trigger, onSelect) {
-    if (settingMenuTrigger === trigger) { closeSettingMenu(); return; }
-    closeSettingMenu();
-    var options = trigger.parentElement.querySelectorAll('.setting-select-options button');
-    var menu = document.createElement('div');
-    menu.className = 'setting-menu';
-    menu.setAttribute('role', 'listbox');
-    options.forEach(function(option) {
-      var item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'setting-menu-item' + (option.classList.contains('selected') ? ' selected' : '');
-      item.textContent = option.textContent;
-      item.setAttribute('role', 'option');
-      item.setAttribute('aria-selected', option.classList.contains('selected') ? 'true' : 'false');
-      item.addEventListener('click', function(event) { event.stopPropagation(); var value = option.dataset.value; closeSettingMenu(); onSelect(value); });
-      menu.appendChild(item);
-    });
-    document.body.appendChild(menu);
-    var rect = trigger.getBoundingClientRect();
-    menu.style.minWidth = rect.width + 'px';
-    menu.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 4)) + 'px';
-    menu.style.top = (window.innerHeight - rect.bottom >= menu.offsetHeight + 4 ? rect.bottom + 3 : Math.max(4, rect.top - menu.offsetHeight - 3)) + 'px';
-    trigger.setAttribute('aria-expanded', 'true');
-    settingMenu = menu; settingMenuTrigger = trigger;
-  }
-  document.addEventListener('click', function(event) { if (settingMenu && !settingMenu.contains(event.target)) closeSettingMenu(); });
-  document.getElementById('modal-body').addEventListener('scroll', closeSettingMenu);
-  window.addEventListener('resize', closeSettingMenu);
-  document.addEventListener('keydown', function(event) { if (event.key === 'Escape') closeSettingMenu(); });
-
-  function animateSwitch(button, enabled, rerender) {
-    button.classList.toggle('on', enabled);
-    button.setAttribute('aria-checked', String(enabled));
-    if (rerender) setTimeout(function() { if (modalOpen) renderSettingsBody(); }, 190);
-  }
-
-  function renderSettingsBody() {
-    var cfg = getCfg();
-    var gpu = cfg.gpu || {};
-    var body = document.getElementById('sett-body');
-    var h = '';
-
-    var barOn = cfg.barEnabled !== false;
-    h += settingRow(T.barToggle, switchButton('bar-toggle', barOn));
-    if (barOn) {
-    var curAlign = cfg.alignment || 'left';
-    h += settingRow(T.barAlign, '<span class="setting-segment"><button class="'+(curAlign==='left'?'on':'')+'" data-act="radio" data-key="alignment" data-val="left">'+(zh?'左':'Left')+'</button><button class="'+(curAlign==='right'?'on':'')+'" data-act="radio" data-key="alignment" data-val="right">'+(zh?'右':'Right')+'</button></span>');
-    var curPri = typeof cfg.priority === 'number' ? cfg.priority : 10;
-    h += settingRow(T.barPriority, '<input class="sett-input" id="bar-priority-input" type="number" min="0" max="10000" value="'+curPri+'" />', T.barPriorityTip);
-    h += settingRow('CPU', switchButton('bool', !!cfg.cpu, 'cpu'));
-    h += settingRow('RAM', switchButton('bool', !!cfg.ram, 'ram'));
-    h += settingRow(T.diskUsage, switchButton('bool', !!cfg.disk, 'disk'));
-    h += settingRow(T.diskIO, selectControl('select', cfg.diskIO || 'off', [['off',T.scopeOff],['read',T.diskIORead],['write',T.diskIOWrite],['both',T.netAll],['combined',T.netMerge]], 'diskIO'));
-    h += settingRow(T.netLabel, selectControl('select', cfg.net || 'off', [['off',T.scopeOff],['up',T.netUp],['down',T.netDown],['both',T.netAll],['combined',T.netMerge]], 'net'));
-    h += settingRow(T.sshLabel, switchButton('bool', !!cfg.ssh, 'ssh'));
-    h += settingRow(T.gpuSummary, switchButton('gpu-summary', !!gpu.summary));
-    if (gpu.summary) {
-      h += settingRow(T.gpuIdleIds, switchButton('gpu-idle-ids', !!gpu.showIdleIds));
-    }
-
-    var gpuMode = gpu.mode || 'off';
-    h += settingRow(T.gpuPerf, selectControl('gpu-mode', gpuMode, [['off',T.scopeOff],['all',T.gpuAll],['first',T.gpuFirst],['specify',T.gpuSpecify],['my',T.scopeMy]]));
-
-    if (gpuMode === 'first') {
-      var fv = gpu.firstN || 2;
-      h += settingRow(T.gpuFirst, '<input class="sett-input" id="gpu-first-input" type="number" min="1" max="1024" value="'+fv+'" />');
-    }
-
-    if (gpuMode === 'specify') {
-      var val = (gpu.cards||[]).join(',');
-      h += settingRow(T.gpuSpecify, '<input class="sett-input" id="gpu-cards-input" value="'+esc(val)+'" placeholder="0,1,3" /><span class="sett-err" id="gpu-cards-err"></span>');
-    }
-
-    if (gpuMode !== 'off') {
-      var met = gpu.metric || 'both';
-      h += settingRow(T.gpuMetric, selectControl('gpu-metric', met, [['util',T.metUtil],['vram',T.metVram],['both',T.metBoth]]));
-      h += settingRow(T.gpuSkipIdle, switchButton('gpu-skip-idle', !!gpu.skipIdle));
-    }
-    }
-
-    body.innerHTML = h;
-    bindSettingsEvents(body, cfg);
-
-    var diskBody = document.getElementById('sett-disk-body');
-    var curFilter = diskCfg.mountFilter || 'default';
-    var dh = settingRow(T.diskFilter, selectControl('disk-filter', curFilter, [['default',T.diskDefault],['more',T.diskMore],['all',T.diskAll],['custom',T.diskCustom]]));
-    var isCustom = curFilter === 'custom';
-    var presetVals = {default:{fs:'vfat',paths:'/proc,/sys,/run,/snap,/usr,/etc,/dev,/init',vfs:false},more:{fs:'',paths:'',vfs:false},all:{fs:'',paths:'',vfs:true}};
-    var showFs, showPaths, showVfs;
-    if (isCustom) {
-      showFs = diskCfg.customFsExclude || '';
-      showPaths = diskCfg.customPathExclude || '';
-      showVfs = diskCfg.showVirtualFs;
-    } else {
-      var pv = presetVals[curFilter] || presetVals['default'];
-      showFs = pv.fs; showPaths = pv.paths; showVfs = pv.vfs;
-    }
-    dh += '<div class="custom-group' + (isCustom ? '' : ' dim') + '">';
-    dh += settingRow(T.diskShowVirtual, switchButton('disk-show-virtual', !showVfs, null, !isCustom), T.diskShowVirtualTip);
-    dh += settingRow(T.diskExcludeFs, '<input class="sett-input wide" id="disk-fs-input" type="text" value="' + esc(showFs) + '"' + (isCustom ? '' : ' readonly') + ' />', T.diskExcludeFsTip, true);
-    dh += settingRow(T.diskExcludePath, '<input class="sett-input wide" id="disk-path-input" type="text" value="' + esc(showPaths) + '"' + (isCustom ? '' : ' readonly') + ' />', T.diskExcludePathTip, true);
-    dh += '</div>';
-    dh += settingRow(T.diskHideParent, switchButton('disk-hide-parent', diskCfg.hideParentMounts !== false), T.diskHideParentTip);
-    diskBody.innerHTML = dh;
-    diskBody.querySelector('[data-act="disk-filter"]').addEventListener('click', function(event) {
-      event.stopPropagation();
-      openSettingMenu(this, function(val) {
-        if (val === 'custom' && curFilter !== 'custom') {
-          var existFs = diskCfg.customFsExclude || '';
-          var existPaths = diskCfg.customPathExclude || '';
-          var existVfs = !!diskCfg.showVirtualFs;
-          var presets = [
-            {fs:'vfat',paths:'/proc,/sys,/run,/snap,/usr,/etc,/dev,/init',vfs:false},
-            {fs:'',paths:'',vfs:false},
-            {fs:'',paths:'',vfs:true}
-          ];
-          var matchesPreset = presets.some(function(p){ return existFs===p.fs && existPaths===p.paths && existVfs===p.vfs; });
-          if (matchesPreset) {
-            diskCfg.customFsExclude = showFs;
-            diskCfg.customPathExclude = showPaths;
-            diskCfg.showVirtualFs = showVfs;
-          }
-        }
-        diskCfg.mountFilter = val;
-        sendToExtension({cmd:'setConfig',key:'disk',value:diskCfg});
-        renderSettingsBody();
-      });
-    });
-    if (curFilter === 'custom') {
-      var vfsBtn = diskBody.querySelector('[data-act="disk-show-virtual"]');
-      if (vfsBtn) vfsBtn.addEventListener('click', function() {
-        diskCfg.showVirtualFs = !diskCfg.showVirtualFs;
-        sendToExtension({cmd:'setConfig',key:'disk',value:diskCfg});
-        animateSwitch(this, !diskCfg.showVirtualFs);
-      });
-      var diskConfigTimer = null;
-      function onDiskCustomInput() {
-        if (diskConfigTimer) clearTimeout(diskConfigTimer);
-        diskConfigTimer = setTimeout(function() {
-          var fsInput = document.getElementById('disk-fs-input');
-          var pathInput = document.getElementById('disk-path-input');
-          if (fsInput) diskCfg.customFsExclude = fsInput.value;
-          if (pathInput) diskCfg.customPathExclude = pathInput.value;
-          sendToExtension({cmd:'setConfig',key:'disk',value:diskCfg});
-        }, 600);
-      }
-      var fsInput = document.getElementById('disk-fs-input');
-      var pathInput = document.getElementById('disk-path-input');
-      if (fsInput) fsInput.addEventListener('input', onDiskCustomInput);
-      if (pathInput) pathInput.addEventListener('input', onDiskCustomInput);
-    }
-    var hideParentBtn = diskBody.querySelector('[data-act="disk-hide-parent"]');
-    if (hideParentBtn) hideParentBtn.addEventListener('click', function() {
-      diskCfg.hideParentMounts = !diskCfg.hideParentMounts;
-      sendToExtension({cmd:'setConfig',key:'disk',value:diskCfg});
-      animateSwitch(this, diskCfg.hideParentMounts);
-    });
-
-    var dispBody = document.getElementById('sett-display-body');
-    var dph = settingRow(T.chartsToggle, switchButton('charts-toggle', displayCfg.charts !== false));
-    dph += settingRow(T.sparkLabel, selectControl('spark-min', String(displayCfg.sparkMinutes || 5), [1,2,5,10,30].map(function(m) { return [String(m), m + (zh?' 分钟':' min')]; })));
-    dph += settingRow(T.tabularNums, switchButton('tabular-toggle', displayCfg.tabularNums !== false), T.tabularNumsTip);
-    var groupLabels = {system:T.systemGroup,disk:T.diskLabel,network:T.networkGroup,gpuSummary:T.gpuSummaryGroup,gpuCards:T.gpuCardsGroup};
-    Object.keys(groupLabels).forEach(function(key) {
-      dph += settingRow(groupLabels[key], switchButton('group-toggle', !(displayCfg.hiddenGroups || {})[key], key));
-    });
-    dph += settingRow(T.myGpuBorder, switchButton('my-gpu-toggle', displayCfg.highlightMyGpus !== false));
-    dph += settingRow(T.gpuPicker, switchButton('gpu-picker-toggle', displayCfg.showGpuPicker !== false));
-    dph += settingRow(T.gpuUsers, switchButton('gpu-users-toggle', displayCfg.showGpuUsers !== false));
-    dispBody.innerHTML = dph;
-    dispBody.querySelector('[data-act="charts-toggle"]').addEventListener('click', function() {
-      displayCfg.charts = !displayCfg.charts;
-      sendToExtension({cmd:'setConfig',key:'display',value:displayCfg});
-      applyCharts();
-      animateSwitch(this, displayCfg.charts);
-    });
-    dispBody.querySelector('[data-act="tabular-toggle"]').addEventListener('click', function() {
-      displayCfg.tabularNums = !displayCfg.tabularNums;
-      sendToExtension({cmd:'setConfig',key:'display',value:displayCfg});
-      applyTabularNums();
-      animateSwitch(this, displayCfg.tabularNums);
-    });
-    dispBody.querySelector('[data-act="spark-min"]').addEventListener('click', function(event) {
-      event.stopPropagation();
-      openSettingMenu(this, function(value) {
-        displayCfg.sparkMinutes = parseInt(value);
-        SPARK_WINDOW = displayCfg.sparkMinutes * 60 * 1000;
-        sendToExtension({cmd:'setConfig',key:'display',value:displayCfg});
-        renderSettingsBody();
-      });
-    });
-    dispBody.querySelectorAll('[data-act="group-toggle"]').forEach(function(button) {
-      button.addEventListener('click', function() {
-        if (!displayCfg.hiddenGroups) displayCfg.hiddenGroups = {};
-        displayCfg.hiddenGroups[this.dataset.key] = !displayCfg.hiddenGroups[this.dataset.key];
-        sendToExtension({cmd:'setConfig',key:'display',value:displayCfg});
-        applyGroupVisibility();
-        animateSwitch(this, !displayCfg.hiddenGroups[this.dataset.key]);
-      });
-    });
-    dispBody.querySelector('[data-act="my-gpu-toggle"]').addEventListener('click', function() {
-      displayCfg.highlightMyGpus = displayCfg.highlightMyGpus === false;
-      sendToExtension({cmd:'setConfig',key:'display',value:displayCfg});
-      applyGroupVisibility();
-      animateSwitch(this, displayCfg.highlightMyGpus);
-    });
-    dispBody.querySelector('[data-act="gpu-picker-toggle"]').addEventListener('click', function() {
-      displayCfg.showGpuPicker = displayCfg.showGpuPicker === false;
-      sendToExtension({cmd:'setConfig',key:'display',value:displayCfg});
-      applyGroupVisibility();
-      animateSwitch(this, displayCfg.showGpuPicker);
-    });
-    dispBody.querySelector('[data-act="gpu-users-toggle"]').addEventListener('click', function() {
-      displayCfg.showGpuUsers = displayCfg.showGpuUsers === false;
-      sendToExtension({cmd:'setConfig',key:'display',value:displayCfg});
-      applyGroupVisibility();
-      animateSwitch(this, displayCfg.showGpuUsers);
-    });
-    if (modalOpen) requestAnimationFrame(updateModalScrollbar);
-  }
-
-  function bindSettingsEvents(body, cfg) {
-    body.querySelectorAll('button.setting-select[data-act]').forEach(function(trigger) {
-      trigger.addEventListener('click', function(event) {
-        event.stopPropagation();
-        var action = this.dataset.act;
-        var key = this.dataset.key;
-        openSettingMenu(this, function(value) {
-          if (action === 'select') cfg[key] = value;
-          else if (action === 'gpu-mode') cfg.gpu.mode = value;
-          else if (action === 'gpu-metric') cfg.gpu.metric = value;
-          pushCfg();
-          renderSettingsBody();
-        });
-      });
-    });
-    var priInput = document.getElementById('bar-priority-input');
-    if (priInput) {
-      priInput.addEventListener('input', function() {
-        var n = parseInt(this.value);
-        if (isNaN(n) || n < 0) n = 10;
-        cfg.priority = n;
-        pushCfg();
-      });
-    }
-    var cardsInput = document.getElementById('gpu-cards-input');
-    if (cardsInput) {
-      cardsInput.addEventListener('input', function() {
-        var raw = this.value.trim();
-        var errEl = document.getElementById('gpu-cards-err');
-        if (!raw) { cfg.gpu.cards = []; errEl.textContent = ''; pushCfg(); return; }
-        var parts = raw.split(',');
-        var valid = true, nums = [];
-        parts.forEach(function(s) {
-          var n = parseInt(s.trim());
-          if (isNaN(n) || n < 0) valid = false;
-          else nums.push(n);
-        });
-        if (!valid) { errEl.textContent = zh?'格式错误，请用逗号分隔数字':'Invalid format'; this.classList.add('err'); return; }
-        this.classList.remove('err');
-        var badCards = nums.filter(function(n){ return n >= gpuCount; });
-        errEl.textContent = badCards.length ? (zh?'卡 '+badCards.join(',')+' 不存在，将不显示':'Card '+badCards.join(',')+' not found') : '';
-        cfg.gpu.cards = nums;
-        cfg.gpu.cards.sort(function(a,b){return a-b;});
-        pushCfg();
-      });
-    }
-
-    var firstInput = document.getElementById('gpu-first-input');
-    if (firstInput) {
-      firstInput.addEventListener('input', function() {
-        var n = parseInt(this.value);
-        if (isNaN(n) || n < 1) n = 1;
-        if (n > 1024) n = 1024;
-        cfg.gpu.firstN = n;
-        pushCfg();
-      });
-    }
-
-    body.querySelectorAll('.setting-switch, .setting-segment button').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var a = this.dataset.act;
-        if (a==='bool') { cfg[this.dataset.key] = !cfg[this.dataset.key]; }
-        else if (a==='radio') { cfg[this.dataset.key] = this.dataset.val; }
-        else if (a==='gpu-summary') { cfg.gpu.summary = !cfg.gpu.summary; }
-        else if (a==='gpu-idle-ids') { cfg.gpu.showIdleIds = !cfg.gpu.showIdleIds; }
-        else if (a==='gpu-mode') {
-          cfg.gpu.mode = this.dataset.val;
-        }
-        else if (a==='gpu-metric') { cfg.gpu.metric = this.dataset.val; }
-        else if (a==='gpu-skip-idle') { cfg.gpu.skipIdle = !cfg.gpu.skipIdle; }
-        else if (a==='bar-toggle') { cfg.barEnabled = !(cfg.barEnabled !== false); }
-        pushCfg();
-        if (a === 'radio') {
-          this.parentElement.querySelectorAll('button').forEach(function(button) { button.classList.toggle('on', button === btn); });
-        } else if (a === 'bar-toggle') animateSwitch(this, cfg.barEnabled, true);
-        else if (a === 'gpu-summary') animateSwitch(this, cfg.gpu.summary, true);
-        else if (a === 'bool') animateSwitch(this, !!cfg[this.dataset.key]);
-        else if (a === 'gpu-idle-ids') animateSwitch(this, !!cfg.gpu.showIdleIds);
-        else if (a === 'gpu-skip-idle') animateSwitch(this, !!cfg.gpu.skipIdle);
-      });
-    });
-  }
-
-  // ── 进程 tab 逻辑 ──
-  var procSort = 'cpu', procData = [], procFilter = '';
-  function renderProcToolbar() {
-    var tb = document.getElementById('proc-toolbar');
-    if(!tb) return;
-    tb.innerHTML = '<button class="sb'+(procSort==='cpu'?' on':'')+'" data-s="cpu">CPU</button>'
-      +'<button class="sb'+(procSort==='mem'?' on':'')+'" data-s="mem">RAM</button>'
-      +'<button class="sb'+(procSort==='gpu'?' on':'')+'" data-s="gpu">GPU</button>';
-    tb.querySelectorAll('.sb').forEach(function(b){
-      b.addEventListener('click',function(){procSort=this.dataset.s;renderProcToolbar();renderProcTable();});
-    });
-  }
-  var filterInput = document.getElementById('proc-filter');
-  var filterWrap = document.getElementById('filter-wrap');
-  filterInput.addEventListener('input',function(){
-    procFilter = this.value.toLowerCase();
-    filterWrap.classList.toggle('has-text', this.value.length > 0);
-    renderProcTable();
-  });
-  var persistedViewState = vscode.getState() || {};
-  var hintDismissed = !!persistedViewState.hintDismissed;
-  var hintShown = false;
-  filterInput.addEventListener('focus', function() {
-    if (hintDismissed || hintShown) return;
-    hintShown = true;
-    var hint = document.getElementById('filter-hint');
-    var hintText = zh
-      ? '<span class="hint-close" id="hint-close">&times;</span>支持搜索进程名、用户名、PID、命令行。GPU 搜索：<code>GPU0</code> <code>#0</code> <code>GPU 0</code>'
-      : '<span class="hint-close" id="hint-close">&times;</span>Search by name, user, PID, command. GPU: <code>GPU0</code> <code>#0</code> <code>GPU 0</code>';
-    hint.innerHTML = hintText;
-    hint.classList.add('show');
-    document.getElementById('hint-close').addEventListener('click', function() {
-      hint.classList.remove('show');
-      hintDismissed = true;
-      vscode.setState(Object.assign(persistedViewState, { hintDismissed: true }));
-    });
-  });
-  document.getElementById('filter-clear').addEventListener('click',function(){
-    filterInput.value = '';
-    procFilter = '';
-    filterWrap.classList.remove('has-text');
-    renderProcTable();
-    filterInput.focus();
-  });
-  function esc(s){return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-  function procSearchStr(p) {
-    var s = p.name.toLowerCase() + ' ' + p.user.toLowerCase() + ' ' + (p.cmd||'').toLowerCase() + ' ' + p.pid;
-    if (p.gpus && p.gpus.length) {
-      p.gpus.forEach(function(g){ s += ' gpu'+g.idx + ' gpu '+g.idx + ' #'+g.idx; });
-    }
-    return s;
-  }
-  function renderProcTable(){
-    var filtered = procData;
-    if (procFilter) {
-      filtered = procData.filter(function(p){
-        return procSearchStr(p).indexOf(procFilter) >= 0;
-      });
-    }
-    var sorted = filtered.slice();
-    if(procSort==='cpu') sorted.sort(function(a,b){return b.cpu-a.cpu;});
-    else if(procSort==='mem') sorted.sort(function(a,b){return b.mem-a.mem;});
-    else sorted.sort(function(a,b){return (b.vram||0)-(a.vram||0);});
-    sorted = sorted.slice(0,100);
-    document.getElementById('proc-count').textContent = (filtered.length < procData.length)
-      ? T.pcount.replace('{n}', filtered.length + ' / ' + procData.length)
-      : T.pcount.replace('{n}', procData.length);
-    var cpuModeLabel = processDisplay.cpu === 'whole' ? T.wholeMode : processDisplay.cpu === 'both' ? T.bothMode : T.coreMode;
-    var ramModeLabel = processDisplay.ram === 'percent' ? T.percentMode : processDisplay.ram === 'both' ? T.bothMode : T.sizeMode;
-    document.getElementById('proc-hdr').innerHTML =
-      '<th class="r">PID</th>'
-      + '<th><span class="hdr-label">'+T.pname+'<button class="hdr-btn" data-hdr="name" title="'+(expandedColumns.name?T.collapse:T.expand)+'">'+(expandedColumns.name?'−':'+')+'</button></span></th>'
-      + '<th>'+T.puser+'</th>'
-      + '<th><span class="hdr-label">CPU<button class="hdr-btn" data-hdr="cpu" title="'+cpuModeLabel+'">'+cpuModeLabel+'</button></span></th>'
-      + '<th><span class="hdr-label">RAM<button class="hdr-btn" data-hdr="ram" title="'+ramModeLabel+'">'+ramModeLabel+'</button></span></th>'
-      + '<th>GPU</th>'
-      + '<th><span class="hdr-label">'+T.pcmd+'<button class="hdr-btn" data-hdr="cmd" title="'+(expandedColumns.cmd?T.collapse:T.expand)+'">'+(expandedColumns.cmd?'−':'+')+'</button></span></th>';
-    var html = '';
-    sorted.forEach(function(p){
-      var gpuCell = '';
-      if (p.gpus && p.gpus.length) {
-        var tags = p.gpus.map(function(g){
-          var vTxt = g.vramStr || '—';
-          var tTxt = g.memTotalStr || '—';
-          var pct = g.memTotal > 0 ? Math.round(g.vram / g.memTotal * 100) : 0;
-          var cls = g.mappingStatus === 'unmatched' ? ' tag-unknown' : pct >= 90 ? ' tag-danger' : pct >= 70 ? ' tag-warn' : ' tag-accent';
-          return '<span class="gpu-tag'+cls+'">#'+g.idx+' '+vTxt+'/'+tTxt+' '+pct+'%</span>';
-        }).join(' ');
-        gpuCell = tags;
-      } else {
-        gpuCell = '<span class="pmuted">'+T.pnoGpu+'</span>';
-      }
-      var cpuTxt = p.cpu.toFixed(1);
-      var wholeCpuTxt = (p.cpuWhole || 0).toFixed(1);
-      var coreDisplay = cpuTxt + '%';
-      var wholeDisplay = wholeCpuTxt + '%';
-      var cpuHtml = processDisplay.cpu === 'both' ? '<span class="dual-value"><span>'+coreDisplay+'</span><span>'+wholeDisplay+'</span></span>' : (processDisplay.cpu === 'whole' ? wholeDisplay : coreDisplay);
-      var cpuCopy = processDisplay.cpu === 'both' ? T.coreMode+' '+coreDisplay+' / '+T.wholeMode+' '+wholeDisplay : (processDisplay.cpu === 'whole' ? wholeDisplay : coreDisplay);
-      var ramSize = p.memStr || '—';
-      var ramPercent = p.memPct.toFixed(1) + '%';
-      var ramHtml = processDisplay.ram === 'both' ? '<span class="dual-value"><span>'+ramSize+'</span><span>'+ramPercent+'</span></span>' : (processDisplay.ram === 'percent' ? ramPercent : ramSize);
-      var ramCopy = processDisplay.ram === 'both' ? T.sizeMode+' '+ramSize+' / '+T.percentMode+' '+ramPercent : (processDisplay.ram === 'percent' ? ramPercent : ramSize);
-      var cmdFull = p.cmd || p.name;
-      html+='<tr>'
-        +'<td class="r">'+p.pid+'</td>'
-        +'<td class="expandable'+(expandedColumns.name?' expanded':'')+'" data-copy="'+esc(p.name)+'" title="PID '+p.pid+'&#10;'+esc(cmdFull)+'">'+esc(p.name)+'</td>'
-        +'<td>'+esc(p.user)+'</td>'
-        +'<td data-copy="'+esc(cpuCopy)+'">'+cpuHtml+'</td>'
-        +'<td data-copy="'+esc(ramCopy)+'">'+ramHtml+'</td>'
-        +'<td class="gpu-cell">'+gpuCell+'</td>'
-        +'<td class="expandable'+(expandedColumns.cmd?' expanded':'')+'" data-copy="'+esc(cmdFull)+'" title="'+esc(cmdFull)+'">'+esc(cmdFull)+'</td>'
-        +'</tr>';
-    });
-    document.getElementById('proc-tbody').innerHTML = html;
-  }
-  document.getElementById('proc-hdr').addEventListener('click', function(event) {
-    var button = event.target.closest('[data-hdr]');
-    if (!button) return;
-    var key = button.dataset.hdr;
-    if (key === 'name' || key === 'cmd') expandedColumns[key] = !expandedColumns[key];
-    else if (key === 'cpu') {
-      var cpuModes = ['core', 'whole', 'both'];
-      processDisplay.cpu = cpuModes[(cpuModes.indexOf(processDisplay.cpu) + 1) % cpuModes.length];
-      sendToExtension({cmd:'setProcessDisplay',key:'cpu',value:processDisplay.cpu});
-    } else if (key === 'ram') {
-      var ramModes = ['size', 'percent', 'both'];
-      processDisplay.ram = ramModes[(ramModes.indexOf(processDisplay.ram) + 1) % ramModes.length];
-      sendToExtension({cmd:'setProcessDisplay',key:'ram',value:processDisplay.ram});
-    }
-    renderProcTable();
-  });
-  renderProcToolbar();
-
-  // ── 右键菜单 ──
-  var ctxMenu = null, pendingProcData = null;
-  function removeCtxMenu() {
-    if (ctxMenu) { ctxMenu.remove(); ctxMenu = null; }
-    if (pendingProcData) { procData = pendingProcData; pendingProcData = null; renderProcTable(); }
-  }
-  document.addEventListener('click', removeCtxMenu);
-  document.addEventListener('scroll', removeCtxMenu, true);
-  document.getElementById('proc-tbody').addEventListener('contextmenu', function(e) {
-    var td = e.target.closest('td');
-    var tr = e.target.closest('tr');
-    if (!td || !tr) return;
-    e.preventDefault();
-    removeCtxMenu();
-    var menu = document.createElement('div');
-    menu.className = 'ctx-menu';
-    var cellText = td.dataset.copy || td.textContent;
-    var rowCells = tr.querySelectorAll('td');
-    var rowText = Array.prototype.map.call(rowCells, function(c) { return c.dataset.copy || c.textContent; }).join('\t');
-    var item1 = document.createElement('div');
-    item1.className = 'ctx-menu-item';
-    item1.textContent = zh ? '复制单元格' : 'Copy Cell';
-    item1.addEventListener('click', function() { navigator.clipboard.writeText(cellText); removeCtxMenu(); });
-    var itemPid = document.createElement('div');
-    itemPid.className = 'ctx-menu-item';
-    itemPid.textContent = zh ? '复制 PID' : 'Copy PID';
-    itemPid.addEventListener('click', function() { navigator.clipboard.writeText(rowCells[0].textContent.trim()); removeCtxMenu(); });
-    var item2 = document.createElement('div');
-    item2.className = 'ctx-menu-item';
-    item2.textContent = zh ? '复制整行' : 'Copy Row';
-    item2.addEventListener('click', function() { navigator.clipboard.writeText(rowText); removeCtxMenu(); });
-    menu.appendChild(item1);
-    menu.appendChild(itemPid);
-    menu.appendChild(item2);
-    menu.style.left = e.clientX + 'px';
-    menu.style.top = e.clientY + 'px';
-    document.body.appendChild(menu);
-    ctxMenu = menu;
-    var rect = menu.getBoundingClientRect();
-    if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 4) + 'px';
-    if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 4) + 'px';
-  });
-
-  sendToExtension({cmd:'ready'});
-  requestAnimationFrame(animateSparks);

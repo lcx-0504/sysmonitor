@@ -2,7 +2,6 @@
 const vscode = require('vscode');
 const path = require('path');
 const { ConfigStore } = require('./config/config-store');
-const { buildLegacyViewModel } = require('./services/legacy-view-model');
 const { MonitorService } = require('./services/monitor-service');
 const { MonitorViewProvider } = require('./view/monitor-view-provider');
 const { StatusBarController } = require('./view/status-bar-controller');
@@ -151,18 +150,11 @@ function activate(context) {
     sshClientIp,
     onLog: logDebug,
     onTick: (snapshot) => {
-      const viewModel = buildLegacyViewModel(snapshot, vscode.env.language);
-      const payload = viewModel.payload;
-      currentStatusBarViewModel = {
-        cpu: payload.cpu,
-        mem: { percent: payload.mem.percent },
-        net: payload.net,
-        ssh: payload.ssh,
-        gpus: payload.gpus,
-        diskRoot: payload.disks.find((disk) => disk.mount === '/'),
-        diskIO: payload.diskIO,
-      };
-      if (provider) provider.renderSnapshot(snapshot);
+      if (provider) {
+        const viewModel = provider.renderSnapshot(snapshot);
+        currentStatusBarViewModel = viewModel.performance;
+        currentUserNativeIndices = viewModel.currentUserNativeIndices;
+      }
       updateBar();
     },
   });
@@ -173,7 +165,6 @@ function activate(context) {
     uiStateStore: context.globalState,
     logger: logDebug,
     onConfigUpdated: () => updateBar(),
-    onUserIndicesChanged: (indices) => { currentUserNativeIndices = indices; },
   });
   context.subscriptions.push({ dispose: () => monitorService.dispose() });
   context.subscriptions.push(

@@ -1,14 +1,14 @@
 'use strict';
 const crypto = require('node:crypto');
 const path = require('node:path');
-const { buildLegacyViewModel } = require('../services/legacy-view-model');
+const { buildMonitorViewModel } = require('../services/monitor-view-model');
 const { getWebviewHtml } = require('./webview-html');
 
 const CONFIG_KEYS = new Set(['refreshInterval', 'statusBar', 'disk', 'display']);
 
 class MonitorViewProvider {
-  constructor({ vscode, monitorService, configStore, uiStateStore = null, onConfigUpdated = () => {}, onUserIndicesChanged = () => {}, logger = () => {} }) {
-    this.vscode = vscode; this.monitorService = monitorService; this.configStore = configStore; this.onConfigUpdated = onConfigUpdated; this.onUserIndicesChanged = onUserIndicesChanged; this.logger = logger;
+  constructor({ vscode, monitorService, configStore, uiStateStore = null, onConfigUpdated = () => {}, logger = () => {} }) {
+    this.vscode = vscode; this.monitorService = monitorService; this.configStore = configStore; this.onConfigUpdated = onConfigUpdated; this.logger = logger;
     this.uiStateStore = uiStateStore;
     this.processDisplayState = null;
     this.view = null;
@@ -79,17 +79,14 @@ class MonitorViewProvider {
     }
     else if (message.cmd === 'openLink' && typeof message.url === 'string' && /^https:\/\//.test(message.url)) this.vscode.env.openExternal(this.vscode.Uri.parse(message.url));
     else if (message.cmd === 'pause' && typeof message.value === 'boolean') { message.value ? this.monitorService.pause() : this.monitorService.resume(); this.broadcast({ cmd: 'uiState', paused: message.value }); }
-    else if (message.cmd === 'needProcs') this.pushProcesses();
     else this.logger(`ignored invalid webview message: ${message.cmd}`);
   }
 
   renderSnapshot(snapshot) {
-    const viewModel = buildLegacyViewModel(snapshot, this.vscode.env.language); const diskConfig = this.configStore.getCurrent().disk;
-    if (diskConfig.hideParentMounts !== false) {
-      const mounts = viewModel.payload.disks.map((disk) => disk.mount);
-      viewModel.payload.disks = viewModel.payload.disks.filter((disk) => disk.mount === '/' || !mounts.some((mount) => mount !== disk.mount && mount.startsWith(`${disk.mount}/`)));
-    }
-    this.lastViewModel = viewModel; this.onUserIndicesChanged(viewModel.currentUserNativeIndices); this.renderViewModel(viewModel);
+    const viewModel = buildMonitorViewModel(snapshot, this.vscode.env.language, this.configStore.getCurrent().disk);
+    this.lastViewModel = viewModel;
+    this.renderViewModel(viewModel);
+    return viewModel;
   }
 
   renderViewModel(viewModel) {
@@ -97,8 +94,7 @@ class MonitorViewProvider {
   }
 
   sendViewModel(target, viewModel) {
-    target.webview.postMessage({ cmd: 'update', payload: viewModel.payload });
-    target.webview.postMessage({ cmd: 'procs', data: viewModel.processes });
+    target.webview.postMessage({ cmd: 'snapshot', viewModel });
   }
 
   broadcast(message) {
@@ -112,9 +108,6 @@ class MonitorViewProvider {
     }
   }
 
-  pushProcesses() {
-    if (this.lastViewModel) this.broadcast({ cmd: 'procs', data: this.lastViewModel.processes });
-  }
   pushConfig(exceptSource = null) {
     const config = this.configStore.getCurrent(); const value = this.monitorService.readSnapshot().accelerators.value;
     const message = { cmd: 'config', interval: config.refreshInterval, barCfg: config.statusBar, diskCfg: config.disk, displayCfg: config.display, gpuCount: value ? value.devices.length : null };

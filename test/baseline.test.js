@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-html');
 
 const projectRoot = path.resolve(__dirname, '..');
 const readJson = (relativePath) => JSON.parse(fs.readFileSync(path.join(projectRoot, relativePath), 'utf8'));
@@ -77,14 +78,14 @@ test('development-only refactor documents and tests are excluded from VSIX', () 
   assert.equal(vscodeIgnore.includes('REFACTOR_CHECKLIST.md'), true);
   assert.equal(vscodeIgnore.some((entry) => entry === 'src/' || entry === 'src/**'), false);
   assert.equal(fs.existsSync(path.join(projectRoot, 'src/view/assets/webview.css')), true);
-  assert.equal(fs.existsSync(path.join(projectRoot, 'src/view/assets/webview.js')), true);
+  for (const fileName of WEBVIEW_SCRIPT_FILES) assert.equal(fs.existsSync(path.join(projectRoot, 'src/view/assets', fileName)), true);
 });
 
 test('Webview resets topology keys on empty GPU results and restores translucent zero-percent tags', () => {
-  const script = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview.js'), 'utf8');
+  const script = WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(projectRoot, 'src/view/assets', fileName), 'utf8')).join('\n');
   const style = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview.css'), 'utf8');
   assert.match(script, /gpuBody\.innerHTML = '';\s*renderedAcceleratorKeys = \[\];/);
-  assert.match(script, /pct >= 70 \? ' tag-warn' : ' tag-accent'/);
+  assert.match(script, /g\.mappingStatus === 'unmatched' \? ' tag-unknown' : ' ' \+ tagColorClass\(pct\)/);
   assert.match(style, /\.gpu-tag\.tag-accent[^}]*transparent/);
   assert.match(script, /function sendToExtension\(/);
   assert.doesNotMatch(script, /function postMessage\(/);

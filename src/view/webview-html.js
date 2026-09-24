@@ -2,12 +2,14 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const pkg = require('../../package.json');
+const WEBVIEW_SCRIPT_FILES = ['webview.js', 'webview-performance.js', 'webview-settings.js', 'webview-processes.js'];
 
 async function getWebviewHtml({ initConfig, nonce }) {
-  const [style, script] = await Promise.all([
+  const [style, ...scripts] = await Promise.all([
     fs.readFile(path.join(__dirname, 'assets', 'webview.css'), 'utf8'),
-    fs.readFile(path.join(__dirname, 'assets', 'webview.js'), 'utf8'),
+    ...WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFile(path.join(__dirname, 'assets', fileName), 'utf8')),
   ]);
+  const script = scripts.join('\n');
   const configBase64 = Buffer.from(JSON.stringify(initConfig || {}), "utf8").toString("base64");
   return `<!DOCTYPE html>
 <html lang="zh">
@@ -146,4 +148,4 @@ async function getWebviewHtml({ initConfig, nonce }) {
 }
 
 
-module.exports = { getWebviewHtml };
+module.exports = { getWebviewHtml, WEBVIEW_SCRIPT_FILES };

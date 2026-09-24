@@ -5,9 +5,10 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const { formatStatusBarText } = require('../src/view/status-bar-controller');
-const { getWebviewHtml } = require('../src/view/webview-html');
+const { getWebviewHtml, WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-html');
 const { MonitorViewProvider } = require('../src/view/monitor-view-provider');
-const { buildLegacyViewModel, displayDeviceName } = require('../src/services/legacy-view-model');
+const { buildMonitorViewModel, displayDeviceName } = require('../src/services/monitor-view-model');
+const readWebviewScript = () => WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(__dirname, '..', 'src/view/assets', fileName), 'utf8')).join('\n');
 
 test('status bar consumes shared idle decisions instead of recomputing thresholds', () => {
   const text = formatStatusBarText({ cpu: false, ram: false, disk: false, diskIO: 'off', net: 'off', ssh: false, gpu: { summary: true, showIdleIds: true, mode: 'off' } }, {
@@ -18,16 +19,23 @@ test('status bar consumes shared idle decisions instead of recomputing threshold
 
 test('status bar uses client-perspective SSH upload and download strings consistently', () => {
   const text = formatStatusBarText({ cpu: false, ram: false, disk: false, diskIO: 'off', net: 'off', ssh: true, gpu: { summary: false, mode: 'off' } }, {
-    ssh: { isSSH: true, txStr: '2 KB/s', rxStr: '3 KB/s' }, gpus: [],
+    sshTraffic: { isSsh: true, uploadText: '2 KB/s', downloadText: '3 KB/s' }, gpus: [],
   });
   assert.equal(text, 'SSH ↑2 KB/s ↓3 KB/s');
 });
 
 test('combined network mode displays the combined rate instead of upload only', () => {
   const text = formatStatusBarText({ cpu: false, ram: false, disk: false, diskIO: 'off', net: 'combined', ssh: false, gpu: { summary: false, mode: 'off' } }, {
-    net: { txStr: '2 KB/s', rxStr: '3 KB/s', totalStr: '5 KB/s' }, gpus: [],
+    network: { transmitText: '2 KB/s', receiveText: '3 KB/s', totalText: '5 KB/s' }, gpus: [],
   });
   assert.equal(text, '↕5 KB/s');
+});
+
+test('status bar GPU detail uses the shared rounded memory percentage', () => {
+  const text = formatStatusBarText({ cpu: false, ram: false, disk: false, diskIO: 'off', net: 'off', ssh: false, gpu: { summary: false, mode: 'all', metric: 'vram' } }, {
+    gpus: [{ idx: 6, memPct: 90, isIdle: false }],
+  });
+  assert.equal(text, '$(circuit-board) #6 90%V');
 });
 
 test('Webview HTML loads split assets with a nonce and transports config without raw interpolation', async () => {
@@ -39,11 +47,15 @@ test('Webview HTML loads split assets with a nonce and transports config without
   assert.match(html, /data-config="[A-Za-z0-9+/=]+"/);
   assert.match(html, /gpu-name-text-/);
   assert.match(html, /id="modal-scrollbar" aria-hidden="true" hidden/);
+  assert.equal((html.match(/<script nonce="test-nonce">/g) || []).length, 1);
+  assert.ok(html.indexOf('function applyGroupVisibility') < html.indexOf('function openModal'));
+  assert.ok(html.indexOf('function openModal') < html.indexOf('function renderProcTable'));
+  assert.doesNotThrow(() => new vm.Script(html.match(/<script nonce="test-nonce">([\s\S]*?)<\/script>/)[1]));
 });
 
 test('settings use content-sized controls and an overlay scrollbar', () => {
   const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
-  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const script = readWebviewScript();
   assert.match(style, /\.setting-control\s*\{[^}]*flex:\s*0 0 auto;/);
   assert.match(style, /\.setting-control\.wide\s*\{[^}]*width:\s*55%;/);
   assert.match(style, /\.modal-body\s*\{[^}]*scrollbar-width:\s*none;/);
@@ -77,7 +89,7 @@ test('settings use content-sized controls and an overlay scrollbar', () => {
   assert.equal(track.hidden, true);
 });
 
-test('performance and process rows are sent as separate messages', () => {
+test('performance and process rows are sent as one snapshot', () => {
   const messages = [];
   const provider = new MonitorViewProvider({
     vscode: {},
@@ -87,21 +99,25 @@ test('performance and process rows are sent as separate messages', () => {
   provider.view = { webview: { postMessage: async (message) => { messages.push(message); return true; } } };
   provider.isReady = true;
   const processes = [{ pid: 42 }];
-  provider.renderViewModel({ payload: { cpu: 12 }, processes });
-  assert.equal(messages.length, 2);
-  assert.deepEqual(messages[0], { cmd: 'update', payload: { cpu: 12 } });
-  assert.deepEqual(messages[1], { cmd: 'procs', data: processes });
+  provider.renderViewModel({ performance: { cpu: { usagePercent: 12 } }, processes });
+  assert.equal(messages.length, 1);
+  assert.deepEqual(messages[0], { cmd: 'snapshot', viewModel: { performance: { cpu: { usagePercent: 12 } }, processes } });
+  const script = readWebviewScript();
+  assert.match(script, /data\.cmd !== 'snapshot'/);
+  assert.doesNotMatch(script, /cmd:'needProcs'|data\.cmd === 'procs'|data\.cmd !== 'update'/);
+  const receiveSnapshot = script.slice(script.indexOf("    if (data.cmd !== 'snapshot')"), script.indexOf("    document.getElementById('cpu-val')"));
+  assert.ok(receiveSnapshot.indexOf('setLang(performance.language)') < receiveSnapshot.indexOf('renderProcTable()'));
 });
 
 test('Webview waits for its ready handshake before receiving the latest snapshot', () => {
   const messages = [];
   const provider = new MonitorViewProvider({ vscode: {}, monitorService: {}, configStore: {} });
   provider.view = { webview: { postMessage: async (message) => { messages.push(message); return true; } } };
-  provider.lastViewModel = { payload: { cpu: 5 }, processes: [] };
+  provider.lastViewModel = { performance: { cpu: { usagePercent: 5 } }, processes: [] };
   provider.renderViewModel(provider.lastViewModel);
   assert.equal(messages.length, 0);
   provider.handleMessage({ version: 1, cmd: 'ready' });
-  assert.equal(messages.some((message) => message.cmd === 'update'), true);
+  assert.equal(messages.some((message) => message.cmd === 'snapshot'), true);
 });
 
 test('editor panel uses the extension icon in its tab', async () => {
@@ -153,7 +169,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   provider.buildHtml = async () => '<html></html>';
   provider.view = side;
   provider.isReady = true;
-  provider.lastViewModel = { payload: { cpu: 5 }, processes: [{ pid: 42 }] };
+  provider.lastViewModel = { performance: { cpu: { usagePercent: 5 } }, processes: [{ pid: 42 }] };
 
   await provider.openEditorPanel();
   await provider.openEditorPanel();
@@ -164,14 +180,14 @@ test('multiple editor panels share snapshots and controls without sharing their 
   panels[0].webview.receive({ version: 1, cmd: 'ready' });
   panels[1].webview.receive({ version: 1, cmd: 'ready' });
   for (const panel of panels) {
-    assert.deepEqual(messages.filter(([target, message]) => target === panel && message.cmd === 'update').map(([, message]) => message.payload), [{ cpu: 5 }]);
+    assert.deepEqual(messages.filter(([target, message]) => target === panel && message.cmd === 'snapshot').map(([, message]) => message.viewModel.performance), [{ cpu: { usagePercent: 5 } }]);
   }
 
   messages.length = 0;
   provider.renderViewModel(provider.lastViewModel);
   for (const target of [side, ...panels]) {
     const name = target === side ? 'side' : target;
-    assert.deepEqual(messages.filter(([recipient]) => recipient === name).map(([, message]) => message.cmd), ['update', 'procs']);
+    assert.deepEqual(messages.filter(([recipient]) => recipient === name).map(([, message]) => message.cmd), ['snapshot']);
   }
 
   messages.length = 0;
@@ -191,7 +207,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   assert.equal(provider.editorPanels.size, 1);
   provider.renderViewModel(provider.lastViewModel);
   assert.equal(messages.some(([recipient]) => recipient === panels[0]), false);
-  assert.equal(messages.some(([recipient, message]) => recipient === panels[1] && message.cmd === 'update'), true);
+  assert.equal(messages.some(([recipient, message]) => recipient === panels[1] && message.cmd === 'snapshot'), true);
 });
 
 test('view model combines GPU users, CPU denominator and SSH latency', () => {
@@ -202,22 +218,60 @@ test('view model combines GPU users, CPU denominator and SSH latency', () => {
     { pid: 8, processKey: '8:1', userName: 'bob', processName: 'python', commandLine: 'python eval.py', cpuUsagePercent: 5, memoryUsedBytes: gib, memoryUsagePercent: 6.25 },
   ];
   const snapshot = {
-    cpu: { value: { usagePercent: 10, coreCount: 16, loadAverage: { oneMinute: 1, fiveMinutes: 2, fifteenMinutes: 3 } } },
+    cpu: { value: { usagePercent: 10, coreCount: 16, loadAverage: { oneMinute: 1.24, fiveMinutes: 2.56, fifteenMinutes: 3.96 } } },
     memory: { value: { usagePercent: 20, usedBytes: 4 * gib, availableBytes: 16 * gib, totalBytes: 20 * gib } },
     processes: { value: processes },
     sshTraffic: { value: { isSsh: true, clientUploadBytesPerSecond: 1024, clientDownloadBytesPerSecond: 0, latencyMilliseconds: 12.25 } },
     accelerators: { value: { devices: [device], usagesByPid: new Map([[7, [{ nativeIndex: 0, deviceKey: 'nvidia:uuid', memoryUsedBytes: 2 * gib, memoryTotalBytes: 80 * gib, processKey: '7:1' }]], [8, [{ nativeIndex: 0, deviceKey: 'nvidia:uuid', memoryUsedBytes: gib, memoryTotalBytes: 80 * gib, processKey: '8:1' }]]]), currentUserDeviceKeys: ['nvidia:uuid'] } },
   };
-  const model = buildLegacyViewModel(snapshot, 'en');
-  assert.equal(model.payload.gpus[0].displayName, 'H100 80GB HBM3');
-  assert.equal(model.payload.gpus[0].isMine, true);
-  assert.equal(model.payload.gpus[0].memTotalStr, '80.0 G');
-  assert.equal(model.payload.gpus[0].memPairStr, '3.0 / 80.0G');
-  assert.deepEqual(model.payload.gpus[0].users.map((user) => user.name), ['alice', 'bob']);
-  assert.equal(model.payload.gpus[0].users[0].usedStr, '2.0G');
-  assert.equal(model.payload.gpus[0].users[0].percent, 2.5);
-  assert.equal(model.payload.ssh.latencyStr, '12.3 ms');
+  const model = buildMonitorViewModel(snapshot, 'en');
+  assert.deepEqual(model.performance.cpu.loadAverage, { oneMinute: '1.2', fiveMinutes: '2.6', fifteenMinutes: '4.0' });
+  assert.equal(model.performance.gpus[0].displayName, 'H100 80GB HBM3');
+  assert.equal(model.performance.gpus[0].isMine, true);
+  assert.equal(model.performance.gpus[0].memTotalStr, '80.0 G');
+  assert.equal(model.performance.gpus[0].memPairStr, '3.0 / 80.0G');
+  assert.deepEqual(model.performance.gpus[0].users.map((user) => user.name), ['alice', 'bob']);
+  assert.equal(model.performance.gpus[0].users[0].usedStr, '2.0G');
+  assert.equal(model.performance.gpus[0].users[0].percent, 3);
+  assert.equal(model.performance.sshTraffic.latencyText, '12.3 ms');
   assert.equal(model.processes.find((row) => row.pid === 7).cpuWhole, 12.5);
+  assert.equal(formatStatusBarText({ cpu: true, ram: true, disk: false, diskIO: 'off', net: 'off', ssh: false, gpu: { summary: true, mode: 'off' } }, model.performance), '$(dashboard) 10%  $(server) 20%  $(circuit-board) 0/1');
+});
+
+test('mount filtering is applied once before both views consume a snapshot', () => {
+  const snapshot = {
+    diskTopology: { value: [
+      { mountPath: '/', usedBytes: 1024, totalBytes: 2048, usagePercent: 50 },
+      { mountPath: '/data', usedBytes: 1024, totalBytes: 2048, usagePercent: 50 },
+      { mountPath: '/data/child', usedBytes: 1024, totalBytes: 2048, usagePercent: 50 },
+    ] },
+    accelerators: { value: { devices: [], usagesByPid: new Map(), currentUserDeviceKeys: [] } },
+  };
+  assert.deepEqual(buildMonitorViewModel(snapshot, 'en').performance.disks.map((disk) => disk.mount), ['/', '/data/child']);
+  assert.deepEqual(buildMonitorViewModel(snapshot, 'en', { hideParentMounts: false }).performance.disks.map((disk) => disk.mount), ['/', '/data', '/data/child']);
+});
+
+test('GPU card, process tag and user capsule use the same rounded memory percentage', () => {
+  const gib = 1024 ** 3;
+  const usedBytes = 71.8 * gib;
+  const totalBytes = 80 * gib;
+  const snapshot = {
+    cpu: { value: { usagePercent: 0, coreCount: 8, loadAverage: { oneMinute: 0, fiveMinutes: 0, fifteenMinutes: 0 } } },
+    processes: { value: [{ pid: 6, processKey: '6:1', userName: 'alice', processName: 'python', commandLine: 'python', cpuUsagePercent: 1, memoryUsedBytes: gib, memoryUsagePercent: 1 }] },
+    accelerators: { status: 'ready', value: {
+      devices: [{ nativeIndex: 6, deviceKey: 'gpu:6', name: 'A100', memory: { usedBytes, totalBytes }, utilizationPercent: 0 }],
+      usagesByPid: new Map([[6, [{ nativeIndex: 6, deviceKey: 'gpu:6', processKey: '6:1', memoryUsedBytes: usedBytes, memoryTotalBytes: totalBytes }]]]),
+      currentUserDeviceKeys: [],
+    } },
+  };
+  const model = buildMonitorViewModel(snapshot, 'en');
+  assert.equal(model.performance.gpus[0].memPct, 90);
+  assert.equal(model.performance.gpus[0].users[0].percent, 90);
+  assert.equal(model.processes[0].gpus[0].pct, 90);
+  const script = readWebviewScript();
+  assert.match(script, /var memPct = g\.memPct;/);
+  assert.match(script, /var pct = g\.pct;/);
+  assert.match(script, /chip\.className = 'gpu-user ' \+ tagColorClass\(user\.percent\)/);
 });
 
 test('GPU display name removes only vendor and marketing prefixes', () => {
@@ -229,7 +283,7 @@ test('GPU display name removes only vendor and marketing prefixes', () => {
 
 test('chart fill color follows the metric bar transition', () => {
   const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
-  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const script = readWebviewScript();
   assert.match(style, /--metric-transition:\s*\.5s ease;/);
   assert.match(style, /\.spark-bg path\s*\{\s*transition:\s*fill var\(--metric-transition\);\s*\}/);
   assert.match(style, /\.fill\s*\{[^}]*transition:\s*width var\(--metric-transition\), background var\(--metric-transition\);/);
@@ -238,14 +292,15 @@ test('chart fill color follows the metric bar transition', () => {
 
 test('GPU footer shows users with a compact info button or falls back to stats', () => {
   const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
-  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const script = readWebviewScript();
   const footer = script.slice(script.indexOf('  function gpuStatsDescription('), script.indexOf('  var gpuInfoPopover ='));
   const line = { style: {}, clientWidth: 180, scrollWidth: 100, children: [1], replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); } };
   const info = { style: {}, setAttribute(name, value) { this[name] = value; } };
   const stats = { style: {} };
   const elements = { 'gpu-users-0': line, 'gpu-info-0': info, 'gpu-stats-0': stats };
   const context = { document: { getElementById: (id) => elements[id], createElement: () => ({}) }, displayCfg: { showGpuUsers: true }, T: { tempLabel: '温度', pwLabel: '功耗' }, activeGpuInfoButton: null, hideGpuInfoPopover() {} };
-  vm.runInNewContext(`${footer}\nthis.renderGpuUsers = renderGpuUsers; this.gpuStatsMarkup = gpuStatsMarkup;`, context);
+  const colors = script.slice(script.indexOf('  function colorClass('), script.indexOf('  function setBar('));
+  vm.runInNewContext(`${colors}\n${footer}\nthis.renderGpuUsers = renderGpuUsers; this.gpuStatsMarkup = gpuStatsMarkup;`, context);
   context.renderGpuUsers({ idx: 0, users: [] });
   assert.equal(line.style.display, 'none');
   assert.equal(info.style.display, 'none');
@@ -259,6 +314,8 @@ test('GPU footer shows users with a compact info button or falls back to stats',
   assert.equal(info['aria-label'], '温度 35°C · 功耗 100/250W');
   assert.equal(info.title, undefined);
   assert.equal(line.children[0].textContent, 'alice (5.0G)');
+  context.renderGpuUsers({ ...gpu, users: [{ name: 'alice', usedStr: '71.8G', percent: 90 }] });
+  assert.equal(line.children[0].className, 'gpu-user tag-danger');
   assert.match(context.gpuStatsMarkup({ ...gpu, temp: 36 }), /36°C/);
   assert.match(context.gpuStatsMarkup(gpu), /100\/250W/);
   const restoredChip = line.children[0];
@@ -285,7 +342,7 @@ test('GPU footer shows users with a compact info button or falls back to stats',
 });
 
 test('GPU info appears immediately and refreshes while hovered', () => {
-  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const script = readWebviewScript();
   const popoverCode = script.slice(script.indexOf('  var gpuInfoPopover ='), script.indexOf("  window.addEventListener('resize'"));
   const popover = { style: {}, hidden: true, offsetWidth: 150, offsetHeight: 20 };
   const button = { dataset: { gpuInfo: '0' }, style: { display: 'inline-flex' }, isConnected: true, getClientRects: () => [{}], getBoundingClientRect: () => ({ right: 180, top: 100, bottom: 114 }) };
@@ -309,7 +366,7 @@ test('GPU info appears immediately and refreshes while hovered', () => {
 });
 
 test('returning to the performance tab redraws GPU user capsules', () => {
-  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const script = readWebviewScript();
   const switchTab = script.slice(script.indexOf('  function switchTab('), script.indexOf("  document.getElementById('tab-perf-btn').addEventListener"));
   const elements = { 'tab-perf': { classList: { add() {}, remove() {} } }, 'tab-proc': { classList: { add() {}, remove() {} } }, 'tab-perf-btn': { classList: { toggle() {} } }, 'tab-proc-btn': { classList: { toggle() {} } } };
   const rendered = [];
@@ -328,7 +385,7 @@ test('returning to the performance tab redraws GPU user capsules', () => {
 });
 
 test('spark area grows from real samples, then interpolates the left boundary after the window fills', () => {
-  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const script = readWebviewScript();
   const geometry = script.slice(script.indexOf('  function sparkDisplayTime('), script.indexOf('  function renderSpark('));
   const history = script.slice(script.indexOf('  function pushHist('), script.indexOf('  // ── 消息处理'));
   let now = 2000;

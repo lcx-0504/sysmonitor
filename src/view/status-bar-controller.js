@@ -3,30 +3,31 @@
 function formatStatusBarText(config, viewModel, currentUserNativeIndices = []) {
   if (config.barEnabled === false) return '';
   const parts = [];
-  if (config.cpu && viewModel.cpu !== undefined) parts.push(`$(dashboard) ${viewModel.cpu}%`);
-  if (config.ram && viewModel.mem) parts.push(`$(server) ${viewModel.mem.percent}%`);
-  if ((config.disk || (config.diskIO && config.diskIO !== 'off')) && (viewModel.diskRoot || viewModel.diskIO)) {
-    const diskText = config.disk && viewModel.diskRoot ? `${viewModel.diskRoot.pct}%` : '';
+  if (config.cpu && viewModel.cpu) parts.push(`$(dashboard) ${viewModel.cpu.usagePercent}%`);
+  if (config.ram && viewModel.memory) parts.push(`$(server) ${viewModel.memory.usagePercent}%`);
+  const diskRoot = viewModel.disks && viewModel.disks.find((disk) => disk.mount === '/');
+  if ((config.disk || (config.diskIO && config.diskIO !== 'off')) && (diskRoot || viewModel.diskIo)) {
+    const diskText = config.disk && diskRoot ? `${diskRoot.pct}%` : '';
     let ioText = '';
-    if (config.diskIO && config.diskIO !== 'off' && viewModel.diskIO) {
-      if (config.diskIO === 'read') ioText = `R${viewModel.diskIO.rStr}`;
-      else if (config.diskIO === 'write') ioText = `W${viewModel.diskIO.wStr}`;
-      else if (config.diskIO === 'combined') ioText = viewModel.diskIO.totalStr;
-      else ioText = `R${viewModel.diskIO.rStr} W${viewModel.diskIO.wStr}`;
+    if (config.diskIO && config.diskIO !== 'off' && viewModel.diskIo) {
+      if (config.diskIO === 'read') ioText = `R${viewModel.diskIo.readText}`;
+      else if (config.diskIO === 'write') ioText = `W${viewModel.diskIo.writeText}`;
+      else if (config.diskIO === 'combined') ioText = viewModel.diskIo.totalText;
+      else ioText = `R${viewModel.diskIo.readText} W${viewModel.diskIo.writeText}`;
     }
     if (diskText && ioText) parts.push(`$(database) ${diskText} (${ioText})`);
     else if (diskText) parts.push(`$(database) ${diskText}`);
     else if (ioText) parts.push(`$(database) ${ioText}`);
   }
-  if (config.net && config.net !== 'off' && viewModel.net) {
+  if (config.net && config.net !== 'off' && viewModel.network) {
     let networkText = '';
-    if (config.net === 'up') networkText = `↑${viewModel.net.txStr}`;
-    else if (config.net === 'down') networkText = `↓${viewModel.net.rxStr}`;
-    else if (config.net === 'combined') networkText = `↕${viewModel.net.totalStr}`;
-    else if (config.net === 'both') networkText = `↑${viewModel.net.txStr} ↓${viewModel.net.rxStr}`;
-    if (config.ssh && viewModel.ssh && viewModel.ssh.isSSH) networkText += ` (SSH ↑${viewModel.ssh.txStr} ↓${viewModel.ssh.rxStr})`;
+    if (config.net === 'up') networkText = `↑${viewModel.network.transmitText}`;
+    else if (config.net === 'down') networkText = `↓${viewModel.network.receiveText}`;
+    else if (config.net === 'combined') networkText = `↕${viewModel.network.totalText}`;
+    else if (config.net === 'both') networkText = `↑${viewModel.network.transmitText} ↓${viewModel.network.receiveText}`;
+    if (config.ssh && viewModel.sshTraffic && viewModel.sshTraffic.isSsh) networkText += ` (SSH ↑${viewModel.sshTraffic.uploadText} ↓${viewModel.sshTraffic.downloadText})`;
     parts.push(networkText);
-  } else if (config.ssh && viewModel.ssh && viewModel.ssh.isSSH) parts.push(`SSH ↑${viewModel.ssh.txStr} ↓${viewModel.ssh.rxStr}`);
+  } else if (config.ssh && viewModel.sshTraffic && viewModel.sshTraffic.isSsh) parts.push(`SSH ↑${viewModel.sshTraffic.uploadText} ↓${viewModel.sshTraffic.downloadText}`);
   if (config.gpu && viewModel.gpus && viewModel.gpus.length) {
     const gpu = config.gpu; let hasIcon = false;
     if (gpu.summary) {
@@ -41,7 +42,7 @@ function formatStatusBarText(config, viewModel, currentUserNativeIndices = []) {
     else if (gpu.mode === 'specify') indices = gpu.cards || [];
     else if (gpu.mode === 'my') indices = currentUserNativeIndices;
     const details = indices.sort((left, right) => left - right).map((index) => viewModel.gpus.find((device) => device.idx === index)).filter(Boolean).filter((device) => !(gpu.skipIdle && device.isIdle)).map((device) => {
-      const memoryPercent = Math.round((device.memUsed || 0) / (device.memTotal || 1) * 100);
+      const memoryPercent = device.memPct;
       if (gpu.metric === 'util') return `#${device.idx} ${device.util || 0}%`;
       if (gpu.metric === 'vram') return `#${device.idx} ${memoryPercent}%V`;
       return `#${device.idx} ${device.util || 0}%/${memoryPercent}%V`;
