@@ -33,7 +33,7 @@ function parseNvidiaProcesses(raw, devicesById) {
 }
 
 class NvidiaProvider {
-  constructor({ commandRunner, fileReader = fs, userId = typeof process.getuid === 'function' ? process.getuid() : null }) { this.commandRunner = commandRunner; this.fileReader = fileReader; this.userId = userId; this.id = 'nvidia'; this.clockTicksPerSecondPromise = null; }
+  constructor({ commandRunner, fileReader = fs, userId = typeof process.getuid === 'function' ? process.getuid() : null, systemInfo = null }) { this.commandRunner = commandRunner; this.fileReader = fileReader; this.userId = userId; this.systemInfo = systemInfo; this.id = 'nvidia'; this.clockTicksPerSecondPromise = null; }
   async readProcessKeys(pids) {
     if (!this.clockTicksPerSecondPromise) this.clockTicksPerSecondPromise = this.commandRunner.execFile('getconf', ['CLK_TCK'], { timeoutMilliseconds: 1000 }).then(({ stdout }) => Number.parseInt(stdout, 10) || 100).catch(() => 100);
     const [clockTicksPerSecond, procStat] = await Promise.all([this.clockTicksPerSecondPromise, this.fileReader.readFile('/proc/stat', 'utf8')]);
@@ -60,12 +60,13 @@ class NvidiaProvider {
     const processKeys = await this.readProcessKeys([...usagesByPid.keys()]);
     for (const [pid, usages] of usagesByPid) for (const usage of usages) usage.processKey = processKeys.get(pid) || null;
     const currentUserDeviceKeys = new Set();
-    if (this.userId !== null) {
+    const userId = this.systemInfo ? await this.systemInfo.userId() : this.userId;
+    if (userId !== null && Number.isFinite(userId)) {
       await Promise.all([...usagesByPid.entries()].map(async ([pid, usages]) => {
         try {
           const status = await this.fileReader.readFile(`/proc/${pid}/status`, 'utf8');
           const match = status.match(/^Uid:\s+(\d+)/m);
-          if (match && Number(match[1]) === this.userId) for (const usage of usages) if (usage.deviceKey) currentUserDeviceKeys.add(usage.deviceKey);
+          if (match && Number(match[1]) === userId) for (const usage of usages) if (usage.deviceKey) currentUserDeviceKeys.add(usage.deviceKey);
         } catch { /* process exited */ }
       }));
     }

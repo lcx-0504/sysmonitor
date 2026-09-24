@@ -1,11 +1,25 @@
 'use strict';
 const { performance } = require('node:perf_hooks');
 
-function parseSshByteCounters(raw, clientIp) {
+function endpointOf(token) {
+  const match = token.match(/^(.*):(\d+)$/);
+  if (!match) return null;
+  return { ip: match[1].replace(/^\[|\]$/g, ''), port: Number(match[2]) };
+}
+
+function matchesConnection(line, connection) {
+  const endpoints = line.trim().split(/\s+/).map(endpointOf).filter(Boolean);
+  return endpoints.some((endpoint) => endpoint.ip === connection.serverIp && endpoint.port === connection.serverPort)
+    && endpoints.some((endpoint) => endpoint.ip === connection.clientIp && endpoint.port === connection.clientPort);
+}
+
+function parseSshByteCounters(raw, clientIpOrConnection) {
   let serverSentBytes = 0; let serverReceivedBytes = 0; let includeRecord = false;
   const latencies = [];
   for (const line of raw.split('\n')) {
-    if (line && !/^\s/.test(line)) includeRecord = /:22(?:\s|$)/.test(line) && (!clientIp || line.includes(clientIp));
+    if (line && !/^\s/.test(line)) includeRecord = clientIpOrConnection && typeof clientIpOrConnection === 'object'
+      ? matchesConnection(line, clientIpOrConnection)
+      : /:22(?:\s|$)/.test(line) && (!clientIpOrConnection || line.includes(clientIpOrConnection));
     if (!includeRecord) continue;
     const sent = line.match(/bytes_sent:(\d+)/); const received = line.match(/bytes_received:(\d+)/);
     const rtt = line.match(/\brtt:([\d.]+)\//);
@@ -17,11 +31,13 @@ function parseSshByteCounters(raw, clientIp) {
 }
 
 class SshTrafficCollector {
-  constructor({ commandRunner, isSsh, clientIp, monotonicClock = () => performance.now() }) { this.commandRunner = commandRunner; this.isSsh = isSsh; this.clientIp = clientIp; this.monotonicClock = monotonicClock; this.previous = null; }
+  constructor({ commandRunner, isSsh, clientIp, connectionInfo = null, timeoutMilliseconds = 2000, monotonicClock = () => performance.now() }) { this.commandRunner = commandRunner; this.isSsh = isSsh; this.clientIp = clientIp; this.connectionInfo = connectionInfo; this.timeoutMilliseconds = timeoutMilliseconds; this.monotonicClock = monotonicClock; this.previous = null; }
   async collect() {
     if (!this.isSsh) return { isSsh: false, clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: null };
-    const { stdout } = await this.commandRunner.execFile('ss', ['-H', '-t', '-i', '-n', 'state', 'established'], { timeoutMilliseconds: 2000 });
-    const counters = parseSshByteCounters(stdout, this.clientIp); const sampledAt = this.monotonicClock();
+    const connection = this.connectionInfo ? this.connectionInfo() : null;
+    if (this.connectionInfo && !connection) return { isSsh: false, clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: null };
+    const { stdout } = await this.commandRunner.execFile('ss', ['-H', '-t', '-i', '-n', 'state', 'established'], { timeoutMilliseconds: this.timeoutMilliseconds });
+    const counters = parseSshByteCounters(stdout, connection || this.clientIp); const sampledAt = this.monotonicClock();
     let clientUploadBytesPerSecond = null; let clientDownloadBytesPerSecond = null;
     if (this.previous) {
       const seconds = (sampledAt - this.previous.sampledAt) / 1000;

@@ -2,6 +2,7 @@
 
 const DEFAULT_CONFIG = Object.freeze({
   refreshInterval: 2,
+  servers: Object.freeze({ visibleOnly: false, restoreTabs: true }),
   statusBar: Object.freeze({
     barEnabled: true,
     alignment: 'left',

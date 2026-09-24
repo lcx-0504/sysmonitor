@@ -69,6 +69,8 @@ test('Editor pop-out action is contributed to the native view title', () => {
   const manifest = readJson('package.json');
   assert.equal(manifest.contributes.commands.some((command) => command.command === 'sysmonitor.openEditor' && command.icon === '$(open-in-product)'), true);
   assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.openEditor' && item.when === 'view == sysmonitor.panel'), true);
+  assert.equal(manifest.contributes.commands.some((item) => item.command === 'sysmonitor.openWindow' && item.icon === '$(multiple-windows)'), true);
+  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.openWindow' && item.when === 'view == sysmonitor.panel'), true);
 });
 
 test('development-only refactor documents and tests are excluded from VSIX', () => {

@@ -44,6 +44,27 @@ test('SSH counters and TCP RTT are parsed for the selected client', () => {
   assert.deepEqual(parseSshByteCounters(raw, '10.0.0.1'), { serverSentBytes: 2000, serverReceivedBytes: 1000, latencyMilliseconds: 12.5 });
 });
 
+test('local SSH monitoring matches one socket even when clients share an IP', () => {
+  const raw = 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:12.5/2.0 bytes_sent:2000 bytes_received:1000\n'
+    + 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50001\n cubic rtt:40.0/3.0 bytes_sent:9999 bytes_received:8888\n';
+  const connection = { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 22 };
+  assert.deepEqual(parseSshByteCounters(raw, connection), { serverSentBytes: 2000, serverReceivedBytes: 1000, latencyMilliseconds: 12.5 });
+});
+
+test('SSH collector waits for its own connection tuple before showing local SSH traffic', async () => {
+  const connection = { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 22 };
+  let available = false; let calls = 0;
+  const collector = new SshTrafficCollector({
+    isSsh: true, connectionInfo: () => available ? connection : null, timeoutMilliseconds: 8000,
+    commandRunner: { execFile: async (_command, _args, options) => { calls++; assert.equal(options.timeoutMilliseconds, 8000); return { stdout: 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n' }; } },
+  });
+  assert.equal((await collector.collect()).isSsh, false);
+  assert.equal(calls, 0);
+  available = true;
+  assert.equal((await collector.collect()).isSsh, true);
+  assert.equal(calls, 1);
+});
+
 test('SSH collector requests numeric socket addresses so port 22 can be matched', async () => {
   let args;
   const collector = new SshTrafficCollector({

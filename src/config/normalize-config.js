@@ -81,6 +81,15 @@ function normalizeDisplayConfig(rawValue) {
   };
 }
 
+function normalizeServerConfig(rawValue) {
+  const rawServers = isObject(rawValue) ? rawValue : {};
+  return {
+    ...rawServers,
+    visibleOnly: isBoolean(rawServers.visibleOnly) ? rawServers.visibleOnly : DEFAULT_CONFIG.servers.visibleOnly,
+    restoreTabs: isBoolean(rawServers.restoreTabs) ? rawServers.restoreTabs : DEFAULT_CONFIG.servers.restoreTabs,
+  };
+}
+
 function normalizeConfig(rawValue = {}) {
   const rawConfig = isObject(rawValue) ? rawValue : {};
   return {
@@ -89,6 +98,7 @@ function normalizeConfig(rawValue = {}) {
     statusBar: normalizeStatusBarConfig(rawConfig.statusBar),
     disk: normalizeDiskConfig(rawConfig.disk),
     display: normalizeDisplayConfig(rawConfig.display),
+    servers: normalizeServerConfig(rawConfig.servers),
   };
 }
 
@@ -98,4 +108,5 @@ module.exports = {
   normalizeDisplayConfig,
   normalizeGpuConfig,
   normalizeStatusBarConfig,
+  normalizeServerConfig,
 };

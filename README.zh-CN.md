@@ -8,7 +8,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/lcx-0504/sysmonitor)](https://github.com/lcx-0504/sysmonitor)
 [![License](https://img.shields.io/github/license/lcx-0504/sysmonitor)](LICENSE)
 
-轻量级 VS Code / Cursor 扩展，监控**远程或本地 Linux** 的系统资源。可以放在侧边栏、同时打开多个 Editor 标签页，也能把常用指标放进状态栏。
+轻量级 VS Code / Cursor 扩展，可在**本机、SSH 连接或远程窗口**中监控 Linux 系统。侧边栏可切换多台服务器，Editor 可分别打开监控视图；适用的窗口也可在状态栏显示常用指标。
 
 ![系统监控总览](https://raw.githubusercontent.com/lcx-0504/sysmonitor/main/screenshots/overview.png)
 
@@ -36,13 +36,15 @@ GPU 卡片数据与 GPU 进程信息会等两步采集都完成后一起更新�
 
 ### 进程管理器
 
-可按 CPU、内存或 GPU 对完整进程集排序，列表显示前 100 条。支持按进程名、PID、用户或命令搜索，也可输入 `GPU0`／`#0` 按卡筛选。CPU 单元格可切换单核占比（默认）、整机占比或同格双值；内存可切换占用量（默认）、占比或同格双值，双值复制时仍在同一单元格。这两项显示偏好会在侧边栏与 Editor 标签页之间同步。
+可按 CPU、内存或 GPU 对完整进程集排序，列表显示前 100 条。支持按进程名、PID、用户或命令搜索，也可输入 `GPU0`／`#0` 按卡筛选。CPU 单元格可切换单核占比（默认）、整机占比或同格双值；内存可切换占用量（默认）、占比或同格双值，双值复制时仍在同一单元格。
 
 进程名与命令列可从表头横向展开；只有 PID 列右对齐。右键可复制单元格、完整行或 PID；菜单打开期间进程表格会保持位置不变。进程 CPU 使用 Linux `ps` 的运行至今平均占用口径，整机占比由单核值除以逻辑核心数得到。
 
 ### 侧边栏、Editor 与状态栏
 
-点击视图标题栏中的原生按钮可打开多个 Editor 标签页。它们共用同一套采集和快照，但各自保留图表历史、进程筛选等临时界面状态。暂停会同时停止面板和状态栏的数据采集。
+本地窗口的「服务器」页列出 SSH 配置中的别名。打开服务器会新增设备标签；列表行也能打开独立 Editor、系统监控浮动窗口、Remote-SSH 窗口或 SSH 终端。Remote-SSH 菜单提供直接连接和最近打开的远程文件夹，目录记录由 Remote-SSH 提供。同一服务器的多个视图共用一套采集快照与图表历史，默认在标签处于后台时继续采集。侧栏设备标签按工作区保存，Editor 随 VS Code 恢复其设备和页面。「启动时恢复上次的标签页」默认开启，「仅刷新可见面板」默认关闭，两项均可在「服务器」设置组中调整。
+
+视图标题栏的原生按钮可把当前视图弹出到 Editor，或直接移入独立浮动窗口。暂停会停止当前 VS Code 窗口的所有采集。状态栏归属固定：本地 Linux 窗口显示本机，远程 Linux 窗口显示当前远程机器；本地 macOS／Windows 窗口不显示 System Monitor 状态栏。
 
 状态栏可显示 CPU、内存、磁盘容量或读写速率、网络及 SSH 速率，以及 GPU 总览或单卡指标；显示开关、位置、优先级和各项内容均可配置。容量和速度按 1024 进位为 K/M/G/T，保留一位小数，速度附加 `/s`；时长按 ms、s、m、h 显示。
 
@@ -50,17 +52,23 @@ GPU 卡片数据与 GPU 进程信息会等两步采集都完成后一起更新�
 
 从 [Marketplace](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor) 或 [Open VSX](https://open-vsx.org/extension/LiChenxi/sysmonitor) 安装扩展。安装后的表现取决于扩展运行的位置：
 
-- **本地 Linux：** 侧边栏显示 System Monitor，状态栏指标开始更新。
-- **本地 macOS 或 Windows：** 本机不会出现监控面板。扩展可能弹出一条可选通知，询问是否加入 `remote.SSH.defaultExtensions`，以便以后连接 Remote-SSH 服务器时自动安装；这不会在当前电脑上开始监控。
+- **本地 Linux：** 侧边栏默认打开固定的「本机」设备标签；进入「服务器」页可添加 SSH 配置中的 Linux 机器。状态栏始终显示本机指标。
+- **本地 macOS 或 Windows：** 侧边栏直接显示服务器列表，不采集当前电脑，也不显示 System Monitor 状态栏。选择 Linux 服务器后显示「性能」和「进程」。
 - **远程 Linux：** 通过 Remote-SSH、WSL 或 Dev Container 连接 Linux 环境，并在该环境安装或启用扩展，随后就会显示对应服务器的监控侧边栏和状态栏指标。
 
-从侧边栏打开 **System Monitor** 即可查看完整面板。无论本地还是远程，指标都由 Linux 扩展主机采集。
+服务器列表优先读取 `remote.SSH.configFile`，否则读取 `~/.ssh/config`（Windows 为 `%USERPROFILE%\.ssh\config`），并包含 `Include` 文件中的明确 `Host` 别名。连接使用系统 `ssh` 命令，需要能够免交互输入密码、私钥口令或 TOTP 直接连接；扩展沿用现有 SSH 配置，不在服务器上安装监控服务。服务器提供 TCP 计数器时，SSH 卡片显示这条监控连接自身的流量与延迟。
+
+如需在 Remote-SSH 远程窗口中自动安装 System Monitor，可在本地「服务器」页的首次使用提示中点击「自动安装」，或在「设置 → 服务器」中点击「加入默认扩展」。这会把扩展 ID 加入全局 `remote.SSH.defaultExtensions`；Remote-SSH 安装的是扩展市场已发布的版本。
 
 ## 配置
 
 内置**设置**面板使用开关、分段选择和下拉菜单，修改后即时生效；磁盘过滤预设会以禁用状态展示对应的自定义字段，方便对照。默认刷新间隔为 2 秒，可选 1、2、5、10 秒快捷值或自定义 1–30 秒。磁盘挂载信息固定每 10 秒采集一次；各采集器在上一次尚未完成时会跳过本轮。
 
 默认显示全部五组、背景图表、GPU 占用用户标签、当前用户 GPU 标记和空闲 GPU 选择器。图表窗口为 5 分钟，等宽数字开启。状态栏默认显示 CPU、内存和 GPU 总览；网络、SSH、磁盘及单卡 GPU 信息默认关闭。
+
+「服务器」设置默认在启动时恢复已打开的设备与 Editor 标签（`"restoreTabs": true`），同时让已打开的服务器持续后台采集；如需仅采集当前可见的设备，可开启 `"visibleOnly": true`。两项是全局设置，侧边栏打开的设备标签则按工作区保存。
+
+内置状态栏设置在所有窗口都可编辑，因为它属于全局配置。本地 macOS／Windows 窗口不显示 System Monitor 状态栏；该配置在本地或远程 Linux 窗口生效。
 
 也可直接编辑 VS Code 的**用户** `settings.json`。以下示例是在默认值之外，打开状态栏网络／SSH 和“我的 GPU”、隐藏磁盘分组，并延长图表窗口：
 

@@ -34,17 +34,18 @@
     "remote"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onWebviewPanel:sysmonitor.editor"
   ],
   "main": "./extension.js",
+  "extensionKind": ["workspace", "ui"],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
           "id": "sysmonitor-container",
           "title": "%viewTitle%",
-          "icon": "./icon.svg",
-          "when": "remoteName || isLinux"
+          "icon": "./icon.svg"
         }
       ]
     },
@@ -53,21 +54,24 @@
         {
           "type": "webview",
           "id": "sysmonitor.panel",
-          "name": "%viewName%",
-          "when": "remoteName || isLinux"
+          "name": "%viewName%"
         }
       ]
     },
     "commands": [
       {
         "command": "sysmonitor.openPanel",
-        "title": "%cmdOpen%",
-        "when": "remoteName || isLinux"
+        "title": "%cmdOpen%"
       },
       {
         "command": "sysmonitor.openEditor",
         "title": "%cmdOpenEditor%",
         "icon": "$(open-in-product)"
+      },
+      {
+        "command": "sysmonitor.openWindow",
+        "title": "%cmdOpenWindow%",
+        "icon": "$(multiple-windows)"
       }
     ],
     "menus": {
@@ -75,7 +79,12 @@
         {
           "command": "sysmonitor.openEditor",
           "when": "view == sysmonitor.panel",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "sysmonitor.openWindow",
+          "when": "view == sysmonitor.panel",
+          "group": "navigation@2"
         }
       ]
     },
@@ -139,6 +148,14 @@
             "showGpuUsers": true
           },
           "description": "Display settings"
+        },
+        "sysmonitor.servers": {
+          "type": "object",
+          "default": {
+            "visibleOnly": false,
+            "restoreTabs": true
+          },
+          "description": "SSH server monitoring and session restoration settings"
         }
       }
     }

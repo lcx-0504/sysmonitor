@@ -56,13 +56,19 @@ test('Webview HTML loads split assets with a nonce and transports config without
 test('settings use content-sized controls and an overlay scrollbar', () => {
   const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
   const script = readWebviewScript();
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src/view/webview-html.js'), 'utf8');
   assert.match(style, /\.setting-control\s*\{[^}]*flex:\s*0 0 auto;/);
   assert.match(style, /\.setting-control\.wide\s*\{[^}]*width:\s*55%;/);
   assert.match(style, /\.modal-body\s*\{[^}]*scrollbar-width:\s*none;/);
   assert.match(style, /\.modal-body::-webkit-scrollbar\s*\{[^}]*width:\s*0;/);
   assert.match(style, /\.modal-scrollbar\s*\{[^}]*position:\s*absolute;\s*right:\s*0;/);
   assert.match(style, /\.modal-scrollbar-thumb\s*\{[^}]*margin-right:\s*0;/);
+  assert.doesNotMatch(style, /\.modal-body\s*\{[^}]*overscroll-behavior-y:/);
+  assert.match(style, /\.sett-info-icon\s*\{[^}]*border:\s*0;/);
+  assert.match(html, /id=\"sett-bar-info\"[^>]*>ⓘ<\/button>/);
   assert.match(script, /T\.diskExcludePath[^\n]*T\.diskExcludePathTip, true\)/);
+  assert.match(script, /本地 Linux 窗口的状态栏显示本机；远程 Linux 窗口显示当前服务器/);
+  assert.doesNotMatch(script, /今后连接 Remote-SSH/);
 
   const scrollbarCode = script.slice(script.indexOf("  var modalBody = document.getElementById('modal-body');"), script.indexOf('  function openModal()'));
   const body = { clientHeight: 100, scrollHeight: 400, scrollTop: 0, offsetTop: 30, addEventListener() {} };
@@ -84,6 +90,7 @@ test('settings use content-sized controls and an overlay scrollbar', () => {
   handlers.pointermove({ clientY: 71, pointerId: 1 });
   assert.equal(body.scrollTop, 150);
   handlers.pointerup({ pointerId: 1 });
+  assert.doesNotMatch(scrollbarCode, /addEventListener\('wheel'|modalBounce|resetModalBounce/);
   body.scrollHeight = 100;
   context.updateModalScrollbar();
   assert.equal(track.hidden, true);
@@ -120,12 +127,12 @@ test('Webview waits for its ready handshake before receiving the latest snapshot
   assert.equal(messages.some((message) => message.cmd === 'snapshot'), true);
 });
 
-test('editor panel uses the extension icon in its tab', async () => {
+test('editor panel preserves the original icon shape with light and dark variants', async () => {
   const panel = { webview: { onDidReceiveMessage() {} }, onDidDispose() {} };
   const provider = new MonitorViewProvider({
     vscode: {
       ViewColumn: { Active: 1 },
-      Uri: { file: (filePath) => ({ fsPath: filePath }) },
+      Uri: { file: (file) => file },
       window: { createWebviewPanel: () => panel },
     },
     monitorService: {},
@@ -133,7 +140,37 @@ test('editor panel uses the extension icon in its tab', async () => {
   });
   provider.buildHtml = async () => '<html></html>';
   await provider.openEditorPanel();
-  assert.equal(panel.iconPath.fsPath, path.join(__dirname, '..', 'icon.svg'));
+  assert.equal(path.basename(panel.iconPath.light), 'icon-tab-light.svg');
+  assert.equal(path.basename(panel.iconPath.dark), 'icon-tab-dark.svg');
+  const paths = [panel.iconPath.light, panel.iconPath.dark].map((file) => fs.readFileSync(file, 'utf8'));
+  const lineTags = (svg) => [...svg.matchAll(/<line[^>]+\/>/g)].map((match) => match[0]);
+  assert.deepEqual(lineTags(paths[0]), lineTags(paths[1]));
+  assert.deepEqual(lineTags(paths[0]), lineTags(fs.readFileSync(path.join(__dirname, '..', 'icon.svg'), 'utf8')));
+  assert.match(paths[0], /stroke="#424242"/);
+  assert.match(paths[1], /stroke="#c5c5c5"/);
+});
+
+test('remote monitor opens its current page in a native floating window', async () => {
+  const calls = [];
+  const panel = {
+    webview: { onDidReceiveMessage() {} }, onDidDispose() {},
+    reveal: (column) => calls.push(['reveal', column]),
+    dispose: () => calls.push(['dispose']),
+  };
+  const provider = new MonitorViewProvider({
+    vscode: {
+      ViewColumn: { Active: 1 }, Uri: { file: (file) => file },
+      window: { createWebviewPanel: () => panel },
+      commands: { executeCommand: async (command) => calls.push(['command', command]) },
+    },
+    monitorService: {}, configStore: {},
+  });
+  provider.view = {};
+  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, provider.view);
+  provider.buildHtml = async (page) => `<html>${page}</html>`;
+  await provider.openFloatingPanel();
+  assert.equal(panel.webview.html, '<html>proc</html>');
+  assert.deepEqual(calls, [['reveal', 1], ['command', 'workbench.action.moveEditorToNewWindow']]);
 });
 
 test('multiple editor panels share snapshots and controls without sharing their lifecycle', async () => {
@@ -143,7 +180,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   const provider = new MonitorViewProvider({
     vscode: {
       ViewColumn: { Active: 1 },
-      Uri: { file: (filePath) => ({ fsPath: filePath }) },
+      Uri: { file: (file) => file },
       window: {
         createWebviewPanel: () => {
           const panel = {
@@ -479,7 +516,7 @@ test('disk always shows a rightmost breakdown trigger and reserved-first segment
   const segments = { 'disk-reserved-0': { style: {} }, 'disk-fill-0': { style: {} } };
   const context = {
     document: { getElementById: (id) => id === 'disk-card' ? card : id === 'disk-body' ? body : segments[id] },
-    renderedDiskKeys: [], lastDiskPayload: [], T: { diskReserved: '预留', used: '已用', avail: '可用', total: '总计' },
+    renderedDiskKeys: [], lastDiskPayload: [], renderGeneration: 0, T: { diskReserved: '预留', used: '已用', avail: '可用', total: '总计' },
     colorClass: (pct) => pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : '',
     esc: (value) => value, bindDetailPopoverButton() {}, requestAnimationFrame(callback) { callback(); }, refreshDetailPopover() {},
   };

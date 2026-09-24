@@ -3,6 +3,7 @@
   var modalScrollbar = document.getElementById('modal-scrollbar');
   var modalScrollbarThumb = document.getElementById('modal-scrollbar-thumb');
   var modalDragOffset = null;
+  var statusBarInfoPopover = null;
   function updateModalScrollbar() {
     if (!modalOpen) return;
     var viewport = modalBody.clientHeight;
@@ -41,8 +42,8 @@
   }
   modalScrollbar.addEventListener('pointerup', endModalScrollbarDrag);
   modalScrollbar.addEventListener('pointercancel', endModalScrollbarDrag);
-  modalBody.addEventListener('scroll', updateModalScrollbar);
-  window.addEventListener('resize', updateModalScrollbar);
+  modalBody.addEventListener('scroll', function() { updateModalScrollbar(); if (statusBarInfoPopover) statusBarInfoPopover.hidden = true; });
+  window.addEventListener('resize', function() { updateModalScrollbar(); if (statusBarInfoPopover) statusBarInfoPopover.hidden = true; });
 
   function openModal() {
     modalOpen = true;
@@ -50,13 +51,58 @@
     document.getElementById('modal-title-text').textContent = T.settTitle;
     document.getElementById('sett-interval-label').textContent = T.interval;
     document.getElementById('sett-bar-label').textContent = T.statusBar;
+    statusBarInfoButton.setAttribute('aria-label', zh ? '状态栏生效范围' : 'Status bar scope');
     document.getElementById('sett-disk-label').textContent = T.diskLabel;
     document.getElementById('sett-display-label').textContent = T.displayLabel;
+    document.getElementById('sett-servers-label').textContent = zh ? '服务器' : 'Servers';
     renderIntervalRow();
     renderSettingsBody();
     requestAnimationFrame(updateModalScrollbar);
   }
-  function closeModal() { closeSettingMenu(); modalOpen = false; modalScrollbar.hidden = true; document.getElementById('modal-mask').classList.remove('open'); }
+  function closeModal() { closeSettingMenu(); modalOpen = false; modalScrollbar.hidden = true; statusBarInfoPopover.hidden = true; document.getElementById('modal-mask').classList.remove('open'); }
+  var sshDefaultPending = false;
+  function updateSshDefaultUi(error) {
+    var introButton = document.getElementById('server-intro-ssh-default');
+    introButton.hidden = sshDefaultInstalled;
+    introButton.textContent = sshDefaultPending ? (zh ? '添加中…' : 'Adding…') : (zh ? '自动安装' : 'Auto-install');
+    introButton.disabled = sshDefaultPending;
+    document.querySelectorAll('[data-act="ssh-default-add"]').forEach(function(button) {
+      button.textContent = sshDefaultInstalled ? (zh ? '已加入' : 'Added') : sshDefaultPending ? (zh ? '添加中…' : 'Adding…') : (zh ? '加入默认扩展' : 'Add to defaults');
+      button.disabled = sshDefaultInstalled || sshDefaultPending;
+    });
+    ['server-intro-ssh-error', 'ssh-default-error'].forEach(function(id) {
+      var element = document.getElementById(id);
+      if (!element) return;
+      element.textContent = error || '';
+      element.hidden = !error;
+    });
+    updateLocalIntro();
+  }
+  function addSshDefaultExtension() {
+    if (sshDefaultInstalled || sshDefaultPending) return;
+    sshDefaultPending = true;
+    updateSshDefaultUi();
+    sendToExtension({ cmd: 'addSshDefaultExtension' });
+  }
+  var statusBarInfoButton = document.getElementById('sett-bar-info');
+  statusBarInfoPopover = document.createElement('div');
+  statusBarInfoPopover.className = 'gpu-info-popover sett-info-popover';
+  statusBarInfoPopover.hidden = true;
+  document.body.appendChild(statusBarInfoPopover);
+  function showStatusBarInfo() {
+    statusBarInfoPopover.textContent = zh
+      ? '本地 Linux 窗口的状态栏显示本机；远程 Linux 窗口显示当前服务器。本地 macOS／Windows 窗口不显示状态栏。'
+      : 'In a local Linux window, the status bar shows this machine; in a remote Linux window, it shows that server. It is hidden in local macOS/Windows windows.';
+    statusBarInfoPopover.hidden = false;
+    var bounds = statusBarInfoButton.getBoundingClientRect();
+    statusBarInfoPopover.style.left = Math.max(4, Math.min(bounds.left, window.innerWidth - statusBarInfoPopover.offsetWidth - 4)) + 'px';
+    var above = bounds.top - statusBarInfoPopover.offsetHeight - 6;
+    statusBarInfoPopover.style.top = (above >= 4 ? above : Math.min(bounds.bottom + 6, window.innerHeight - statusBarInfoPopover.offsetHeight - 4)) + 'px';
+  }
+  statusBarInfoButton.addEventListener('mouseenter', showStatusBarInfo);
+  statusBarInfoButton.addEventListener('focus', showStatusBarInfo);
+  statusBarInfoButton.addEventListener('mouseleave', function() { statusBarInfoPopover.hidden = true; });
+  statusBarInfoButton.addEventListener('blur', function() { statusBarInfoPopover.hidden = true; });
   document.getElementById('settings-btn').addEventListener('click', openModal);
   document.getElementById('modal-close').addEventListener('click', closeModal);
   document.getElementById('modal-mask').addEventListener('click', function(e){ if (e.target===this) closeModal(); });
@@ -334,6 +380,27 @@
       applyGroupVisibility();
       animateSwitch(this, displayCfg.showGpuUsers);
     });
+    var serversSection = document.getElementById('sett-servers-section');
+    if (typeof localMode !== 'undefined' && localMode) {
+      serversSection.hidden = false;
+      var serversBody = document.getElementById('sett-servers-body');
+      serversBody.innerHTML = settingRow(zh ? '仅刷新可见面板' : 'Refresh visible panels only', switchButton('servers-visible', serversCfg.visibleOnly === true))
+        + settingRow(zh ? '启动时恢复上次的标签页' : 'Restore tabs on startup', switchButton('servers-restore', serversCfg.restoreTabs !== false))
+        + settingRow(zh ? 'Remote-SSH 自动安装' : 'Remote-SSH auto-install', '<button type="button" class="tb" data-act="ssh-default-add"></button>', zh ? '加入默认列表后，连接服务器时自动安装。' : 'Add to the default list to install automatically on SSH hosts.')
+        + '<div class="sett-hint ssh-default-error" id="ssh-default-error" hidden></div>';
+      serversBody.querySelector('[data-act="ssh-default-add"]').addEventListener('click', addSshDefaultExtension);
+      updateSshDefaultUi();
+      serversBody.querySelector('[data-act="servers-visible"]').addEventListener('click', function() {
+        serversCfg.visibleOnly = !serversCfg.visibleOnly;
+        sendToExtension({cmd:'setConfig',key:'servers',value:serversCfg});
+        animateSwitch(this, serversCfg.visibleOnly);
+      });
+      serversBody.querySelector('[data-act="servers-restore"]').addEventListener('click', function() {
+        serversCfg.restoreTabs = !serversCfg.restoreTabs;
+        sendToExtension({cmd:'setConfig',key:'servers',value:serversCfg});
+        animateSwitch(this, serversCfg.restoreTabs);
+      });
+    } else serversSection.hidden = true;
     if (modalOpen) requestAnimationFrame(updateModalScrollbar);
   }
 

@@ -15,6 +15,7 @@ class MonitorViewProvider {
     this.isReady = false;
     this.editorPanels = new Map();
     this.lastViewModel = null;
+    this.sidebarPage = 'perf';
   }
 
   getUiState() {
@@ -25,11 +26,11 @@ class MonitorViewProvider {
     return this.processDisplayState;
   }
 
-  async buildHtml() {
+  async buildHtml(initialPage = 'perf', surface = 'sidebar') {
     const config = this.configStore.getCurrent();
     const acceleratorValue = this.monitorService.readSnapshot().accelerators.value;
     return getWebviewHtml({
-      initConfig: { interval: config.refreshInterval, barCfg: config.statusBar, diskCfg: config.disk, displayCfg: config.display, gpuCount: acceleratorValue ? acceleratorValue.devices.length : null, processDisplay: this.getUiState(), paused: this.monitorService.scheduler.isPaused },
+      initConfig: { surface, interval: config.refreshInterval, barCfg: config.statusBar, diskCfg: config.disk, displayCfg: config.display, gpuCount: acceleratorValue ? acceleratorValue.devices.length : null, processDisplay: this.getUiState(), paused: this.monitorService.scheduler.isPaused, page: initialPage },
       nonce: crypto.randomBytes(16).toString('base64'),
     });
   }
@@ -40,17 +41,37 @@ class MonitorViewProvider {
     view.webview.options = { enableScripts: true };
     view.webview.onDidReceiveMessage((message) => this.handleMessage(message, view));
     view.onDidDispose(() => { this.view = null; this.isReady = false; });
-    const html = await this.buildHtml();
+    const html = await this.buildHtml(this.sidebarPage);
     if (this.view === view) view.webview.html = html;
   }
 
   async openEditorPanel() {
     const panel = this.vscode.window.createWebviewPanel('sysmonitor.editor', 'System Monitor', this.vscode.ViewColumn.Active, { enableScripts: true });
-    panel.iconPath = this.vscode.Uri.file(path.join(__dirname, '..', '..', 'icon.svg'));
+    await this.attachEditorPanel(panel, { page: this.sidebarPage });
+    return panel;
+  }
+
+  async openFloatingPanel() {
+    const panel = await this.openEditorPanel();
+    try {
+      panel.reveal(this.vscode.ViewColumn.Active);
+      await this.vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow');
+    } catch (error) {
+      panel.dispose();
+      throw error;
+    }
+  }
+
+  async attachEditorPanel(panel, state = {}) {
+    panel.iconPath = {
+      light: this.vscode.Uri.file(path.join(__dirname, '..', '..', 'icon-tab-light.svg')),
+      dark: this.vscode.Uri.file(path.join(__dirname, '..', '..', 'icon-tab-dark.svg')),
+    };
+    panel.webview.options = { enableScripts: true };
     this.editorPanels.set(panel, false);
     panel.webview.onDidReceiveMessage((message) => this.handleMessage(message, panel));
     panel.onDidDispose(() => { this.editorPanels.delete(panel); });
-    const html = await this.buildHtml();
+    const html = await this.buildHtml(state && state.page === 'proc' ? 'proc' : 'perf', 'editor');
     if (this.editorPanels.has(panel)) panel.webview.html = html;
   }
 
@@ -62,7 +83,9 @@ class MonitorViewProvider {
       else return;
       if (this.lastViewModel && source) this.sendViewModel(source, this.lastViewModel);
       if (source) source.webview.postMessage({ cmd: 'uiState', processDisplay: this.getUiState(), paused: this.monitorService.scheduler ? this.monitorService.scheduler.isPaused : false });
+      if (source === this.view && ['perf', 'proc'].includes(message.page)) this.sidebarPage = message.page;
     } else if (message.cmd === 'getConfig') this.pushConfig();
+    else if (message.cmd === 'switchPage' && source === this.view && ['perf', 'proc'].includes(message.page)) this.sidebarPage = message.page;
     else if (message.cmd === 'setConfig' && CONFIG_KEYS.has(message.key)) {
       this.configStore.update(message.key, message.value);
       this.monitorService.updateConfig(this.configStore.getCurrent());

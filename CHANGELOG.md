@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Added local SSH monitoring of several Linux servers from SSH config aliases, with independent per-device snapshots and shared history across views of the same device.
+- Added a Servers page, device tabs, direct Editor and terminal actions, connection status, and per-workspace restoration of sidebar and Editor views.
+- Added a Remote-SSH window action with a menu for direct connection or previously opened remote folders.
+- Added one-click floating System Monitor windows from the view title and individual server rows.
+- Refined the server list with Codicon actions, live summaries, flat device tabs below the page navigation, and connection checks before opening a view or terminal. Failed connections stay in the list with an inline error.
+- Kept device snapshots, chart histories, and their last-sampled update time stable across page changes, made the device strip follow page switches immediately, and applied device switches without replaying metric-bar animations. Server rows now update as soon as their last monitor view closes. Remote process collection allows longer SSH queue time.
+- Made the active device tab fill the available width when alone and moved its accent line to the bottom. The Servers page hides the device strip and shows Refresh List in place of update time and Running; server rows use the same spacing as monitor cards and expose an explicit Open action.
+- Restored the monitor's outlined card and button styling, shortened native Editor tab titles, and kept the original tab-icon shape with light/dark variants. Device tabs support drag ordering and middle-click close for SSH hosts. Fixed SSH retry backoff so a transient command timeout can recover instead of remaining on screen indefinitely.
+- Showed the monitored SSH session's traffic and TCP latency in local SSH views by matching its exact socket, and restored the global status-bar settings section in local macOS and Windows panels.
+- Added a dismissible first-use guide to the local Servers page, with wording for Linux and macOS/Windows, and a scope explanation beside status-bar settings. The guide and Servers settings provide an explicit action to add System Monitor to `remote.SSH.defaultExtensions`. Device tabs reorder only within their own strip with live displacement, and chart hydration keeps the original sample timestamps so switching devices does not introduce a delayed jump.
+- Added Servers settings for startup tab restoration (on by default) and visible-only refresh (off by default). Local macOS/Windows windows show the Servers page without a System Monitor status bar; local Linux status bars remain tied to the local machine.
+- Clarified status-bar and Remote-SSH auto-install descriptions in Settings and aligned the info trigger with the circular monitor icon.
+
 ## 1.4.2 — 2026-09-24
 
 - Kept rate-chart scaling tied to the visible time window so incoming samples do not abruptly rescale the entire chart.

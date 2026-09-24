@@ -15,22 +15,25 @@ const { MonitorScheduler } = require('../core/monitor-scheduler');
 const { SnapshotStore } = require('../core/snapshot-store');
 
 class MonitorService {
-  constructor({ runtimeConfig, isSsh, sshClientIp, acceleratorProviders = null, onTick = () => {}, onLog = () => {} }) {
+  constructor({ runtimeConfig, isSsh, sshClientIp, sshConnectionInfo = null, acceleratorProviders = null, commandRunner = null, fileReader = null, systemInfo = null, onTick = () => {}, onLog = () => {} }) {
     this.runtimeConfig = runtimeConfig;
     this.onTick = onTick;
     this.onLog = onLog;
     this.snapshotStore = new SnapshotStore();
-    this.commandRunner = new CommandRunner();
+    this.commandRunner = commandRunner || new CommandRunner();
+    const collectorInputs = { ...(fileReader ? { fileReader } : {}), ...(systemInfo ? { systemInfo } : {}) };
+    const fileTimeoutMilliseconds = fileReader ? 5000 : 1000;
+    const processTimeoutMilliseconds = fileReader ? 12000 : 3500;
     const refreshMilliseconds = runtimeConfig.refreshInterval * 1000;
     this.scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: refreshMilliseconds, onTick: () => this.onTick(this.snapshotStore.read()) });
     const definitions = [
-      ['cpu', new CpuCollector(), refreshMilliseconds, 1000],
-      ['memory', new MemoryCollector(), refreshMilliseconds, 1000],
-      ['network', new NetworkCollector(), refreshMilliseconds, 1000],
-      ['diskIo', new DiskIoCollector(), refreshMilliseconds, 1000],
-      ['sshTraffic', new SshTrafficCollector({ commandRunner: this.commandRunner, isSsh, clientIp: sshClientIp }), refreshMilliseconds, 2500],
-      ['processes', new ProcessCollector({ commandRunner: this.commandRunner }), refreshMilliseconds, 3500],
-      ['accelerators', new AcceleratorCollector({ providers: acceleratorProviders || [new NvidiaProvider({ commandRunner: this.commandRunner })] }), refreshMilliseconds, 32000],
+      ['cpu', new CpuCollector(collectorInputs), refreshMilliseconds, fileTimeoutMilliseconds],
+      ['memory', new MemoryCollector(collectorInputs), refreshMilliseconds, fileTimeoutMilliseconds],
+      ['network', new NetworkCollector(collectorInputs), refreshMilliseconds, fileTimeoutMilliseconds],
+      ['diskIo', new DiskIoCollector(collectorInputs), refreshMilliseconds, fileTimeoutMilliseconds],
+      ['sshTraffic', new SshTrafficCollector({ commandRunner: this.commandRunner, isSsh, clientIp: sshClientIp, connectionInfo: sshConnectionInfo, timeoutMilliseconds: fileReader ? 8000 : 2000 }), refreshMilliseconds, fileReader ? 10000 : 2500],
+      ['processes', new ProcessCollector({ commandRunner: this.commandRunner, ...collectorInputs, timeoutMilliseconds: fileReader ? 10000 : 3000 }), refreshMilliseconds, processTimeoutMilliseconds],
+      ['accelerators', new AcceleratorCollector({ providers: acceleratorProviders || [new NvidiaProvider({ commandRunner: this.commandRunner, ...collectorInputs })] }), refreshMilliseconds, 32000],
       ['diskTopology', new DiskTopologyCollector({ commandRunner: this.commandRunner, getDiskConfig: () => this.runtimeConfig.disk }), 10000, 6000],
     ];
     this.runners = definitions.map(([key, collector, cadenceMilliseconds, timeoutMilliseconds]) => {

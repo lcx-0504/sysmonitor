@@ -32,7 +32,7 @@
     document.getElementById('hint-close').addEventListener('click', function() {
       hint.classList.remove('show');
       hintDismissed = true;
-      vscode.setState(Object.assign(persistedViewState, { hintDismissed: true }));
+      vscode.setState(Object.assign({}, vscode.getState() || {}, { hintDismissed: true }));
     });
   });
   document.getElementById('filter-clear').addEventListener('click',function(){
@@ -175,5 +175,12 @@
   });
 
   // 所有部分加载完毕后再通知扩展。
-  sendToExtension({cmd:'ready'});
+  if (!localMode) {
+    var persistedPage = vscode.getState();
+    switchTab((persistedPage && persistedPage.page) || __initCfg.page || 'perf', false);
+    vscode.setState(Object.assign({}, persistedPage || {}, {page: (persistedPage && persistedPage.page) || __initCfg.page || 'perf'}));
+  }
+  applyGroupVisibility();
+  document.getElementById('ssh-card').style.display = 'none';
+  sendToExtension({cmd:'ready',page:document.querySelector('.tab-content.active').id.slice(4)});
   requestAnimationFrame(animateSparks);

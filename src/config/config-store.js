@@ -3,7 +3,7 @@
 const { normalizeConfig } = require('./normalize-config');
 
 const CONFIGURATION_SECTION = 'sysmonitor';
-const CONFIGURATION_KEYS = Object.freeze(['refreshInterval', 'statusBar', 'disk', 'display']);
+const CONFIGURATION_KEYS = Object.freeze(['refreshInterval', 'statusBar', 'disk', 'display', 'servers']);
 
 class ConfigStore {
   constructor({ vscode, onError = () => {}, flushDelayMilliseconds = 500 }) {

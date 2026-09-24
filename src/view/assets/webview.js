@@ -10,7 +10,7 @@
     zh = lang && lang.startsWith('zh');
     T = zh
       ? { min:' 分钟',cores:' 核',used:'已用',avail:'可用',total:'总计',srvNet:'服务器网络',net:'网络',localSSH:'本机 SSH',up:'↑ 上传',down:'↓ 下载',selAll:'全选空闲',clear:'清除',copyEnv:'复制环境变量',detecting:'检测中…',noGpu:'未检测到 GPU',updAt:'更新于 ',utilLabel:'利用率',memLabel:'显存',tempLabel:'温度',pwLabel:'功耗',
-          perfTab:'性能',procTab:'进程',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',barAlign:'位置',barPriority:'优先级',barPriorityTip:'数值越大越靠边（默认 10）',close:'关闭',
+          perfTab:'性能',procTab:'进程',serversTab:'服务器',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',barAlign:'位置',barPriority:'优先级',barPriorityTip:'数值越大越靠边（默认 10）',close:'关闭',
           netLabel:'网络速率',gpuLabel:'GPU',
           scopeOff:'关',scopeSummary:'总览',scopeCard:'指定卡',scopeMy:'我的卡',metUtil:'仅利用率',metVram:'仅显存',metBoth:'全部显示',
           netUp:'仅上传',netDown:'仅下载',netAll:'全部显示',netMerge:'合并显示',
@@ -19,7 +19,7 @@
           displayLabel:'显示',chartsToggle:'卡片背景图表',sparkLabel:'图表时长',tabularNums:'等宽数字',tabularNumsTip:'数字等宽，减少布局跳动',
           pcpu:'CPU',pmem:'内存',pgpu:'GPU',ppid:'PID',puser:'用户',pname:'进程名',pcpuPct:'CPU',pmemCol:'内存',pgpuCol:'GPU',pcount:'共 {n} 进程',pnoGpu:'—',pcmd:'命令',filterHint:'搜索进程...',coreMode:'单核',wholeMode:'整机',bothMode:'都显示',sizeMode:'占用量',percentMode:'占比',expand:'展开',collapse:'收起',latency:'延迟',systemGroup:'CPU + 内存',networkGroup:'网络',gpuSummaryGroup:'GPU 总览',gpuCardsGroup:'GPU 卡片',myGpuBorder:'标记我的 GPU',gpuPicker:'空闲 GPU 选择器',gpuUsers:'GPU 占用用户',openEditor:'在编辑器中打开' }
       : { min:' min',cores:' cores',used:'Used',avail:'Avail',total:'Total',srvNet:'Server Net',net:'Network',localSSH:'Local SSH',up:'↑ Up',down:'↓ Down',selAll:'Select All',clear:'Clear',copyEnv:'Copy Env Var',detecting:'Detecting…',noGpu:'No GPU detected',updAt:'Updated ',utilLabel:'Util',memLabel:'VRAM',tempLabel:'Temp',pwLabel:'Power',
-          perfTab:'Perf',procTab:'Procs',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',barAlign:'Position',barPriority:'Priority',barPriorityTip:'Higher values move toward the edge (default 10)',close:'Close',
+          perfTab:'Perf',procTab:'Procs',serversTab:'Servers',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',barAlign:'Position',barPriority:'Priority',barPriorityTip:'Higher values move toward the edge (default 10)',close:'Close',
           netLabel:'Network',gpuLabel:'GPU',
           scopeOff:'Off',scopeSummary:'Summary',scopeCard:'Card',scopeMy:'My Card',metUtil:'Util Only',metVram:'VRAM Only',metBoth:'All',
           netUp:'Upload',netDown:'Download',netAll:'All',netMerge:'Merged',
@@ -39,6 +39,10 @@
     document.getElementById('copy-btn').textContent = T.copyEnv;
     document.getElementById('tab-perf-btn').textContent = T.perfTab;
     document.getElementById('tab-proc-btn').textContent = T.procTab;
+    document.getElementById('tab-servers-btn').textContent = T.serversTab;
+    document.getElementById('server-page-title').textContent = T.serversTab;
+    document.getElementById('topbar-server-refresh').textContent = zh ? '刷新列表' : 'Refresh List';
+    document.getElementById('server-refresh-btn').textContent = zh ? '刷新' : 'Refresh';
     document.getElementById('settings-btn').textContent = T.settBtn;
     document.getElementById('pause-btn').textContent = paused ? T.stopped : T.running;
     document.getElementById('proc-filter').placeholder = T.filterHint || '';
@@ -143,8 +147,9 @@
     }
     requestAnimationFrame(animateSparks);
   }
-  function pushHist(arr, val) {
-    var now = Date.now();
+  function pushHist(arr, val, sampleTime) {
+    var now = typeof sampleTime === 'number' ? sampleTime : Date.now();
+    if (arr.length && arr[arr.length - 1].t === now) { arr[arr.length - 1].v = val; return; }
     arr.push({t: now, v: val});
     var cutoff = now - SPARK_WINDOW - Math.max(1, (curInterval || 2) * 1000) * 2;
     // 留出延迟滚动所需的左边界锚点，避免旧点过早移除。
@@ -174,11 +179,25 @@
       applyGroupVisibility();
       curInterval = data.interval || curInterval;
       if (typeof data.gpuCount === 'number') gpuCount = data.gpuCount;
+      if (typeof data.sshDefaultInstalled === 'boolean') {
+        sshDefaultInstalled = data.sshDefaultInstalled;
+        sshDefaultPending = false;
+        updateSshDefaultUi();
+      }
       if (modalOpen && !settingMenu) renderSettingsBody();
       return;
     }
     if (data.cmd !== 'snapshot') return;
-    var viewModel = data.viewModel;
+    if (typeof localMode !== 'undefined' && localMode && data.deviceId && data.deviceId !== currentDeviceId) return;
+    renderMonitorSnapshot(data.viewModel, data.instant === true, data.sampleTime, data.skipHistory === true);
+  });
+
+  var renderGeneration = 0;
+  function renderMonitorSnapshot(viewModel, instant, sampleTime, skipHistory) {
+    var generation = ++renderGeneration;
+    if (instant) document.body.classList.add('instant-metrics');
+    else document.body.classList.remove('instant-metrics');
+    function recordHistory(series, value) { if (!skipHistory) pushHist(series, value, sampleTime); }
     var performance = viewModel.performance;
     if (performance.language) setLang(performance.language);
     if (ctxMenu) pendingProcData = viewModel.processes || [];
@@ -190,7 +209,7 @@
     document.getElementById('load-1').textContent = performance.cpu.loadAverage.oneMinute + ' / ' + performance.cpu.coreCount + T.cores;
     document.getElementById('load-5').textContent = performance.cpu.loadAverage.fiveMinutes + ' / ' + performance.cpu.coreCount + T.cores;
     document.getElementById('load-15').textContent = performance.cpu.loadAverage.fifteenMinutes + ' / ' + performance.cpu.coreCount + T.cores;
-    pushHist(cpuHist, performance.cpu.usagePercent);
+    recordHistory(cpuHist, performance.cpu.usagePercent);
     renderSpark(document.getElementById('cpu-spark-area'), null, cpuHist, 100, sparkColor(performance.cpu.usagePercent));
 
     document.getElementById('mem-val').textContent = performance.memory.usagePercent + '%';
@@ -198,10 +217,10 @@
     document.getElementById('mem-used').textContent = performance.memory.usedText;
     document.getElementById('mem-avail').textContent = performance.memory.availableText;
     document.getElementById('mem-total').textContent = performance.memory.totalText;
-    pushHist(ramHist, performance.memory.usagePercent);
+    recordHistory(ramHist, performance.memory.usagePercent);
     renderSpark(document.getElementById('ram-spark-area'), null, ramHist, 100, sparkColor(performance.memory.usagePercent));
 
-    renderDisk(performance.disks);
+    renderDisk(performance.disks, instant);
 
     // disk I/O
     if (performance.diskIo) {
@@ -210,8 +229,8 @@
         dioEl.textContent = performance.diskIo.totalText;
         dioEl.title = 'Read ' + performance.diskIo.readText + '  Write ' + performance.diskIo.writeText;
       }
-      pushHist(diskRHist, performance.diskIo.readBytesPerSecond || 0);
-      pushHist(diskWHist, performance.diskIo.writeBytesPerSecond || 0);
+      recordHistory(diskRHist, performance.diskIo.readBytesPerSecond || 0);
+      recordHistory(diskWHist, performance.diskIo.writeBytesPerSecond || 0);
       renderRatePair(diskRHist, diskWHist, 'disk-spark-r-area', 'disk-spark-w-area', 'var(--warn)', 'var(--accent)');
     }
 
@@ -225,8 +244,8 @@
       document.getElementById('ssh-rx').textContent = performance.sshTraffic.downloadText;
       document.getElementById('ssh-latency').textContent = performance.sshTraffic.latencyText;
       document.getElementById('ssh-latency').title = T.latency + ' · TCP RTT';
-      pushHist(sshTxHist, performance.sshTraffic.uploadBytesPerSecond || 0);
-      pushHist(sshRxHist, performance.sshTraffic.downloadBytesPerSecond || 0);
+      recordHistory(sshTxHist, performance.sshTraffic.uploadBytesPerSecond || 0);
+      recordHistory(sshRxHist, performance.sshTraffic.downloadBytesPerSecond || 0);
       renderRatePair(sshTxHist, sshRxHist, 'ssh-spark-tx-area', 'ssh-spark-rx-area', 'var(--warn)', 'var(--accent)');
       document.getElementById('net-up-label').textContent = T.up;
       document.getElementById('net-down-label').textContent = T.down;
@@ -250,7 +269,7 @@
       var gpuSame = gpuIdentityKeys.length === renderedAcceleratorKeys.length && gpuIdentityKeys.every(function(k, i) { return k === renderedAcceleratorKeys[i]; });
       performance.gpus.forEach(function(g) {
         if (!gpuHist[g.idx]) gpuHist[g.idx] = [];
-        pushHist(gpuHist[g.idx], parseInt(g.util) || 0);
+        recordHistory(gpuHist[g.idx], parseInt(g.util) || 0);
       });
       if (!gpuSame) {
         renderedAcceleratorKeys = gpuIdentityKeys;
@@ -290,7 +309,8 @@
             renderProcTable();
           });
         });
-        requestAnimationFrame(function() {
+        var updateGpuBars = function() {
+          if (generation !== renderGeneration) return;
           performance.gpus.forEach(function(g) {
             var util = parseInt(g.util) || 0;
             var memPct = g.memPct;
@@ -301,7 +321,8 @@
             var ga = document.getElementById('gpu-spark-area-' + g.idx);
             if (ga && gpuHist[g.idx]) renderSpark(ga, null, gpuHist[g.idx], 100, sparkColor(util));
           });
-        });
+        };
+        if (instant) updateGpuBars(); else requestAnimationFrame(updateGpuBars);
       } else {
         performance.gpus.forEach(function(g) {
           var util = parseInt(g.util) || 0;
@@ -338,8 +359,8 @@
 
     document.getElementById('net-tx').textContent = performance.network.transmitText;
     document.getElementById('net-rx').textContent = performance.network.receiveText;
-    pushHist(netTxHist, performance.network.transmitBytesPerSecond || 0);
-    pushHist(netRxHist, performance.network.receiveBytesPerSecond || 0);
+    recordHistory(netTxHist, performance.network.transmitBytesPerSecond || 0);
+    recordHistory(netRxHist, performance.network.receiveBytesPerSecond || 0);
     renderRatePair(netTxHist, netRxHist, 'net-spark-tx-area', 'net-spark-rx-area', 'var(--warn)', 'var(--accent)');
 
     var freeCard = document.getElementById('free-gpu-card');
@@ -375,9 +396,14 @@
       gpuBody.style.display = 'none';
     }
 
-    document.getElementById('updated').textContent = T.updAt + new Date().toLocaleTimeString();
+    document.getElementById('updated').textContent = T.updAt + new Date(typeof sampleTime === 'number' ? sampleTime : Date.now()).toLocaleTimeString();
     applyGroupVisibility();
-  });
+    if (instant) requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        if (generation === renderGeneration) document.body.classList.remove('instant-metrics');
+      });
+    });
+  }
 
   // ── GPU 胶囊 ──
   var selectedGpus = {}, lastFreeIdxs = [];
@@ -409,16 +435,33 @@
   });
 
   // ── Tab 切换 ──
-  function switchTab(name) {
+  function switchTab(name, notify) {
+    if (notify !== false && typeof localMode !== 'undefined' && localMode) {
+      requestedPage = name;
+      navigation = Object.assign({}, navigation, { page: name });
+      updateDeviceTabsPresentation();
+      updateLocalIntro();
+      connectionBanner.classList.toggle('show', !!connectionBanner.textContent && name !== 'servers');
+      closeRemoteMenu();
+      storeNavigation();
+      sendToExtension({cmd:'switchPage',page:name});
+    }
+    if (notify !== false && typeof localMode !== 'undefined' && !localMode) {
+      vscode.setState(Object.assign({}, vscode.getState() || {}, {page:name}));
+      sendToExtension({cmd:'switchPage',page:name});
+    }
     if (name !== 'perf') hideGpuInfoPopover();
     document.querySelectorAll('.tab-content').forEach(function(d){d.classList.remove('active');});
     document.getElementById('tab-'+name).classList.add('active');
     document.getElementById('tab-perf-btn').classList.toggle('on', name==='perf');
     document.getElementById('tab-proc-btn').classList.toggle('on', name==='proc');
+    var serversButton = document.getElementById('tab-servers-btn');
+    if (serversButton) serversButton.classList.toggle('on', name==='servers');
     if (name === 'perf') requestAnimationFrame(function() { lastGpuPayload.forEach(renderGpuUsers); });
   }
   document.getElementById('tab-perf-btn').addEventListener('click',function(){switchTab('perf');});
   document.getElementById('tab-proc-btn').addEventListener('click',function(){switchTab('proc');});
+  document.getElementById('tab-servers-btn').addEventListener('click',function(){switchTab('servers');});
 
   // ── 暂停 ──
   document.getElementById('pause-btn').addEventListener('click',function(){
@@ -433,8 +476,11 @@
   var barCfg = __initCfg.barCfg || {};
   var diskCfg = __initCfg.diskCfg || {};
   var displayCfg = __initCfg.displayCfg || {};
+  var serversCfg = __initCfg.serversCfg || { visibleOnly: false, restoreTabs: true };
+  var sshDefaultInstalled = __initCfg.sshDefaultInstalled === true;
   var lastGpuPayload = [];
   var processDisplay = __initCfg.processDisplay || { cpu: 'core', ram: 'size' };
   var expandedColumns = { name: false, cmd: false };
   var curInterval = __initCfg.interval || 2, gpuCount = typeof __initCfg.gpuCount === 'number' ? __initCfg.gpuCount : 0, modalOpen = false;
   SPARK_WINDOW = (displayCfg.sparkMinutes || 5) * 60 * 1000;
+  if (__initCfg.language) setLang(__initCfg.language);

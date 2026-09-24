@@ -195,7 +195,7 @@
     if (reserved) reserved.style.width = disk.reservedPct + '%';
     if (fill) { fill.style.width = disk.occupiedPct + '%'; fill.className = 'fill ' + colorClass(disk.pct); }
   }
-  function renderDisk(disks) {
+  function renderDisk(disks, instant) {
     var card = document.getElementById('disk-card');
     var el = document.getElementById('disk-body');
     lastDiskPayload = disks || [];
@@ -217,9 +217,12 @@
       });
       el.innerHTML = h;
       el.querySelectorAll('.disk-alert').forEach(bindDetailPopoverButton);
-      requestAnimationFrame(function() {
+      var generation = renderGeneration;
+      var updateBars = function() {
+        if (generation !== renderGeneration) return;
         disks.forEach(updateDiskBar);
-      });
+      };
+      if (instant) updateBars(); else requestAnimationFrame(updateBars);
     } else {
       disks.forEach(function(d, i) {
         var cls = colorClass(d.pct);

@@ -1,9 +1,10 @@
 {
   "displayName": "System Monitor",
-  "description": "Remote/Local Linux system monitor — CPU / GPU / RAM / Network",
+  "description": "Monitor Linux locally, over SSH, or in a remote window — CPU / GPU / RAM / Network",
   "viewTitle": "System Monitor",
   "viewName": "System Monitor",
   "procsName": "Processes",
   "cmdOpen": "System Monitor: Open Panel",
-  "cmdOpenEditor": "System Monitor: Open in Editor"
+  "cmdOpenEditor": "System Monitor: Open in Editor",
+  "cmdOpenWindow": "System Monitor: Open in New Window"
 }
