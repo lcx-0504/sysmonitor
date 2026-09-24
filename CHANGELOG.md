@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.1 — 2026-09-24
+
+- Aligned chart color transitions with the metric bars while keeping time-based scrolling independent.
+- Made GPU card footers compact: shared VRAM units, user labels with an immediate and live temperature/power popover, and temperature/power shown directly when no users are available or user labels are disabled.
+- Restored GPU user labels immediately after returning from the process tab.
+- Improved settings layout with content-sized controls, clearer descriptions, and a draggable overlay scrollbar that does not reserve content width.
+
 ## 1.4.0 — 2026-09-24
 
 - Added five independent visibility groups for the performance panel: CPU/RAM, disk, network/SSH, GPU overview, and GPU cards. Collection and status-bar data remain available when a group is hidden.

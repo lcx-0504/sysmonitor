@@ -1,5 +1,5 @@
 'use strict';
-const { formatBytesPerSecond, formatBytesPerSecondShort, formatDiskBytes, formatMemoryBytes, formatSize, formatDuration } = require('../utils/format');
+const { formatBytesPerSecond, formatBytesPerSecondShort, formatDiskBytes, formatMemoryBytes, formatSize, formatSizePair, formatDuration } = require('../utils/format');
 const { getAcceleratorAvailability } = require('../domain/accelerator-availability');
 
 const valueOf = (partition, fallback) => partition && partition.value !== null ? partition.value : fallback;
@@ -38,6 +38,7 @@ function buildLegacyViewModel(snapshot, language) {
     displayName: displayDeviceName(device.name), isMine: currentUserDeviceKeys.has(device.deviceKey),
     util: numeric(device.utilizationPercent), memUsed: Math.round(numeric(device.memory.usedBytes) / 1048576), memTotal: Math.round(numeric(device.memory.totalBytes) / 1048576),
     memUsedStr: formatSize(numeric(device.memory.usedBytes)), memTotalStr: formatSize(numeric(device.memory.totalBytes)),
+    memPairStr: formatSizePair(numeric(device.memory.usedBytes), numeric(device.memory.totalBytes)),
     users: [...(gpuUsers.get(device.deviceKey) || new Map())].map(([name, usedBytes]) => ({ name, usedBytes, usedStr: formatSize(usedBytes, { compact: true }), percent: device.memory.totalBytes > 0 ? usedBytes / device.memory.totalBytes * 100 : 0 })).sort((left, right) => right.usedBytes - left.usedBytes || left.name.localeCompare(right.name)),
     temp: numeric(device.temperatureCelsius), power: device.power ? { draw: device.power.drawWatts.toFixed(0), limit: device.power.limitWatts.toFixed(0) } : null,
     deviceKey: device.deviceKey, availability: getAcceleratorAvailability(device), isIdle: getAcceleratorAvailability(device) === 'idle',

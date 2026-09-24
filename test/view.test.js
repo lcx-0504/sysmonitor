@@ -38,6 +38,43 @@ test('Webview HTML loads split assets with a nonce and transports config without
   assert.doesNotMatch(html, /<script>x<\/script>/);
   assert.match(html, /data-config="[A-Za-z0-9+/=]+"/);
   assert.match(html, /gpu-name-text-/);
+  assert.match(html, /id="modal-scrollbar" aria-hidden="true" hidden/);
+});
+
+test('settings use content-sized controls and an overlay scrollbar', () => {
+  const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  assert.match(style, /\.setting-control\s*\{[^}]*flex:\s*0 0 auto;/);
+  assert.match(style, /\.setting-control\.wide\s*\{[^}]*width:\s*55%;/);
+  assert.match(style, /\.modal-body\s*\{[^}]*scrollbar-width:\s*none;/);
+  assert.match(style, /\.modal-body::-webkit-scrollbar\s*\{[^}]*width:\s*0;/);
+  assert.match(style, /\.modal-scrollbar\s*\{[^}]*position:\s*absolute;\s*right:\s*0;/);
+  assert.match(style, /\.modal-scrollbar-thumb\s*\{[^}]*margin-right:\s*0;/);
+  assert.match(script, /T\.diskExcludePath[^\n]*T\.diskExcludePathTip, true\)/);
+
+  const scrollbarCode = script.slice(script.indexOf("  var modalBody = document.getElementById('modal-body');"), script.indexOf('  function openModal()'));
+  const body = { clientHeight: 100, scrollHeight: 400, scrollTop: 0, offsetTop: 30, addEventListener() {} };
+  const handlers = {};
+  const track = { hidden: true, style: {}, classList: { add() {}, remove() {} }, addEventListener(name, handler) { handlers[name] = handler; }, getBoundingClientRect: () => ({ top: 30, height: 100 }), setPointerCapture() {}, hasPointerCapture: () => false };
+  const thumb = { style: {}, offsetHeight: 28, getBoundingClientRect: () => ({ top: 30, height: 28 }) };
+  const elements = { 'modal-body': body, 'modal-scrollbar': track, 'modal-scrollbar-thumb': thumb };
+  const context = { document: { getElementById: (id) => elements[id] }, window: { addEventListener() {} }, modalOpen: true };
+  vm.runInNewContext(`${scrollbarCode}\nthis.updateModalScrollbar = updateModalScrollbar;`, context);
+  context.updateModalScrollbar();
+  assert.equal(track.hidden, false);
+  assert.equal(track.style.top, '30px');
+  assert.equal(track.style.height, '100px');
+  assert.equal(thumb.style.height, '28px');
+  body.scrollTop = 150;
+  context.updateModalScrollbar();
+  assert.equal(thumb.style.transform, 'translateY(36px)');
+  handlers.pointerdown({ target: thumb, clientY: 35, pointerId: 1, preventDefault() {} });
+  handlers.pointermove({ clientY: 71, pointerId: 1 });
+  assert.equal(body.scrollTop, 150);
+  handlers.pointerup({ pointerId: 1 });
+  body.scrollHeight = 100;
+  context.updateModalScrollbar();
+  assert.equal(track.hidden, true);
 });
 
 test('performance and process rows are sent as separate messages', () => {
@@ -175,6 +212,7 @@ test('view model combines GPU users, CPU denominator and SSH latency', () => {
   assert.equal(model.payload.gpus[0].displayName, 'H100 80GB HBM3');
   assert.equal(model.payload.gpus[0].isMine, true);
   assert.equal(model.payload.gpus[0].memTotalStr, '80.0 G');
+  assert.equal(model.payload.gpus[0].memPairStr, '3.0 / 80.0G');
   assert.deepEqual(model.payload.gpus[0].users.map((user) => user.name), ['alice', 'bob']);
   assert.equal(model.payload.gpus[0].users[0].usedStr, '2.0G');
   assert.equal(model.payload.gpus[0].users[0].percent, 2.5);
@@ -187,6 +225,106 @@ test('GPU display name removes only vendor and marketing prefixes', () => {
   assert.equal(displayDeviceName('NVIDIA GeForce RTX 4090 D'), 'RTX 4090 D');
   assert.equal(displayDeviceName('NVIDIA Tesla V100-SXM2-32GB'), 'V100-SXM2-32GB');
   assert.equal(displayDeviceName('AMD Radeon RX 7900 XTX'), 'AMD Radeon RX 7900 XTX');
+});
+
+test('chart fill color follows the metric bar transition', () => {
+  const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  assert.match(style, /--metric-transition:\s*\.5s ease;/);
+  assert.match(style, /\.spark-bg path\s*\{\s*transition:\s*fill var\(--metric-transition\);\s*\}/);
+  assert.match(style, /\.fill\s*\{[^}]*transition:\s*width var\(--metric-transition\), background var\(--metric-transition\);/);
+  assert.doesNotMatch(script, /spark-color-duration/);
+});
+
+test('GPU footer shows users with a compact info button or falls back to stats', () => {
+  const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const footer = script.slice(script.indexOf('  function gpuStatsDescription('), script.indexOf('  var gpuInfoPopover ='));
+  const line = { style: {}, clientWidth: 180, scrollWidth: 100, children: [1], replaceChildren() { this.children = []; }, appendChild(child) { this.children.push(child); } };
+  const info = { style: {}, setAttribute(name, value) { this[name] = value; } };
+  const stats = { style: {} };
+  const elements = { 'gpu-users-0': line, 'gpu-info-0': info, 'gpu-stats-0': stats };
+  const context = { document: { getElementById: (id) => elements[id], createElement: () => ({}) }, displayCfg: { showGpuUsers: true }, T: { tempLabel: '温度', pwLabel: '功耗' }, activeGpuInfoButton: null, hideGpuInfoPopover() {} };
+  vm.runInNewContext(`${footer}\nthis.renderGpuUsers = renderGpuUsers; this.gpuStatsMarkup = gpuStatsMarkup;`, context);
+  context.renderGpuUsers({ idx: 0, users: [] });
+  assert.equal(line.style.display, 'none');
+  assert.equal(info.style.display, 'none');
+  assert.equal(stats.style.display, 'flex');
+  assert.deepEqual(line.children, []);
+  const gpu = { idx: 0, temp: 35, power: { draw: 100, limit: 250 }, users: [{ name: 'alice', usedStr: '5.0G', percent: 10 }] };
+  context.renderGpuUsers(gpu);
+  assert.equal(line.style.display, 'flex');
+  assert.equal(info.style.display, 'inline-flex');
+  assert.equal(stats.style.display, 'none');
+  assert.equal(info['aria-label'], '温度 35°C · 功耗 100/250W');
+  assert.equal(info.title, undefined);
+  assert.equal(line.children[0].textContent, 'alice (5.0G)');
+  assert.match(context.gpuStatsMarkup({ ...gpu, temp: 36 }), /36°C/);
+  assert.match(context.gpuStatsMarkup(gpu), /100\/250W/);
+  const restoredChip = line.children[0];
+  line.clientWidth = 0;
+  context.renderGpuUsers(gpu);
+  assert.equal(line.children[0], restoredChip);
+  line.clientWidth = 180;
+  context.displayCfg.showGpuUsers = false;
+  context.renderGpuUsers(gpu);
+  assert.equal(line.style.display, 'none');
+  assert.equal(stats.style.display, 'flex');
+  assert.match(style, /\.gpu-footer\s*\{[^}]*min-height:\s*18px;/);
+  assert.match(style, /\.gpu-stats\s*\{[^}]*flex:\s*1 1 auto;[^}]*height:\s*18px;/);
+  assert.match(style, /\.gpu-users\s*\{[^}]*font-size:\s*9px;/);
+  assert.match(style, /\.gpu-user\s*\{[^}]*height:\s*14px;/);
+  assert.match(style, /\.gpu-info\s*\{[^}]*border:\s*0;[^}]*opacity:\s*\.55;/);
+  assert.match(style, /\.gpu-info-popover\s*\{[^}]*position:\s*fixed;/);
+  assert.match(script, /class="gpu-info"[^>]*>ⓘ<\/button>/);
+  assert.doesNotMatch(script, /class="gpu-info"[^>]*title=/);
+  assert.match(script, /button\.addEventListener\('mouseenter', function\(\) \{ showGpuInfoPopover\(button\); \}\)/);
+  assert.ok(script.indexOf('class="gpu-users" id="gpu-users-') < script.indexOf('class="gpu-stats" id="gpu-stats-'));
+  assert.ok(script.indexOf('class="gpu-stats" id="gpu-stats-') < script.indexOf('class="gpu-info"'));
+  assert.match(script, /statsElement\.innerHTML = gpuStatsMarkup\(g\)/);
+});
+
+test('GPU info appears immediately and refreshes while hovered', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const popoverCode = script.slice(script.indexOf('  var gpuInfoPopover ='), script.indexOf("  window.addEventListener('resize'"));
+  const popover = { style: {}, hidden: true, offsetWidth: 150, offsetHeight: 20 };
+  const button = { dataset: { gpuInfo: '0' }, style: { display: 'inline-flex' }, isConnected: true, getClientRects: () => [{}], getBoundingClientRect: () => ({ right: 180, top: 100, bottom: 114 }) };
+  const gpu = { idx: 0, temp: 35 };
+  const context = {
+    document: { createElement: () => popover, body: { appendChild() {} } },
+    window: { innerWidth: 300 },
+    lastGpuPayload: [gpu],
+    gpuStatsDescription: (device) => `温度 ${device.temp}°C`,
+  };
+  vm.runInNewContext(`${popoverCode}\nthis.show = showGpuInfoPopover; this.hide = hideGpuInfoPopover; this.refresh = refreshGpuInfoPopover; this.popover = gpuInfoPopover;`, context);
+  context.show(button);
+  assert.equal(popover.hidden, false);
+  assert.equal(popover.textContent, '温度 35°C');
+  assert.equal(popover.style.top, '74px');
+  gpu.temp = 36;
+  context.refresh();
+  assert.equal(popover.textContent, '温度 36°C');
+  context.hide(button);
+  assert.equal(popover.hidden, true);
+});
+
+test('returning to the performance tab redraws GPU user capsules', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const switchTab = script.slice(script.indexOf('  function switchTab('), script.indexOf("  document.getElementById('tab-perf-btn').addEventListener"));
+  const elements = { 'tab-perf': { classList: { add() {}, remove() {} } }, 'tab-proc': { classList: { add() {}, remove() {} } }, 'tab-perf-btn': { classList: { toggle() {} } }, 'tab-proc-btn': { classList: { toggle() {} } } };
+  const rendered = [];
+  let scheduled;
+  const context = {
+    document: { querySelectorAll: () => [elements['tab-perf'], elements['tab-proc']], getElementById: (id) => elements[id] },
+    requestAnimationFrame: (callback) => { scheduled = callback; },
+    lastGpuPayload: [{ idx: 0 }],
+    renderGpuUsers: (gpu) => rendered.push(gpu.idx),
+  };
+  vm.runInNewContext(`${switchTab}\nthis.switchTab = switchTab;`, context);
+  context.switchTab('perf');
+  assert.equal(typeof scheduled, 'function');
+  scheduled();
+  assert.deepEqual(rendered, [0]);
 });
 
 test('spark area grows from real samples, then interpolates the left boundary after the window fills', () => {

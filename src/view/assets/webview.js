@@ -9,22 +9,22 @@
     zh = lang && lang.startsWith('zh');
     T = zh
       ? { min:' 分钟',cores:' 核',used:'已用',avail:'可用',total:'总计',srvNet:'服务器网络',net:'网络',localSSH:'本机 SSH',up:'↑ 上传',down:'↓ 下载',selAll:'全选空闲',clear:'清除',copyEnv:'复制环境变量',detecting:'检测中…',noGpu:'未检测到 GPU',updAt:'更新于 ',utilLabel:'利用率',memLabel:'显存',tempLabel:'温度',pwLabel:'功耗',
-          perfTab:'性能',procTab:'进程',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',barAlign:'位置',barPriority:'优先级',barPriorityTip:'数字越大越靠左（左侧）或越靠右（右侧），默认 10',close:'关闭',
+          perfTab:'性能',procTab:'进程',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',barAlign:'位置',barPriority:'优先级',barPriorityTip:'数值越大越靠边（默认 10）',close:'关闭',
           netLabel:'网络速率',gpuLabel:'GPU',
           scopeOff:'关',scopeSummary:'总览',scopeCard:'指定卡',scopeMy:'我的卡',metUtil:'仅利用率',metVram:'仅显存',metBoth:'全部显示',
           netUp:'仅上传',netDown:'仅下载',netAll:'全部显示',netMerge:'合并显示',
           sshLabel:'SSH速率',gpuSummary:'GPU总览',gpuIdleIds:'显示空闲卡号',gpuPerf:'GPU性能显示',gpuAll:'所有卡',gpuSpecify:'指定卡',gpuFirst:'前几张',gpuMetric:'GPU显示指标',gpuSkipIdle:'隐藏空闲卡',viewProcs:'查看进程',
-          diskLabel:'磁盘',diskUsage:'磁盘容量',diskIO:'磁盘速率',diskIORead:'仅读',diskIOWrite:'仅写',diskNoData:'无磁盘数据',diskFilter:'挂载过滤',diskDefault:'默认',diskMore:'更多',diskAll:'全部',diskCustom:'自定义',diskShowVirtual:'排除虚拟 FS',diskShowVirtualTip:'tmpfs, sysfs, proc, devtmpfs 等',diskExcludeFs:'排除 FS 类型',diskExcludeFsTip:'如 vfat, ntfs, fuse 等文件系统类型',diskExcludePath:'排除路径前缀',diskExcludePathTip:'如 /proc, /sys, /run 等挂载路径',diskHideParent:'仅显示叶子挂载点',diskHideParentTip:'例: /autodl-fs 和 /autodl-fs/data 同时存在时只显示 /autodl-fs/data（适用于 AutoDL 等平台）',
-          displayLabel:'显示',chartsToggle:'卡片背景图表',sparkLabel:'图表时长',tabularNums:'等宽数字',tabularNumsTip:'所有数字宽度一致，布局更稳定，但可能显得略宽松',
+          diskLabel:'磁盘',diskUsage:'磁盘容量',diskIO:'磁盘速率',diskIORead:'仅读',diskIOWrite:'仅写',diskNoData:'无磁盘数据',diskFilter:'挂载过滤',diskDefault:'默认',diskMore:'更多',diskAll:'全部',diskCustom:'自定义',diskShowVirtual:'排除虚拟 FS',diskShowVirtualTip:'如 tmpfs、sysfs、proc',diskExcludeFs:'排除 FS 类型',diskExcludeFsTip:'如 vfat、ntfs、fuse',diskExcludePath:'排除路径前缀',diskExcludePathTip:'如 /proc、/sys、/run',diskHideParent:'仅显示叶子挂载点',diskHideParentTip:'父子挂载并存时仅显示子挂载，如 /autodl-fs/data',
+          displayLabel:'显示',chartsToggle:'卡片背景图表',sparkLabel:'图表时长',tabularNums:'等宽数字',tabularNumsTip:'数字等宽，减少布局跳动',
           pcpu:'CPU',pmem:'内存',pgpu:'GPU',ppid:'PID',puser:'用户',pname:'进程名',pcpuPct:'CPU',pmemCol:'内存',pgpuCol:'GPU',pcount:'共 {n} 进程',pnoGpu:'—',pcmd:'命令',filterHint:'搜索进程...',coreMode:'单核',wholeMode:'整机',bothMode:'都显示',sizeMode:'占用量',percentMode:'占比',expand:'展开',collapse:'收起',latency:'延迟',systemGroup:'CPU + 内存',networkGroup:'网络',gpuSummaryGroup:'GPU 总览',gpuCardsGroup:'GPU 卡片',myGpuBorder:'标记我的 GPU',gpuPicker:'空闲 GPU 选择器',gpuUsers:'GPU 占用用户',openEditor:'在编辑器中打开' }
       : { min:' min',cores:' cores',used:'Used',avail:'Avail',total:'Total',srvNet:'Server Net',net:'Network',localSSH:'Local SSH',up:'↑ Up',down:'↓ Down',selAll:'Select All',clear:'Clear',copyEnv:'Copy Env Var',detecting:'Detecting…',noGpu:'No GPU detected',updAt:'Updated ',utilLabel:'Util',memLabel:'VRAM',tempLabel:'Temp',pwLabel:'Power',
-          perfTab:'Perf',procTab:'Procs',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',barAlign:'Position',barPriority:'Priority',barPriorityTip:'Higher = closer to the edge. Default: 10',close:'Close',
+          perfTab:'Perf',procTab:'Procs',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',barAlign:'Position',barPriority:'Priority',barPriorityTip:'Higher values move toward the edge (default 10)',close:'Close',
           netLabel:'Network',gpuLabel:'GPU',
           scopeOff:'Off',scopeSummary:'Summary',scopeCard:'Card',scopeMy:'My Card',metUtil:'Util Only',metVram:'VRAM Only',metBoth:'All',
           netUp:'Upload',netDown:'Download',netAll:'All',netMerge:'Merged',
           sshLabel:'SSH Traffic',gpuSummary:'GPU Summary',gpuIdleIds:'Show Idle IDs',gpuPerf:'GPU Performance',gpuAll:'All Cards',gpuSpecify:'Specific',gpuFirst:'First N',gpuMetric:'GPU Metric',gpuSkipIdle:'Hide Idle',viewProcs:'View Procs',
-          diskLabel:'Disk',diskUsage:'Disk Usage',diskIO:'Disk I/O',diskIORead:'Read',diskIOWrite:'Write',diskNoData:'No disk data',diskFilter:'Mount Filter',diskDefault:'Default',diskMore:'More',diskAll:'All',diskCustom:'Custom',diskShowVirtual:'Exclude Virtual FS',diskShowVirtualTip:'tmpfs, sysfs, proc, devtmpfs, etc.',diskExcludeFs:'Exclude FS Type',diskExcludeFsTip:'e.g. vfat, ntfs, fuse',diskExcludePath:'Exclude Path Prefix',diskExcludePathTip:'e.g. /proc, /sys, /run',diskHideParent:'Leaf mounts only',diskHideParentTip:'e.g. if /autodl-fs and /autodl-fs/data both exist, only /autodl-fs/data is shown (useful on AutoDL, etc.)',
-          displayLabel:'Display',chartsToggle:'Card Background Charts',sparkLabel:'Chart Duration',tabularNums:'Tabular Numbers',tabularNumsTip:'All digits have equal width for stable layout, but may appear slightly wider',
+          diskLabel:'Disk',diskUsage:'Disk Usage',diskIO:'Disk I/O',diskIORead:'Read',diskIOWrite:'Write',diskNoData:'No disk data',diskFilter:'Mount Filter',diskDefault:'Default',diskMore:'More',diskAll:'All',diskCustom:'Custom',diskShowVirtual:'Exclude Virtual FS',diskShowVirtualTip:'e.g. tmpfs, sysfs, proc',diskExcludeFs:'Exclude FS Type',diskExcludeFsTip:'e.g. vfat, ntfs, fuse',diskExcludePath:'Exclude Path Prefix',diskExcludePathTip:'e.g. /proc, /sys, /run',diskHideParent:'Leaf mounts only',diskHideParentTip:'Show only child mounts, e.g. /autodl-fs/data',
+          displayLabel:'Display',chartsToggle:'Card Background Charts',sparkLabel:'Chart Duration',tabularNums:'Tabular Numbers',tabularNumsTip:'Equal-width digits reduce layout shifts',
           pcpu:'CPU',pmem:'Memory',pgpu:'GPU',ppid:'PID',puser:'User',pname:'Process',pcpuPct:'CPU',pmemCol:'Memory',pgpuCol:'GPU',pcount:'{n} processes',pnoGpu:'—',pcmd:'Command',filterHint:'Search...',coreMode:'Core',wholeMode:'Machine',bothMode:'Both',sizeMode:'Used',percentMode:'Percent',expand:'Expand',collapse:'Collapse',latency:'Latency',systemGroup:'CPU + RAM',networkGroup:'Network',gpuSummaryGroup:'GPU Overview',gpuCardsGroup:'GPU Cards',myGpuBorder:'Highlight my GPUs',gpuPicker:'Idle GPU Picker',gpuUsers:'GPU Users',openEditor:'Open in Editor' };
     document.getElementById('l-1m').textContent = '1' + T.min;
     document.getElementById('l-5m').textContent = '5' + T.min;
@@ -144,7 +144,6 @@
       applyCharts();
       applyGroupVisibility();
       curInterval = data.interval || curInterval;
-      document.body.style.setProperty('--spark-color-duration', curInterval + 's');
       if (typeof data.gpuCount === 'number') gpuCount = data.gpuCount;
       if (modalOpen && !settingMenu) renderSettingsBody();
       return;
@@ -247,14 +246,21 @@
             + '<div class="gpu-title"><span class="gpu-name">GPU ' + g.idx + '</span><span class="gpu-sub" title="' + esc(g.name) + '"><bdo dir="ltr" id="gpu-name-text-' + g.idx + '">' + esc(g.displayName || g.name) + '</bdo></span></div>'
             + '<div class="bar-label"><span>' + T.utilLabel + '</span><span id="gpu-util-text-' + g.idx + '"><b>' + util + '%</b> <span class="gpu-link" data-gpu-link="' + g.idx + '">&nearr; ' + T.viewProcs + '</span></span></div>'
             + '<div class="track"><div class="fill ' + colorClass(util) + '" id="gpu-util-' + g.idx + '"></div></div>'
-            + '<div class="bar-label"><span>' + T.memLabel + '</span><span class="gpu-mem-wrap"><span class="ltr-ellipsis" id="gpu-mem-text-' + g.idx + '" title="' + esc(g.memUsedStr + ' / ' + g.memTotalStr) + '"><bdo dir="ltr">' + esc(g.memUsedStr + ' / ' + g.memTotalStr) + '</bdo></span><span class="gpu-pct" id="gpu-mem-pct-' + g.idx + '">' + memPct + '%</span></span></div>'
+            + '<div class="bar-label"><span>' + T.memLabel + '</span><span class="gpu-mem-wrap"><span class="ltr-ellipsis" id="gpu-mem-text-' + g.idx + '" title="' + esc(g.memPairStr) + '"><bdo dir="ltr">' + esc(g.memPairStr) + '</bdo></span><span class="gpu-pct" id="gpu-mem-pct-' + g.idx + '">' + memPct + '%</span></span></div>'
             + '<div class="track"><div class="fill ' + colorClass(memPct) + '" id="gpu-mem-' + g.idx + '"></div></div>'
-            + '<div class="gpu-users" id="gpu-users-' + g.idx + '"></div>'
-            + '<div class="gpu-stats"><span id="gpu-temp-' + g.idx + '" title="' + T.tempLabel + ' ' + (g.temp || 0) + ' °C">' + T.tempLabel + ' <b>' + (g.temp || 0) + ' °C</b></span>' + (g.power ? '<span id="gpu-power-' + g.idx + '" title="' + T.pwLabel + ' ' + g.power.draw + '/' + g.power.limit + ' W">' + T.pwLabel + ' <b>' + g.power.draw + '/' + g.power.limit + ' W</b></span>' : '') + '</div></div>';
+            + '<div class="gpu-footer"><div class="gpu-users" id="gpu-users-' + g.idx + '"></div>'
+            + '<div class="gpu-stats" id="gpu-stats-' + g.idx + '">' + gpuStatsMarkup(g) + '</div>'
+            + '<button class="gpu-info" id="gpu-info-' + g.idx + '" data-gpu-info="' + g.idx + '" type="button" aria-label="">ⓘ</button></div></div>';
         });
         gpuBody.innerHTML = ghtml;
         snapshotPayload.gpus.forEach(function(g) { renderGpuUsers(g); });
         applyCharts();
+        gpuBody.querySelectorAll('.gpu-info').forEach(function(button) {
+          button.addEventListener('mouseenter', function() { showGpuInfoPopover(button); });
+          button.addEventListener('mouseleave', function() { hideGpuInfoPopover(button); });
+          button.addEventListener('focus', function() { showGpuInfoPopover(button); });
+          button.addEventListener('blur', function() { hideGpuInfoPopover(button); });
+        });
         gpuBody.querySelectorAll('.gpu-link').forEach(function(el) {
           el.addEventListener('click', function() {
             var idx = this.dataset.gpuLink;
@@ -292,15 +298,13 @@
           var ut = document.getElementById('gpu-util-text-' + g.idx);
           if (ut) { var b = ut.querySelector('b'); if (b) { b.textContent = util + '%'; } else { var link = ut.querySelector('.gpu-link'); ut.textContent = util + '% '; if (link) ut.appendChild(link); } }
           var memoryTextElement = document.getElementById('gpu-mem-text-' + g.idx);
-          if (memoryTextElement) { var bdo = memoryTextElement.querySelector('bdo'); if (bdo) bdo.textContent = g.memUsedStr + ' / ' + g.memTotalStr; else memoryTextElement.textContent = g.memUsedStr + ' / ' + g.memTotalStr; memoryTextElement.title = g.memUsedStr + ' / ' + g.memTotalStr; }
+          if (memoryTextElement) { var bdo = memoryTextElement.querySelector('bdo'); if (bdo) bdo.textContent = g.memPairStr; else memoryTextElement.textContent = g.memPairStr; memoryTextElement.title = g.memPairStr; }
           var nameElement = document.getElementById('gpu-name-text-' + g.idx);
           if (nameElement) { nameElement.textContent = g.displayName || g.name; nameElement.parentElement.title = g.name; }
           var mp = document.getElementById('gpu-mem-pct-' + g.idx);
           if (mp) { mp.textContent = memPct + '%'; }
-          var te = document.getElementById('gpu-temp-' + g.idx);
-          if (te) { te.innerHTML = T.tempLabel + ' <b>' + (g.temp || 0) + ' °C</b>'; te.title = T.tempLabel + ' ' + (g.temp || 0) + ' °C'; }
-          var powerElement = document.getElementById('gpu-power-' + g.idx);
-          if (powerElement && g.power) { powerElement.innerHTML = T.pwLabel + ' <b>' + g.power.draw + '/' + g.power.limit + ' W</b>'; powerElement.title = T.pwLabel + ' ' + g.power.draw + '/' + g.power.limit + ' W'; }
+          var statsElement = document.getElementById('gpu-stats-' + g.idx);
+          if (statsElement) statsElement.innerHTML = gpuStatsMarkup(g);
           var ga = document.getElementById('gpu-spark-area-' + g.idx);
           if (ga && gpuHist[g.idx]) renderSpark(ga, null, gpuHist[g.idx], 100, sparkColor(util));
           var card = document.getElementById('gpu-users-' + g.idx);
@@ -315,6 +319,7 @@
       selectedGpus = {};
       lastFreeIdxs = [];
     }
+    refreshGpuInfoPopover();
 
     document.getElementById('net-tx').textContent = snapshotPayload.net.txStr;
     document.getElementById('net-rx').textContent = snapshotPayload.net.rxStr;
@@ -396,11 +401,13 @@
 
   // ── Tab 切换 ──
   function switchTab(name) {
+    if (name !== 'perf') hideGpuInfoPopover();
     document.querySelectorAll('.tab-content').forEach(function(d){d.classList.remove('active');});
     document.getElementById('tab-'+name).classList.add('active');
     document.getElementById('tab-perf-btn').classList.toggle('on', name==='perf');
     document.getElementById('tab-proc-btn').classList.toggle('on', name==='proc');
     if (name === 'proc') sendToExtension({cmd:'needProcs'});
+    if (name === 'perf') requestAnimationFrame(function() { lastGpuPayload.forEach(renderGpuUsers); });
   }
   document.getElementById('tab-perf-btn').addEventListener('click',function(){switchTab('perf');});
   document.getElementById('tab-proc-btn').addEventListener('click',function(){switchTab('proc');});
@@ -422,7 +429,6 @@
   var processDisplay = __initCfg.processDisplay || { cpu: 'core', ram: 'size' };
   var expandedColumns = { name: false, cmd: false };
   var curInterval = __initCfg.interval || 2, gpuCount = typeof __initCfg.gpuCount === 'number' ? __initCfg.gpuCount : 0, modalOpen = false;
-  document.body.style.setProperty('--spark-color-duration', curInterval + 's');
   SPARK_WINDOW = (displayCfg.sparkMinutes || 5) * 60 * 1000;
 
   function applyGroupVisibility() {
@@ -438,13 +444,38 @@
     document.getElementById('capsule-actions').style.display = pickerVisible ? '' : 'none';
     document.querySelectorAll('.gpu-mini').forEach(function(card) { card.classList.toggle('my-gpu', displayCfg.highlightMyGpus !== false && card.dataset.mine === '1'); });
     if (!hidden.gpuCards) lastGpuPayload.forEach(renderGpuUsers);
+    if (gpuInfoPopover) refreshGpuInfoPopover();
+  }
+  function gpuStatsDescription(gpu) {
+    var details = T.tempLabel + ' ' + (gpu.temp || 0) + '°C';
+    if (gpu.power) details += ' · ' + T.pwLabel + ' ' + gpu.power.draw + '/' + gpu.power.limit + 'W';
+    return details;
+  }
+  function gpuStatsMarkup(gpu) {
+    var temp = (gpu.temp || 0) + '°C';
+    var html = '<span>' + T.tempLabel + ' <b>' + temp + '</b></span>';
+    if (gpu.power) {
+      var power = gpu.power.draw + '/' + gpu.power.limit + 'W';
+      html += '<span>' + T.pwLabel + ' <b>' + power + '</b></span>';
+    }
+    return html;
   }
   function renderGpuUsers(gpu) {
     var line = document.getElementById('gpu-users-' + gpu.idx);
     if (!line) return;
     var users = gpu.users || [];
-    line.style.display = users.length && displayCfg.showGpuUsers !== false ? 'flex' : 'none';
-    if (displayCfg.showGpuUsers === false || !users.length || !line.clientWidth) return;
+    var showUsers = displayCfg.showGpuUsers !== false && users.length > 0;
+    var stats = document.getElementById('gpu-stats-' + gpu.idx);
+    var info = document.getElementById('gpu-info-' + gpu.idx);
+    line.style.display = showUsers ? 'flex' : 'none';
+    if (stats) stats.style.display = showUsers ? 'none' : 'flex';
+    if (info) {
+      info.style.display = showUsers ? 'inline-flex' : 'none';
+      info.setAttribute('aria-label', gpuStatsDescription(gpu));
+      if (!showUsers && activeGpuInfoButton === info) hideGpuInfoPopover(info);
+    }
+    if (!showUsers) { line.replaceChildren(); return; }
+    if (!line.clientWidth) return;
     for (var visible = users.length; visible >= 0; visible--) {
       line.replaceChildren();
       users.slice(0, visible).forEach(function(user) {
@@ -463,7 +494,35 @@
       if (line.scrollWidth <= line.clientWidth + 1) break;
     }
   }
-  window.addEventListener('resize', function() { lastGpuPayload.forEach(renderGpuUsers); });
+  var gpuInfoPopover = document.createElement('div');
+  gpuInfoPopover.className = 'gpu-info-popover';
+  gpuInfoPopover.hidden = true;
+  document.body.appendChild(gpuInfoPopover);
+  var activeGpuInfoButton = null;
+  function hideGpuInfoPopover(button) {
+    if (button && activeGpuInfoButton !== button) return;
+    activeGpuInfoButton = null;
+    gpuInfoPopover.hidden = true;
+  }
+  function refreshGpuInfoPopover() {
+    var button = activeGpuInfoButton;
+    if (!button) return;
+    if (!button.isConnected || button.style.display === 'none' || !button.getClientRects().length) { hideGpuInfoPopover(); return; }
+    var gpu = lastGpuPayload.find(function(device) { return String(device.idx) === button.dataset.gpuInfo; });
+    if (!gpu) { hideGpuInfoPopover(); return; }
+    gpuInfoPopover.textContent = gpuStatsDescription(gpu);
+    gpuInfoPopover.hidden = false;
+    var bounds = button.getBoundingClientRect();
+    gpuInfoPopover.style.left = Math.max(4, Math.min(bounds.right - gpuInfoPopover.offsetWidth, window.innerWidth - gpuInfoPopover.offsetWidth - 4)) + 'px';
+    var above = bounds.top - gpuInfoPopover.offsetHeight - 6;
+    gpuInfoPopover.style.top = (above >= 4 ? above : bounds.bottom + 6) + 'px';
+  }
+  function showGpuInfoPopover(button) {
+    activeGpuInfoButton = button;
+    refreshGpuInfoPopover();
+  }
+  window.addEventListener('resize', function() { lastGpuPayload.forEach(renderGpuUsers); refreshGpuInfoPopover(); });
+  window.addEventListener('blur', function() { hideGpuInfoPopover(); });
 
   function applyCharts() {
     var vis = displayCfg.charts !== false ? '' : 'none';
@@ -521,6 +580,51 @@
     }
   }
 
+  var modalBody = document.getElementById('modal-body');
+  var modalScrollbar = document.getElementById('modal-scrollbar');
+  var modalScrollbarThumb = document.getElementById('modal-scrollbar-thumb');
+  var modalDragOffset = null;
+  function updateModalScrollbar() {
+    if (!modalOpen) return;
+    var viewport = modalBody.clientHeight;
+    var overflow = modalBody.scrollHeight - viewport;
+    modalScrollbar.hidden = overflow <= 1;
+    if (modalScrollbar.hidden) return;
+    modalScrollbar.style.top = modalBody.offsetTop + 'px';
+    modalScrollbar.style.height = viewport + 'px';
+    var thumbHeight = Math.min(viewport, Math.max(28, Math.round(viewport * viewport / modalBody.scrollHeight)));
+    modalScrollbarThumb.style.height = thumbHeight + 'px';
+    modalScrollbarThumb.style.transform = 'translateY(' + Math.round((viewport - thumbHeight) * modalBody.scrollTop / overflow) + 'px)';
+  }
+  function scrollModalFromPointer(event) {
+    var bounds = modalScrollbar.getBoundingClientRect();
+    var travel = bounds.height - modalScrollbarThumb.offsetHeight;
+    if (travel <= 0) return;
+    var progress = Math.max(0, Math.min(1, (event.clientY - bounds.top - modalDragOffset) / travel));
+    modalBody.scrollTop = progress * (modalBody.scrollHeight - modalBody.clientHeight);
+  }
+  modalScrollbar.addEventListener('pointerdown', function(event) {
+    if (modalScrollbar.hidden) return;
+    event.preventDefault();
+    var thumbBounds = modalScrollbarThumb.getBoundingClientRect();
+    modalDragOffset = event.target === modalScrollbarThumb ? event.clientY - thumbBounds.top : thumbBounds.height / 2;
+    modalScrollbar.classList.add('dragging');
+    modalScrollbar.setPointerCapture(event.pointerId);
+    scrollModalFromPointer(event);
+  });
+  modalScrollbar.addEventListener('pointermove', function(event) {
+    if (modalDragOffset !== null) scrollModalFromPointer(event);
+  });
+  function endModalScrollbarDrag(event) {
+    modalDragOffset = null;
+    modalScrollbar.classList.remove('dragging');
+    if (modalScrollbar.hasPointerCapture(event.pointerId)) modalScrollbar.releasePointerCapture(event.pointerId);
+  }
+  modalScrollbar.addEventListener('pointerup', endModalScrollbarDrag);
+  modalScrollbar.addEventListener('pointercancel', endModalScrollbarDrag);
+  modalBody.addEventListener('scroll', updateModalScrollbar);
+  window.addEventListener('resize', updateModalScrollbar);
+
   function openModal() {
     modalOpen = true;
     document.getElementById('modal-mask').classList.add('open');
@@ -531,8 +635,9 @@
     document.getElementById('sett-display-label').textContent = T.displayLabel;
     renderIntervalRow();
     renderSettingsBody();
+    requestAnimationFrame(updateModalScrollbar);
   }
-  function closeModal() { closeSettingMenu(); modalOpen = false; document.getElementById('modal-mask').classList.remove('open'); }
+  function closeModal() { closeSettingMenu(); modalOpen = false; modalScrollbar.hidden = true; document.getElementById('modal-mask').classList.remove('open'); }
   document.getElementById('settings-btn').addEventListener('click', openModal);
   document.getElementById('modal-close').addEventListener('click', closeModal);
   document.getElementById('modal-mask').addEventListener('click', function(e){ if (e.target===this) closeModal(); });
@@ -576,8 +681,8 @@
     }, 300);
   }
 
-  function settingRow(label, control, hint) {
-    return '<div class="setting-row"><span class="setting-info"><span class="setting-title"' + (hint ? ' title="' + esc(hint) + '"' : '') + '>' + label + '</span>' + (hint ? '<small>' + esc(hint) + '</small>' : '') + '</span><span class="setting-control">' + control + '</span></div>';
+  function settingRow(label, control, hint, wideControl) {
+    return '<div class="setting-row"><span class="setting-info"><span class="setting-title"' + (hint ? ' title="' + esc(hint) + '"' : '') + '>' + label + '</span>' + (hint ? '<small>' + esc(hint) + '</small>' : '') + '</span><span class="setting-control' + (wideControl ? ' wide' : '') + '">' + control + '</span></div>';
   }
   function switchButton(action, enabled, key, disabled) {
     return '<button type="button" class="setting-switch' + (enabled ? ' on' : '') + '" role="switch" aria-checked="' + enabled + '" data-act="' + action + '"' + (key ? ' data-key="' + key + '"' : '') + (disabled ? ' disabled' : '') + '><span></span></button>';
@@ -692,8 +797,8 @@
     }
     dh += '<div class="custom-group' + (isCustom ? '' : ' dim') + '">';
     dh += settingRow(T.diskShowVirtual, switchButton('disk-show-virtual', !showVfs, null, !isCustom), T.diskShowVirtualTip);
-    dh += settingRow(T.diskExcludeFs, '<input class="sett-input wide" id="disk-fs-input" type="text" value="' + esc(showFs) + '"' + (isCustom ? '' : ' readonly') + ' />', T.diskExcludeFsTip);
-    dh += settingRow(T.diskExcludePath, '<input class="sett-input wide" id="disk-path-input" type="text" value="' + esc(showPaths) + '"' + (isCustom ? '' : ' readonly') + ' />', T.diskExcludePathTip);
+    dh += settingRow(T.diskExcludeFs, '<input class="sett-input wide" id="disk-fs-input" type="text" value="' + esc(showFs) + '"' + (isCustom ? '' : ' readonly') + ' />', T.diskExcludeFsTip, true);
+    dh += settingRow(T.diskExcludePath, '<input class="sett-input wide" id="disk-path-input" type="text" value="' + esc(showPaths) + '"' + (isCustom ? '' : ' readonly') + ' />', T.diskExcludePathTip, true);
     dh += '</div>';
     dh += settingRow(T.diskHideParent, switchButton('disk-hide-parent', diskCfg.hideParentMounts !== false), T.diskHideParentTip);
     diskBody.innerHTML = dh;
@@ -811,6 +916,7 @@
       applyGroupVisibility();
       animateSwitch(this, displayCfg.showGpuUsers);
     });
+    if (modalOpen) requestAnimationFrame(updateModalScrollbar);
   }
 
   function bindSettingsEvents(body, cfg) {

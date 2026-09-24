@@ -19,6 +19,13 @@ function formatRate(bytesPerSecond, options = {}) {
   return size === '—' ? size : `${size}/s`;
 }
 
+function formatSizePair(usedBytes, totalBytes) {
+  const used = formatSize(usedBytes, { compact: true });
+  const total = formatSize(totalBytes, { compact: true });
+  if (used === '—' || total === '—') return `${used} / ${total}`;
+  return `${used.slice(-1) === total.slice(-1) ? used.slice(0, -1) : used} / ${total}`;
+}
+
 function formatDuration(milliseconds) {
   if (typeof milliseconds !== 'number' || !Number.isFinite(milliseconds)) return '—';
   const value = Math.max(0, milliseconds);
@@ -35,6 +42,7 @@ const formatDiskBytes = (value) => formatSize(value, { compact: true });
 
 module.exports = {
   formatSize,
+  formatSizePair,
   formatRate,
   formatDuration,
   formatBytesPerSecond,

@@ -12,6 +12,7 @@ const {
   formatMemoryBytes,
   formatDuration,
   formatSize,
+  formatSizePair,
 } = require('../src/utils/format');
 
 test('process name parser keeps Linux kernel thread names intact', () => {
@@ -35,6 +36,9 @@ test('size, rate and duration formatters use consistent binary units and one dec
   assert.equal(formatDiskBytes(1099511627776), '1.0T');
   assert.equal(formatSize(0), '0.0 K');
   assert.equal(formatSize(1024 ** 5), '1024.0 T');
+  assert.equal(formatSizePair(40.7 * 1024 ** 3, 80 * 1024 ** 3), '40.7 / 80.0G');
+  assert.equal(formatSizePair(512 * 1024 ** 2, 80 * 1024 ** 3), '512.0M / 80.0G');
+  assert.equal(formatSizePair(NaN, 80 * 1024 ** 3), '— / 80.0G');
   assert.equal(formatDuration(9.8), '9.8 ms');
   assert.equal(formatDuration(1000), '1.0 s');
   assert.equal(formatDuration(60000), '1.0 m');
