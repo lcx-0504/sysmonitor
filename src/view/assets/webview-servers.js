@@ -158,13 +158,13 @@
         serverRowNodes.set(server.host, row);
       }
       var status = row.querySelector('.server-state');
-      var statusClass = 'server-state' + (server.state === 'connected' ? ' connected' : server.state === 'disconnected' ? ' error' : '');
+      var statusClass = 'server-state' + (server.state === 'connected' ? ' connected' : server.state === 'disconnected' || server.state === 'error' ? ' error' : '');
       if (status.className !== statusClass) status.className = statusClass;
       var indicatorClass = server.busy ? 'server-spinner' : 'server-state-dot';
       if (status.firstChild.className !== indicatorClass) status.firstChild.className = indicatorClass;
-      status.lastChild.textContent = server.state === 'connected' ? (zh ? '已连接' : 'Connected') : server.state === 'connecting' ? (zh ? '连接中…' : 'Connecting…') : server.state === 'loading' ? (zh ? '资源加载中…' : 'Loading resources…') : server.state === 'disconnected' ? (zh ? '连接失败' : 'Failed') : (zh ? '未连接' : 'Idle');
+      status.lastChild.textContent = server.state === 'connected' ? (zh ? '已连接' : 'Connected') : server.state === 'connecting' ? (zh ? '连接中…' : 'Connecting…') : server.state === 'loading' ? (zh ? '资源加载中…' : 'Loading resources…') : server.state === 'error' ? (zh ? '加载失败' : 'Load failed') : server.state === 'disconnected' ? (zh ? '连接失败' : 'Failed') : (zh ? '未连接' : 'Idle');
       var summary = row.querySelector('.server-summary');
-      var summaryClass = 'server-summary' + (server.state === 'disconnected' ? ' error' : '');
+      var summaryClass = 'server-summary' + (server.error ? ' error' : '');
       if (summary.className !== summaryClass) summary.className = summaryClass;
       var summaryText = server.error || (server.metrics && server.metrics.length ? ' · ' + server.metrics.join(' · ') : server.state === 'connected' ? (zh ? ' · 正在采集…' : ' · Collecting…') : '');
       if (summary.textContent !== summaryText) summary.textContent = summaryText;

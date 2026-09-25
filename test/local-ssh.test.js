@@ -5,8 +5,8 @@ const path = require('node:path');
 const test = require('node:test');
 const { normalizeNavigation, normalizeEditorNavigation, MultiMonitorViewProvider } = require('../src/view/multi-monitor-view-provider');
 const { normalizeConfig } = require('../src/config/normalize-config');
-const { MonitorService } = require('../src/services/monitor-service');
-const { DeviceMonitorManager, updateDeviceConnection, canRecordDeviceSample } = require('../src/services/device-monitor-manager');
+const { DeviceMonitorManager } = require('../src/services/device-monitor-manager');
+const { createSessionFixture } = require('./session-fixture');
 
 test('navigation restore preserves selected device and page, with a fixed local Linux tab', () => {
   assert.deepEqual(normalizeNavigation({ tabs: ['ssh:campus', 'ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'proc' }, true), {
@@ -16,42 +16,10 @@ test('navigation restore preserves selected device and page, with a fixed local 
   assert.deepEqual(normalizeNavigation({ tabs: ['ssh:campus', 'local', 'ssh:lab007'], selected: 'local', page: 'perf' }, true).tabs, ['ssh:campus', 'local', 'ssh:lab007']);
 });
 
-test('disconnected SSH history freezes and resumes after a fresh complete sample', () => {
-  const snapshot = Object.fromEntries(['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators'].map((key) => [key, { status: 'fresh', collectedAt: 199 }]));
-  const device = { state: 'connected', error: null, history: [{ t: 90 }], resumeHistoryAfter: null };
-  assert.equal(canRecordDeviceSample(device, snapshot, true), true);
-  updateDeviceConnection(device, 'disconnected', new Error('SSH timed out'), 100);
-  assert.equal(device.error, 'SSH timed out');
-  assert.equal(canRecordDeviceSample(device, snapshot, true), false);
-  updateDeviceConnection(device, 'connecting', null, 150);
-  updateDeviceConnection(device, 'connected', null, 200);
-  assert.equal(canRecordDeviceSample(device, snapshot, true), false);
-  for (const part of Object.values(snapshot)) part.collectedAt = 201;
-  assert.equal(canRecordDeviceSample(device, snapshot, true), true);
-  assert.equal(device.resumeHistoryAfter, null);
-  assert.equal(canRecordDeviceSample(device, snapshot, false), true);
-});
-
-test('a paused one-shot snapshot updates the model without appending chart history', () => {
-  const config = normalizeConfig({});
-  const manager = new DeviceMonitorManager({ configStore: { getCurrent: () => config }, language: 'en', localLinux: false });
-  manager.paused = true;
-  try {
-    const device = manager.open('ssh:fixture');
-    device.state = 'connected';
-    device.service.onTick(device.service.readSnapshot());
-    assert.ok(device.model);
-    assert.equal(typeof device.modelAt, 'number');
-    assert.deepEqual(device.history, []);
-  } finally { manager.dispose(); }
-});
-
 test('paused one-shot metrics reach the view without adding a trend point', () => {
   const id = 'ssh:fixture';
-  const device = {
-    id, host: 'fixture', state: 'connected', error: null, model: { performance: {} }, modelAt: 500,
-    history: [{ t: 100 }], service: { readSnapshot: () => ({}) }, transport: { retryAfter: 0 },
-  };
+  const { session: device } = createSessionFixture({ id, paused: true });
+  Object.assign(device, { model: { performance: {} }, modelAt: 500, history: [{ t: 100 }] });
   const provider = new MultiMonitorViewProvider({
     vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
     manager: { paused: true, get: () => device, sync() {}, setConfigFile() {} },
@@ -60,13 +28,15 @@ test('paused one-shot metrics reach the view without adding a trend point', () =
     localLinux: false, loadHosts: async () => [],
   });
   const messages = [];
-  provider.sidebar = { ready: true, state: provider.sidebarState, lastSnapshotAt: 100, target: { visible: true, webview: { postMessage: (message) => messages.push(message) } } };
+  provider.sidebar = { ready: true, state: provider.sidebarState, target: { visible: true, webview: { postMessage: (message) => messages.push(message) } } };
   provider.onDeviceUpdate(id, device);
-  assert.deepEqual(messages.find((message) => message.cmd === 'snapshot'), {
-    cmd: 'snapshot', deviceId: id, viewModel: device.model, sampleTime: 500, skipHistory: true,
-  });
+  const update = messages.find((message) => message.cmd === 'snapshot');
+  assert.equal(update.viewModel, device.model);
+  assert.equal(update.sampleTime, 500);
+  assert.equal(update.skipHistory, true);
   assert.deepEqual(device.history, [{ t: 100 }]);
   provider.dispose();
+  device.dispose();
 });
 
 test('Editor navigation keeps one device and only performance or process pages', () => {
@@ -157,96 +127,6 @@ test('server-list Editor actions create duplicate views without moving sidebar t
   assert.equal(opened.length, 2);
   assert.deepEqual(provider.sidebarState.tabs, ['ssh:campus']);
   assert.equal(provider.sidebarState.page, 'servers');
-  provider.dispose();
-});
-
-test('manual retry samples once while globally paused and leaves pause enabled', async () => {
-  const calls = [];
-  const id = 'ssh:campus';
-  const device = {
-    state: 'disconnected',
-    transport: { async retryNow() { calls.push('retry'); device.state = 'connected'; } },
-    service: { readSnapshot: () => ({}), resume(options) { calls.push(['resume', options]); }, pause() { calls.push('pause'); } },
-  };
-  const manager = { paused: true, get: () => device, sync() {}, setConfigFile() {} };
-  const provider = new MultiMonitorViewProvider({
-    vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager, configStore: { getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({ tabs: [id], selected: id, page: 'perf' }) },
-    localLinux: false, loadHosts: async () => ['campus'],
-  });
-  provider.serverDirectory.waitForInitialSample = async (host, since, options) => {
-    calls.push(['sample', host, Number.isFinite(since), options]);
-  };
-  const messages = [];
-  const source = { ready: true, state: provider.sidebarState, target: { webview: { postMessage: (message) => messages.push(message) } } };
-  provider.sidebar = source;
-  await provider.handleMessage({ version: 1, cmd: 'retryConnection', deviceId: id }, source);
-  assert.deepEqual(calls, [
-    'retry', ['resume', { force: true }], ['sample', 'campus', true, { allowPaused: true }], 'pause',
-  ]);
-  assert.equal(manager.paused, true);
-  assert.deepEqual(messages.at(-1), { cmd: 'retryConnectionResult', deviceId: id });
-  provider.dispose();
-});
-
-test('simultaneous retry clicks from two views share one SSH attempt and both finish', async () => {
-  const id = 'ssh:campus';
-  let attempts = 0;
-  let complete;
-  const device = {
-    state: 'disconnected',
-    transport: { retryNow() {
-      attempts++;
-      device.state = 'connecting';
-      return new Promise((resolve) => { complete = resolve; });
-    } },
-  };
-  const provider = new MultiMonitorViewProvider({
-    vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager: { paused: false, get: () => device, sync() {}, setConfigFile() {} },
-    configStore: { getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({ tabs: [id], selected: id, page: 'perf' }) },
-    localLinux: false, loadHosts: async () => [],
-  });
-  const firstMessages = [], secondMessages = [];
-  const state = { selected: id, page: 'perf' };
-  const first = { ready: true, state, target: { webview: { postMessage: (message) => firstMessages.push(message) } } };
-  const second = { ready: true, state, target: { webview: { postMessage: (message) => secondMessages.push(message) } } };
-  provider.sidebar = first;
-  provider.editors.set(second.target, second);
-  const firstRetry = provider.retryConnection(first, id);
-  const secondRetry = provider.retryConnection(second, id);
-  assert.equal(attempts, 1);
-  complete();
-  await Promise.all([firstRetry, secondRetry]);
-  assert.equal(firstMessages.at(-1).cmd, 'retryConnectionResult');
-  assert.equal(secondMessages.at(-1).cmd, 'retryConnectionResult');
-  provider.dispose();
-});
-
-test('a failed paused one-shot retry still returns the device to pause', async () => {
-  const id = 'ssh:campus';
-  const calls = [];
-  const device = {
-    state: 'disconnected',
-    transport: { async retryNow() { device.state = 'connected'; } },
-    service: { readSnapshot: () => ({}), resume() { calls.push('resume'); }, pause() { calls.push('pause'); } },
-  };
-  const provider = new MultiMonitorViewProvider({
-    vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager: { paused: true, get: () => device, sync() {}, setConfigFile() {} },
-    configStore: { getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({ tabs: [id], selected: id, page: 'perf' }) },
-    localLinux: false, loadHosts: async () => [],
-  });
-  provider.serverDirectory.waitForInitialSample = async () => { throw new Error('sample timed out'); };
-  const messages = [];
-  const source = { ready: true, state: provider.sidebarState, target: { webview: { postMessage: (message) => messages.push(message) } } };
-  provider.sidebar = source;
-  await provider.retryConnection(source, id);
-  assert.deepEqual(calls, ['resume', 'pause']);
-  assert.deepEqual(messages.at(-1), { cmd: 'retryConnectionResult', deviceId: id, error: 'sample timed out' });
   provider.dispose();
 });
 
@@ -582,7 +462,11 @@ test('floating monitor reuses the Editor view and moves it into a native window'
 test('page switches retain the current snapshot while device switches hydrate atomically', async () => {
   const config = normalizeConfig({});
   const model = { performance: { cpu: { usagePercent: 12 } }, processes: [] };
-  const device = (id) => ({ id, host: id.slice(4), state: 'connecting', error: null, model, history: [{ t: 1, cpu: 12 }], service: { readSnapshot: () => ({ accelerators: { value: null } }) } });
+  const device = (id) => {
+    const { session } = createSessionFixture({ id });
+    Object.assign(session, { model, modelAt: 1, history: [{ t: 1, cpu: 12 }] });
+    return session;
+  };
   const devices = new Map([['ssh:campus', device('ssh:campus')], ['ssh:lab007', device('ssh:lab007')]]);
   const manager = { paused: false, get: (id) => devices.get(id), sync() {}, setConfigFile() {} };
   const provider = new MultiMonitorViewProvider({
@@ -611,15 +495,6 @@ test('page switches retain the current snapshot while device switches hydrate at
   messages.length = 0;
   provider.sendCurrent(source);
   assert.equal(messages.find((message) => message.cmd === 'snapshot').sampleTime, 1);
-});
-
-test('remote process collection allows SSH queue time without changing local timeout', () => {
-  const remote = new MonitorService({ runtimeConfig: normalizeConfig({}), isSsh: false, commandRunner: { dispose() {} }, fileReader: { readFile() {} }, systemInfo: {} });
-  const local = new MonitorService({ runtimeConfig: normalizeConfig({}), isSsh: false });
-  assert.equal(remote.runners.find((runner) => runner.key === 'processes').collector.timeoutMilliseconds, 10000);
-  assert.equal(remote.runners.find((runner) => runner.key === 'processes').timeoutMilliseconds, 12000);
-  assert.equal(local.runners.find((runner) => runner.key === 'processes').collector.timeoutMilliseconds, 3000);
-  remote.dispose(); local.dispose();
 });
 
 test('sidebar and editor restore independent device/page state while sharing open device references', async () => {
@@ -669,17 +544,16 @@ test('sidebar and editor restore independent device/page state while sharing ope
 test('monitor views wait for SSH while terminal opens without a preflight', async () => {
   const devices = new Map();
   const prepared = [];
-  const readyAt = Date.now() + 60000;
   const manager = {
     paused: false, configFile: null,
     get(id) { return devices.get(id) || null; },
     open(id) {
-      const device = {
-        id, host: id.slice(4), state: 'connecting', error: null,
-        model: { performance: { cpu: { usagePercent: 10 }, memory: { usagePercent: 20 }, gpus: [] } },
-        history: [{ t: readyAt }],
-        transport: { connect: async () => { if (id === 'ssh:bad') throw new Error('SSH exited (255)'); device.state = 'connected'; } },
-        service: { scheduler: { isPaused: false }, readSnapshot: () => Object.fromEntries(['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators'].map((key) => [key, { status: 'fresh', collectedAt: readyAt, value: key === 'accelerators' ? { devices: [] } : null }])) },
+      const fixture = createSessionFixture({ id, remote: true });
+      const device = fixture.session;
+      device.transport.connect = async () => {
+        if (id === 'ssh:bad') throw new Error('SSH exited (255)');
+        device.setConnection('connected');
+        fixture.commit();
       };
       devices.set(id, device);
       return device;
@@ -746,7 +620,12 @@ test('a hidden server stays sampled while its first monitor view is being prepar
     pause() { this.scheduler.isPaused = true; calls.push('pause'); },
     dispose() { calls.push('dispose'); },
   };
-  manager.devices.set('ssh:lab', { service });
+  manager.devices.set('ssh:lab', {
+    service, running: false,
+    resume() { this.running = true; service.resume(); },
+    pause() { this.running = false; service.pause(); },
+    dispose() { service.dispose(); },
+  });
   manager.setPreparing('ssh:lab', true);
   manager.sync(new Set(), new Set());
   assert.equal(manager.get('ssh:lab') !== null, true);

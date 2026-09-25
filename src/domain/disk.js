@@ -1,6 +1,6 @@
 'use strict';
 
-const VIRTUAL_FILE_SYSTEMS = new Set(['tmpfs', 'devtmpfs', 'sysfs', 'proc', 'efivarfs', 'squashfs', 'cgroup', 'cgroup2', 'configfs', 'debugfs', 'devpts', 'fusectl', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'binfmt_misc', 'autofs', 'tracefs', 'ramfs']);
+const VIRTUAL_FILE_SYSTEMS = new Set(['tmpfs', 'devtmpfs', 'sysfs', 'proc', 'efivarfs', 'squashfs', 'cgroup', 'cgroup2', 'configfs', 'debugfs', 'devpts', 'fusectl', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'binfmt_misc', 'autofs', 'tracefs', 'ramfs', 'bpf']);
 const DEFAULT_EXCLUSIONS = 'vfat,/proc,/sys,/run,/snap,/usr,/etc,/dev,/init';
 
 function normalizeMountRules(diskConfig) {
@@ -29,25 +29,35 @@ function shouldExclude(fileSystemType, mountPath, diskConfig) {
   return fileSystemTypes.includes(fileSystemType) || pathPrefixes.some((prefix) => mountPath === prefix || mountPath.startsWith(`${prefix.replace(/\/$/, '')}/`));
 }
 
+function hasCapacity(total, used, available) {
+  return [total, used, available].every((value) => value != null && String(value).trim() !== '' && Number.isFinite(Number(value)))
+    && Number(total) > 0 && Number(used) >= 0 && Number(available) >= 0;
+}
+
 function parseFindmntOutput(raw, diskConfig) {
-  const filesystems = JSON.parse(raw).filesystems || [];
+  const filesystems = JSON.parse(raw).filesystems;
+  if (!Array.isArray(filesystems)) throw Object.assign(new Error('Incomplete findmnt output'), { code: 'EINCOMPLETE' });
   return filesystems.reduce((mounts, entry) => {
     const fileSystemType = entry.fstype || ''; const mountPath = entry.target || '';
-    if (shouldExclude(fileSystemType, mountPath, diskConfig) || !entry.size) return mounts;
-    const totalBytes = Number(entry.size); const usedBytes = Number(entry.used) || 0;
-    const availableBytes = entry.avail === undefined ? Math.max(0, totalBytes - usedBytes) : Number(entry.avail) || 0;
+    if (shouldExclude(fileSystemType, mountPath, diskConfig)) return mounts;
+    if (!hasCapacity(entry.size, entry.used, entry.avail)) return mounts;
+    const totalBytes = Number(entry.size); const usedBytes = Number(entry.used);
+    const availableBytes = Number(entry.avail);
     mounts.push({ mountPath, fileSystemType, totalBytes, usedBytes, availableBytes, usagePercent: Number.parseInt(entry['use%'], 10) || 0 });
     return mounts;
   }, []);
 }
 
 function parseDfOutput(raw, diskConfig) {
+  if (!raw.trim()) throw Object.assign(new Error('Empty df output'), { code: 'EINCOMPLETE' });
   return raw.trim().split('\n').slice(1).reduce((mounts, line) => {
-    const fields = line.trim().split(/\s+/); if (fields.length < 7) return mounts;
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 7) throw Object.assign(new Error('Incomplete df output'), { code: 'EINCOMPLETE' });
     const [source, fileSystemType, blocks, used, available, percent, ...mountParts] = fields;
     void source;
     const mountPath = mountParts.join(' '); const totalBytes = Number(blocks) * 1024;
-    if (!totalBytes || shouldExclude(fileSystemType, mountPath, diskConfig)) return mounts;
+    if (shouldExclude(fileSystemType, mountPath, diskConfig)) return mounts;
+    if (!hasCapacity(blocks, used, available)) return mounts;
     mounts.push({ mountPath, fileSystemType, totalBytes, usedBytes: Number(used) * 1024, availableBytes: Number(available) * 1024, usagePercent: Number.parseInt(percent, 10) || 0 });
     return mounts;
   }, []);

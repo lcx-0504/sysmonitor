@@ -9,6 +9,34 @@ const { getWebviewHtml, WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-ht
 
 const readWebviewScript = () => WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(__dirname, '..', 'src/view/assets', fileName), 'utf8')).join('\n');
 
+test('an existing monitor keeps its framework and shows GPU loading until its first snapshot', () => {
+  const script = readWebviewScript();
+  const start = script.indexOf('  function showMonitorStatus(');
+  const end = script.indexOf('  var processDisplay =', start);
+  const gpuSummary = { textContent: '--' };
+  let animate = false;
+  const context = { zh: true, paused: false, monitorStatus: null,
+    document: { getElementById: (id) => { assert.equal(id, 'gpu-summary'); return gpuSummary; } },
+    setSparkActivity(_paused, active) { animate = active; },
+    refreshConnectionBanner() {},
+  };
+  vm.runInNewContext(script.slice(start, end), context);
+  context.showMonitorStatus({ ready: false, hasSnapshot: false, failures: [] });
+  assert.equal(gpuSummary.textContent, '加载中…');
+  assert.equal(animate, false);
+  gpuSummary.textContent = '2 空闲 / 4 张';
+  context.showMonitorStatus({ ready: true, hasSnapshot: true, processesReady: true, connected: true, failures: [] });
+  assert.equal(gpuSummary.textContent, '2 空闲 / 4 张');
+  assert.equal(animate, true);
+  context.showMonitorStatus({ ready: false, hasSnapshot: true, connected: false, failures: [] });
+  assert.equal(gpuSummary.textContent, '2 空闲 / 4 张');
+  assert.equal(animate, false);
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src/view/webview-html.js'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
+  assert.doesNotMatch(html, /id="monitor-loading"|id="sampling-warning"/);
+  assert.doesNotMatch(css, /loading-monitor/);
+});
+
 test('monitor cards start empty while a newly selected SSH server is loading', () => {
   const assets = path.join(__dirname, '..', 'src', 'view', 'assets');
   const css = fs.readFileSync(path.join(assets, 'webview.css'), 'utf8');
@@ -50,7 +78,7 @@ test('retry countdown reaches zero without making the view own the SSH reconnect
   let now = 2000, timer = null;
   const context = {
     document: { getElementById: (id) => id === 'connection-retry' ? button : {} },
-    currentDeviceId: 'ssh:lab', navigation: { page: 'perf' }, paused: false, zh: true,
+    currentDeviceId: 'ssh:lab', navigation: { page: 'perf' }, paused: false, zh: true, monitorStatus: null,
     Date: { now: () => now },
     setTimeout: (callback, delay) => { timer = { callback, delay }; return 1; },
     clearTimeout() {},
@@ -602,6 +630,7 @@ test('returning to the performance tab redraws GPU user capsules', () => {
     lastGpuPayload: [{ idx: 0 }],
     renderGpuUsers: (gpu) => rendered.push(gpu.idx),
     updateResponsiveLayout() {},
+    showMonitorStatus() {}, monitorStatus: null,
   };
   vm.runInNewContext(`${switchTab}\nthis.switchTab = switchTab;`, context);
   context.switchTab('perf');

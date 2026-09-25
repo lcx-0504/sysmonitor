@@ -21,11 +21,17 @@
   var connectionBannerText = document.getElementById('connection-banner-text');
   var connectionRetryButton = document.getElementById('connection-retry');
   var connectionState = null;
+  var connectionError = null;
   var connectionRetryAfter = null;
   var retryPending = false;
   var retryCountdownTimer = null;
 
+  function hasSamplingFailure() {
+    return connectionState === 'connected' && monitorStatus && (monitorStatus.error || (monitorStatus.failures || []).length > 0);
+  }
+
   function retryButtonState(state, pending, isPaused, retryAfter, now, isZh) {
+    if (state === 'connected' && pending) return { text: isZh ? '采集中' : 'Collecting', disabled: true, remaining: 0 };
     if (state === 'connecting' || pending) return { text: isZh ? '连接中' : 'Connecting', disabled: true, remaining: 0 };
     var remaining = state === 'disconnected' && !isPaused && typeof retryAfter === 'number'
       ? Math.max(0, Math.ceil((retryAfter - now) / 1000)) : 0;
@@ -37,7 +43,7 @@
     var sshDevice = !!currentDeviceId && currentDeviceId.startsWith('ssh:');
     var now = Date.now();
     var buttonState = retryButtonState(connectionState, retryPending, paused, connectionRetryAfter, now, zh);
-    connectionRetryButton.hidden = !sshDevice || connectionState !== 'connecting' && connectionState !== 'disconnected';
+    connectionRetryButton.hidden = !(sshDevice && (connectionState === 'connecting' || connectionState === 'disconnected')) && !hasSamplingFailure();
     connectionRetryButton.disabled = buttonState.disabled;
     connectionRetryButton.textContent = buttonState.text;
     if (buttonState.remaining) {
@@ -47,10 +53,13 @@
     }
   }
   connectionRetryButton.addEventListener('click', function() {
-    if (retryPending || connectionState !== 'disconnected' || !currentDeviceId || !currentDeviceId.startsWith('ssh:')) return;
+    if (retryPending) return;
+    var reconnect = connectionState === 'disconnected' && currentDeviceId && currentDeviceId.startsWith('ssh:');
+    if (!reconnect && !hasSamplingFailure()) return;
     retryPending = true;
     refreshConnectionRetryButton();
-    sendToExtension({ cmd: 'retryConnection', deviceId: currentDeviceId });
+    if (reconnect) sendToExtension({ cmd: 'retryConnection', deviceId: currentDeviceId });
+    else sendToExtension({ cmd: 'retrySampling', deviceId: currentDeviceId || 'local' });
   });
 
   function storeNavigation() {
@@ -245,6 +254,7 @@
     if (deviceChanged) {
       currentDeviceId = nextDeviceId;
       connectionState = null;
+      connectionError = null;
       connectionRetryAfter = null;
       retryPending = false;
       setSparkActivity(paused, nextDeviceId === 'local');
@@ -268,17 +278,27 @@
   function showConnection(connection) {
     var state = connection && connection.state;
     connectionState = state;
+    connectionError = connection && connection.error;
     connectionRetryAfter = connection && typeof connection.retryAfter === 'number' ? connection.retryAfter : null;
-    setSparkActivity(paused, state === 'connected' || currentDeviceId === 'local');
-    var text = state === 'connecting' ? (zh ? '正在连接服务器…' : 'Connecting to server…') : state === 'disconnected' ? (connection.error || (zh ? '连接已断开，正在重试。' : 'Disconnected; retrying.')) : '';
+    setSparkActivity(paused, state === 'connected' && connection.ready !== false);
+    refreshConnectionBanner();
+  }
+
+  function refreshConnectionBanner() {
+    var labels = zh ? { cpu: 'CPU', memory: '内存', network: '网络', diskIo: '磁盘读写', diskTopology: '磁盘', accelerators: 'GPU', processes: '进程', sshTraffic: 'SSH' } : { cpu: 'CPU', memory: 'Memory', network: 'Network', diskIo: 'Disk I/O', diskTopology: 'Disks', accelerators: 'GPU', processes: 'Processes', sshTraffic: 'SSH' };
+    var samplingError = monitorStatus && (monitorStatus.error || (monitorStatus.failures || []).map(function(failure) {
+      return (labels[failure.key] || failure.key) + ': ' + failure.message;
+    }).join(' · '));
+    var text = connectionState === 'connecting' ? (zh ? '正在连接服务器…' : 'Connecting to server…')
+      : connectionState === 'disconnected' ? (connectionError || (zh ? '连接已断开，正在重试。' : 'Disconnected; retrying.'))
+      : samplingError || '';
     connectionBannerText.textContent = text;
     connectionBannerText.title = text;
     refreshConnectionRetryButton();
-    connectionBanner.classList.toggle('show', !!text && navigation.page !== 'servers');
+    connectionBanner.classList.toggle('show', !!text && !serverPage.classList.contains('active'));
   }
 
   function restoreHistory(samples) {
-    if (!localMode) return;
     cpuHist = []; ramHist = []; netTxHist = []; netRxHist = [];
     sshTxHist = []; sshRxHist = []; diskRHist = []; diskWHist = []; gpuHist = {};
     (samples || []).forEach(function(point) {
@@ -304,27 +324,24 @@
 
   window.addEventListener('message', function(event) {
     var data = event.data;
+    if (data && data.cmd === 'retryConnectionResult' && (localMode ? data.deviceId === currentDeviceId : data.deviceId === 'local')) {
+      retryPending = false;
+      if (data.error && connectionState === 'disconnected') connectionError = data.error;
+      refreshConnectionBanner();
+      return;
+    }
     if (!localMode || !data) return;
     if (data.cmd === 'navigation') showNavigation(data.state);
     else if (data.cmd === 'localIntroDismissed') { localIntroDismissed = true; updateLocalIntro(); }
     else if (data.cmd === 'deviceState') {
       showNavigation(data.state);
+      if (data.status) showMonitorStatus(data.status);
       restoreHistory(data.samples);
       if (data.viewModel) renderMonitorSnapshot(data.viewModel, true, data.sampleTime, true);
       showConnection(data.connection);
     }
     else if (data.cmd === 'servers') { serverRows = data.hosts || []; serverError = data.error || ''; renderServers(); }
     else if (data.cmd === 'remoteFolders' && remoteMenuHost === data.host) showRemoteMenu(data.folders || []);
-    else if (data.cmd === 'history') restoreHistory(data.samples);
-    else if (data.cmd === 'connection' && data.deviceId === currentDeviceId) showConnection(data);
-    else if (data.cmd === 'retryConnectionResult' && data.deviceId === currentDeviceId) {
-      retryPending = false;
-      if (data.error && connectionState === 'disconnected') {
-        connectionBannerText.textContent = data.error;
-        connectionBannerText.title = data.error;
-      }
-      refreshConnectionRetryButton();
-    }
     else if (data.cmd === 'config' && data.serversCfg) { serversCfg = data.serversCfg; renderServers(); }
     else if (data.cmd === 'sshDefaultExtensions') {
       sshDefaultInstalled = data.installed === true;

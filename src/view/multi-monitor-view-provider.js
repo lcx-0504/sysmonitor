@@ -29,19 +29,6 @@ function normalizeEditorNavigation(raw, localLinux) {
   return { ...state, tabs: [state.selected], page: state.page === 'proc' ? 'proc' : 'perf' };
 }
 
-function connectionPayload(device) {
-  if (!device) return null;
-  const retryAfter = device.transport && device.transport.retryAfter;
-  return { state: device.state, error: device.error, retryAfter: Number.isFinite(retryAfter) ? retryAfter : null };
-}
-
-function displaySampleTime(device, paused) {
-  if (!device) return null;
-  if (paused && typeof device.modelAt === 'number') return device.modelAt;
-  const latestPoint = device.history[device.history.length - 1];
-  return latestPoint ? latestPoint.t : null;
-}
-
 class MultiMonitorViewProvider {
   constructor({ vscode, manager, configStore, workspaceState, uiStateStore = null, localLinux, loadHosts, scheduleErrorClear, cancelErrorClear, onLocalUpdate = () => {}, logger = () => {} }) {
     this.vscode = vscode;
@@ -54,7 +41,6 @@ class MultiMonitorViewProvider {
     this.logger = logger;
     this.sidebar = null;
     this.editors = new Map();
-    this.retryingDevices = new Map();
     this.lastFocusedEditor = null;
     this.editorSshContext = null;
     this.actionVisibility = null;
@@ -115,6 +101,7 @@ class MultiMonitorViewProvider {
     return getWebviewHtml({
       initConfig: {
         localMode: true, localLinux: this.localLinux,
+        monitorStatus: device ? device.viewState() : null,
         surface: sidebar ? 'sidebar' : 'editor',
         showLocalIntro: sidebar && !(this.uiStateStore && this.uiStateStore.get('sysmonitor.localIntroDismissed', false)),
         sshDefaultInstalled: this.isSshDefaultExtension(),
@@ -281,40 +268,24 @@ class MultiMonitorViewProvider {
     source.switching = true;
     this.refreshReferences();
     const device = this.manager.get(source.state.selected);
-    const sampleTime = displaySampleTime(device, this.manager.paused);
     source.target.webview.postMessage({
+      ...(device ? device.snapshotMessage(true) : { viewModel: null, samples: [], connection: null, status: { ready: false, hasSnapshot: false } }),
       cmd: 'deviceState', state: source.state, deviceId: source.state.selected,
-      samples: device ? device.history : [],
-      viewModel: device ? device.model : null,
-      sampleTime,
-      connection: connectionPayload(device),
     });
-    source.lastSnapshotAt = sampleTime;
     source.switching = false;
   }
 
   sendCurrent(source) {
     if (!source.ready || !source.state.selected) return;
     const device = this.manager.get(source.state.selected);
-    if (!device) return;
-    const sampleTime = displaySampleTime(device, this.manager.paused);
-    source.target.webview.postMessage({ cmd: 'history', samples: device.history });
-    if (device.model) source.target.webview.postMessage({ cmd: 'snapshot', deviceId: device.id, viewModel: device.model, sampleTime, instant: true, skipHistory: true });
-    source.lastSnapshotAt = sampleTime;
-    source.target.webview.postMessage({ cmd: 'connection', deviceId: device.id, ...connectionPayload(device) });
+    if (device) source.target.webview.postMessage(device.snapshotMessage(true));
   }
 
   onDeviceUpdate(id, device) {
     if (id === 'local' && device.model) this.onLocalUpdate(device.model);
     for (const source of this.sources()) {
-      if (!source.ready) continue;
-      if (!source.switching && source.state.selected === id) {
-        const sampleTime = displaySampleTime(device, this.manager.paused);
-        if (device.model && sampleTime !== source.lastSnapshotAt) {
-          source.target.webview.postMessage({ cmd: 'snapshot', deviceId: id, viewModel: device.model, sampleTime, skipHistory: this.manager.paused });
-          source.lastSnapshotAt = sampleTime;
-        }
-        source.target.webview.postMessage({ cmd: 'connection', deviceId: id, ...connectionPayload(device) });
+      if (source.ready && !source.switching && source.state.selected === id) {
+        source.target.webview.postMessage(device.snapshotMessage());
       }
     }
     this.serverDirectory.onDeviceUpdate(id, device);
@@ -378,44 +349,15 @@ class MultiMonitorViewProvider {
   }
 
   async retryConnection(source, id) {
-    if (!source || !source.ready || source.state.page === 'servers' || source.state.selected !== id || !id.startsWith('ssh:')) return;
+    if (!source || !source.ready || source.state.page === 'servers' || source.state.selected !== id) return;
     const device = this.manager.get(id);
-    if (!device || !device.transport) {
-      if (source.ready && this.sources().includes(source)) source.target.webview.postMessage({ cmd: 'retryConnectionResult', deviceId: id });
-      return;
+    let errorMessage = null;
+    if (device) {
+      try { await device.retry(); }
+      catch (error) { errorMessage = error.message; this.logger('Monitor retry ' + id + ': ' + error.message); }
     }
-    let task = this.retryingDevices.get(id);
-    if (!task) {
-      if (device.state !== 'disconnected') {
-        if (source.ready && this.sources().includes(source)) source.target.webview.postMessage({ cmd: 'retryConnectionResult', deviceId: id });
-        return;
-      }
-      task = this.retryDevice(id, device);
-      this.retryingDevices.set(id, task);
-    }
-    const errorMessage = await task;
-    if (this.retryingDevices.get(id) === task) this.retryingDevices.delete(id);
-    if (source.ready && this.sources().includes(source)) source.target.webview.postMessage({ cmd: 'retryConnectionResult', deviceId: id, ...(errorMessage ? { error: errorMessage } : {}) });
-  }
-
-  async retryDevice(id, device) {
-    const pausedAtStart = this.manager.paused;
-    const sampleAfter = Date.now();
-    try {
-      await device.transport.retryNow();
-      if (pausedAtStart && this.manager.paused && this.manager.get(id) === device) {
-        device.service.resume({ force: true });
-        try {
-          await this.serverDirectory.waitForInitialSample(id.slice(4), sampleAfter, { allowPaused: true });
-        } finally {
-          if (this.manager.paused && this.manager.get(id) === device) device.service.pause();
-        }
-      }
-      return null;
-    } catch (error) {
-      const errorMessage = error && error.message ? error.message : String(error);
-      this.logger(`SSH retry ${id}: ${errorMessage}`);
-      return errorMessage;
+    if (source.ready && this.sources().includes(source)) {
+      source.target.webview.postMessage({ cmd: 'retryConnectionResult', deviceId: id, ...(errorMessage ? { error: errorMessage } : {}) });
     }
   }
 
@@ -428,7 +370,7 @@ class MultiMonitorViewProvider {
       if (source.sidebar) source.target.webview.postMessage({ cmd: 'servers', hosts: this.serverRows() });
       source.target.webview.postMessage({ cmd: 'uiState', processDisplay: state.processDisplay, paused: this.manager.paused });
       this.sendCurrent(source);
-    } else if (message.cmd === 'retryConnection' && typeof message.deviceId === 'string') await this.retryConnection(source, message.deviceId);
+    } else if ((message.cmd === 'retryConnection' || message.cmd === 'retrySampling') && typeof message.deviceId === 'string') await this.retryConnection(source, message.deviceId);
     else if (message.cmd === 'refreshServers' && source.sidebar) this.refreshHosts();
     else if (message.cmd === 'listRemoteFolders' && source.sidebar && typeof message.host === 'string' && this.serverDirectory.hasHost(message.host)) {
       const folders = await this.serverDirectory.refreshRemoteFolders(message.host);

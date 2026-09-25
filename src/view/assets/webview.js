@@ -183,6 +183,7 @@
   // ── 消息处理 ──
   window.addEventListener('message', function(evt) {
     var data = evt.data;
+    if (!data) return;
     if (data.cmd === 'navigatePage' && (data.page === 'perf' || data.page === 'proc')) {
       if (typeof localMode !== 'undefined' && !localMode) vscode.setState(Object.assign({}, vscode.getState() || {}, { page: data.page }));
       switchTab(data.page, false);
@@ -220,7 +221,10 @@
     }
     if (data.cmd !== 'snapshot') return;
     if (typeof localMode !== 'undefined' && localMode && data.deviceId && data.deviceId !== currentDeviceId) return;
-    renderMonitorSnapshot(data.viewModel, data.instant === true, data.sampleTime, data.skipHistory === true);
+    if (data.status) showMonitorStatus(data.status);
+    if (data.samples) restoreHistory(data.samples);
+    if (data.viewModel) renderMonitorSnapshot(data.viewModel, data.instant === true, data.sampleTime, data.skipHistory === true);
+    if (data.connection) showConnection(data.connection);
   });
 
   var renderGeneration = 0;
@@ -492,6 +496,7 @@
     if (serversButton) serversButton.classList.toggle('on', name==='servers');
     if (name === 'perf') requestAnimationFrame(function() { lastGpuPayload.forEach(renderGpuUsers); });
     updateResponsiveLayout();
+    showMonitorStatus(monitorStatus);
   }
   document.getElementById('tab-perf-btn').addEventListener('click',function(){switchTab('perf');});
   document.getElementById('tab-proc-btn').addEventListener('click',function(){switchTab('proc');});
@@ -514,6 +519,14 @@
   var serversCfg = __initCfg.serversCfg || { visibleOnly: false, restoreTabs: true };
   var sshDefaultInstalled = __initCfg.sshDefaultInstalled === true;
   var lastGpuPayload = [];
+  var monitorStatus = __initCfg.monitorStatus || null;
+  function showMonitorStatus(status) {
+    if (!status) return;
+    monitorStatus = status;
+    if (!status.hasSnapshot) document.getElementById('gpu-summary').textContent = zh ? '加载中…' : 'Loading…';
+    setSparkActivity(paused, status.ready && status.connected !== false);
+    refreshConnectionBanner();
+  }
   var processDisplay = __initCfg.processDisplay || { cpu: 'core', ram: 'size' };
   var expandedColumns = { name: false, cmd: false };
   var curInterval = __initCfg.interval || 2, gpuCount = typeof __initCfg.gpuCount === 'number' ? __initCfg.gpuCount : 0, modalOpen = false;

@@ -6,6 +6,8 @@ const { CollectorRunner } = require('../src/core/collector-runner');
 const { CommandRunner } = require('../src/core/command-runner');
 const { MonitorScheduler } = require('../src/core/monitor-scheduler');
 const { MonitorService } = require('../src/services/monitor-service');
+const { SshTransport } = require('../src/ssh/ssh-transport');
+const { spawn } = require('node:child_process');
 
 test('SnapshotStore distinguishes successful empty results from failures with stale data', () => {
   const store = new SnapshotStore();
@@ -89,3 +91,31 @@ test('CommandRunner executes without a shell and returns bounded command output'
   const result = await runner.execFile(process.execPath, ['-e', 'process.stdout.write("ok")']);
   assert.equal(result.stdout, 'ok'); runner.dispose();
 });
+
+for (const remote of [false, true]) {
+  test((remote ? 'SSH' : 'direct') + ' commands share the collector deadline across sequential steps', async () => {
+    const executor = remote ? new SshTransport({ host: 'fixture', requireLinux: false,
+      spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+    }) : new CommandRunner();
+    try {
+      if (remote) await executor.connect();
+      await assert.rejects(executor.execFile('sleep', ['0.1'], { timeoutMilliseconds: 10 }), { code: 'ETIMEDOUT' });
+      const store = new SnapshotStore();
+      let finished = false;
+      const runner = new CollectorRunner({ key: 'cpu', snapshotStore: store, cadenceMilliseconds: 2000, timeoutMilliseconds: 200,
+        collector: { async collect() {
+          await executor.execFile('sleep', ['0.13'], { timeoutMilliseconds: 1000 });
+          await executor.execFile('sleep', ['0.13'], { timeoutMilliseconds: 1000 });
+          finished = true;
+          return {};
+        } },
+      });
+      await runner.run();
+      await new Promise(setImmediate);
+      assert.equal(finished, false);
+      assert.equal(store.read().cpu.lastError.code, 'ETIMEDOUT');
+      assert.equal(store.read().cpu.value, null);
+      assert.equal((await executor.execFile('printf', ['usable'])).stdout, 'usable');
+    } finally { executor.dispose(); }
+  });
+}

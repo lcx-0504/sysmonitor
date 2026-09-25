@@ -8,23 +8,55 @@ const test = require('node:test');
 const { normalizeConfig } = require('../src/config/normalize-config');
 const { WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-html');
 const { MonitorViewProvider } = require('../src/view/monitor-view-provider');
-const { moveMonitorPanelToNewWindow } = require('../src/view/editor-panel');
+const { moveMonitorPanelToNewWindow, getMonitorEditorTitle } = require('../src/view/editor-panel');
+
+const { createSessionFixture } = require('./session-fixture');
+function createProvider({ service = {}, configStore = {}, ...options }) {
+  if (!configStore.getCurrent) configStore = { ...configStore, getCurrent: () => normalizeConfig({}) };
+  const { session } = createSessionFixture({ service, configStore });
+  return new MonitorViewProvider({ ...options, configStore, session });
+}
 
 const readWebviewScript = () => WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(__dirname, '..', 'src/view/assets', fileName), 'utf8')).join('\n');
 
+test('remote editor title uses the SSH alias even with no open workspace', async () => {
+  const vscode = {
+    env: { remoteName: 'ssh-remote' },
+    commands: { async executeCommand(command) {
+      assert.equal(command, 'remote-internal.getActiveSshRemote');
+      return { hostName: 'lichenxi_campus' };
+    } },
+  };
+  assert.equal(await getMonitorEditorTitle(vscode), 'lichenxi_campus');
+});
+
+test('remote editor title falls back to plain and encoded remote workspace authorities', async () => {
+  for (const authority of ['user@campus', Buffer.from(JSON.stringify({ hostName: 'campus', user: 'user' })).toString('hex')]) {
+    const title = await getMonitorEditorTitle({
+      env: { remoteName: 'ssh-remote' },
+      commands: { async executeCommand() { throw new Error('unavailable'); } },
+      workspace: { workspaceFolders: [{ uri: { scheme: 'vscode-remote', authority: 'ssh-remote+' + authority } }] },
+    });
+    assert.equal(title, 'campus');
+  }
+  assert.equal(await getMonitorEditorTitle({}), os.hostname());
+});
+
 test('performance and process rows are sent as one snapshot', () => {
   const messages = [];
-  const provider = new MonitorViewProvider({
+  const provider = createProvider({
     vscode: {},
-    monitorService: {},
+    service: {},
     configStore: {},
   });
   provider.view = { webview: { postMessage: async (message) => { messages.push(message); return true; } } };
   provider.isReady = true;
   const processes = [{ pid: 42 }];
-  provider.renderViewModel({ performance: { cpu: { usagePercent: 12 } }, processes });
+  provider.session.model = { performance: { cpu: { usagePercent: 12 } }, processes };
+  provider.renderSession();
   assert.equal(messages.length, 1);
-  assert.deepEqual(messages[0], { cmd: 'snapshot', viewModel: { performance: { cpu: { usagePercent: 12 } }, processes } });
+  assert.equal(messages[0].cmd, 'snapshot');
+  assert.deepEqual(messages[0].viewModel, { performance: { cpu: { usagePercent: 12 } }, processes });
   const script = readWebviewScript();
   assert.match(script, /data\.cmd !== 'snapshot'/);
   assert.doesNotMatch(script, /cmd:'needProcs'|data\.cmd === 'procs'|data\.cmd !== 'update'/);
@@ -34,10 +66,10 @@ test('performance and process rows are sent as one snapshot', () => {
 
 test('Webview waits for its ready handshake before receiving the latest snapshot', () => {
   const messages = [];
-  const provider = new MonitorViewProvider({ vscode: {}, monitorService: {}, configStore: {} });
+  const provider = createProvider({ vscode: {}, service: {}, configStore: {} });
   provider.view = { webview: { postMessage: async (message) => { messages.push(message); return true; } } };
-  provider.lastViewModel = { performance: { cpu: { usagePercent: 5 } }, processes: [] };
-  provider.renderViewModel(provider.lastViewModel);
+  provider.session.model = { performance: { cpu: { usagePercent: 5 } }, processes: [] };
+  provider.renderSession();
   assert.equal(messages.length, 0);
   provider.handleMessage({ version: 1, cmd: 'ready' });
   assert.equal(messages.some((message) => message.cmd === 'snapshot'), true);
@@ -45,13 +77,13 @@ test('Webview waits for its ready handshake before receiving the latest snapshot
 
 test('editor panel preserves the original icon shape with light and dark variants', async () => {
   const panel = { webview: { onDidReceiveMessage() {} }, onDidDispose() {} };
-  const provider = new MonitorViewProvider({
+  const provider = createProvider({
     vscode: {
       ViewColumn: { Active: 1 },
       Uri: { file: (file) => file },
       window: { createWebviewPanel: () => panel },
     },
-    monitorService: {},
+    service: {},
     configStore: {},
   });
   provider.buildHtml = async () => '<html></html>';
@@ -79,7 +111,7 @@ test('remote Editor actions move the active panel or return to its sidebar', asy
     } },
     commands: { async executeCommand(command) { commands.push(command); } },
   };
-  const provider = new MonitorViewProvider({ vscode, monitorService: {}, configStore: {} });
+  const provider = createProvider({ vscode, service: {}, configStore: {} });
   provider.buildHtml = async () => '<html></html>';
   provider.view = { show() { commands.push('show-sidebar'); }, webview: { postMessage(message) { commands.push(message); } } };
   provider.isReady = true;
@@ -100,9 +132,9 @@ test('remote Editor actions move the active panel or return to its sidebar', asy
 test('remote Linux settings expose window action switches and update native title contexts', async () => {
   const contexts = [];
   let current = normalizeConfig({});
-  const provider = new MonitorViewProvider({
+  const provider = createProvider({
     vscode: { commands: { executeCommand: (...args) => contexts.push(args) } },
-    monitorService: { scheduler: { isPaused: false }, readSnapshot: () => ({ accelerators: { value: null } }), updateConfig() {} },
+    service: { scheduler: { isPaused: false }, readSnapshot: () => ({ accelerators: { value: null } }), updateConfig() {} },
     configStore: {
       getCurrent: () => current,
       update(key, value) { current = normalizeConfig({ ...current, [key]: value }); },
@@ -159,7 +191,7 @@ test('a failed Editor move does not block a later move', async () => {
 
 test('returning to an unready remote sidebar preserves the Editor page', () => {
   const messages = [];
-  const provider = new MonitorViewProvider({ vscode: {}, monitorService: { scheduler: { isPaused: false } }, configStore: {} });
+  const provider = createProvider({ vscode: {}, service: { scheduler: { isPaused: false } }, configStore: {} });
   const view = { webview: { postMessage(message) { messages.push(message); } } };
   provider.view = view;
   provider.sidebarPage = 'proc';
@@ -176,17 +208,18 @@ test('remote monitor opens its current page in a native floating window', async 
     reveal: (column) => calls.push(['reveal', column]),
     dispose: () => calls.push(['dispose']),
   };
-  const provider = new MonitorViewProvider({
+  const provider = createProvider({
     vscode: {
       ViewColumn: { Active: 1 }, Uri: { file: (file) => file },
       window: { createWebviewPanel: () => panel },
       commands: { executeCommand: async (command) => calls.push(['command', command]) },
     },
-    monitorService: {}, configStore: {},
+    service: {}, configStore: {},
   });
   provider.view = {};
   provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, provider.view);
   provider.buildHtml = async (page) => `<html>${page}</html>`;
+  calls.length = 0;
   await provider.openFloatingPanel();
   assert.equal(panel.webview.html, '<html>proc</html>');
   assert.deepEqual(calls, [['reveal', undefined], ['command', 'workbench.action.moveEditorToNewWindow'], ['reveal', undefined]]);
@@ -196,7 +229,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   const messages = [];
   const panels = [];
   const side = { webview: { postMessage: (message) => messages.push(['side', message]) } };
-  const provider = new MonitorViewProvider({
+  const provider = createProvider({
     vscode: {
       ViewColumn: { Active: 1 },
       Uri: { file: (file) => file },
@@ -214,7 +247,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
         },
       },
     },
-    monitorService: {
+    service: {
       scheduler: { isPaused: false },
       readSnapshot: () => ({ accelerators: { value: null } }),
       pause() { this.scheduler.isPaused = true; },
@@ -225,7 +258,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   provider.buildHtml = async () => '<html></html>';
   provider.view = side;
   provider.isReady = true;
-  provider.lastViewModel = { performance: { cpu: { usagePercent: 5 } }, processes: [{ pid: 42 }] };
+  provider.session.model = { performance: { cpu: { usagePercent: 5 } }, processes: [{ pid: 42 }] };
 
   await provider.openEditorPanel();
   await provider.openEditorPanel();
@@ -240,7 +273,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   }
 
   messages.length = 0;
-  provider.renderViewModel(provider.lastViewModel);
+  provider.renderSession();
   for (const target of [side, ...panels]) {
     const name = target === side ? 'side' : target;
     assert.deepEqual(messages.filter(([recipient]) => recipient === name).map(([, message]) => message.cmd), ['snapshot']);
@@ -261,7 +294,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   messages.length = 0;
   panels[0].dispose();
   assert.equal(provider.editorPanels.size, 1);
-  provider.renderViewModel(provider.lastViewModel);
+  provider.renderSession();
   assert.equal(messages.some(([recipient]) => recipient === panels[0]), false);
   assert.equal(messages.some(([recipient, message]) => recipient === panels[1] && message.cmd === 'snapshot'), true);
 });
@@ -269,8 +302,8 @@ test('multiple editor panels share snapshots and controls without sharing their 
 test('process display preferences are shared across sidebar and editor clients', async () => {
   const updates = [];
   const messages = [];
-  const provider = new MonitorViewProvider({
-    vscode: {}, monitorService: {}, configStore: {},
+  const provider = createProvider({
+    vscode: {}, service: {}, configStore: {},
     uiStateStore: { get: () => ({}), update: async (key, value) => { updates.push([key, value]); } },
   });
   provider.view = { webview: { postMessage: (message) => messages.push(['side', message]) } };
@@ -282,4 +315,17 @@ test('process display preferences are shared across sidebar and editor clients',
   assert.deepEqual(provider.getUiState(), { cpu: 'both', ram: 'percent' });
   assert.equal(updates.length, 2);
   assert.equal(messages.filter(([, message]) => message.cmd === 'uiState').length, 4);
+});
+
+test('a new remote view remains paused while a one-shot retry is collecting', async () => {
+  const provider = createProvider({ vscode: {} });
+  provider.session.paused = true;
+  provider.session.service.scheduler.isPaused = false;
+  const html = await provider.buildHtml();
+  const config = JSON.parse(Buffer.from(html.match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
+  assert.equal(config.paused, true);
+  const messages = [];
+  provider.view = { webview: { postMessage: (message) => messages.push(message) } };
+  provider.handleMessage({ version: 1, cmd: 'ready' }, provider.view);
+  assert.equal(messages.find((message) => message.cmd === 'uiState').paused, true);
 });

@@ -10,7 +10,9 @@ const createPartition = () => Object.freeze({
   status: 'loading',
   attemptedAt: null,
   collectedAt: null,
+  collectedSequence: 0,
   failureCount: 0,
+  failureSequence: 0,
   lastError: null,
 });
 
@@ -32,7 +34,9 @@ class SnapshotStore {
       status: 'fresh',
       attemptedAt: this.snapshot[key].attemptedAt,
       collectedAt,
+      collectedSequence: this.sequence + 1,
       failureCount: 0,
+      failureSequence: 0,
       lastError: null,
     }));
   }
@@ -45,6 +49,7 @@ class SnapshotStore {
       status: isUnavailable && !hasValue ? 'unavailable' : hasValue ? 'stale' : 'loading',
       attemptedAt,
       failureCount: previous.failureCount + 1,
+      failureSequence: this.sequence + 1,
       lastError: error ? { code: error.code || null, message: error.message || String(error) } : null,
     }));
   }

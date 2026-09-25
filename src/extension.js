@@ -1,7 +1,7 @@
 // extension.js
 const vscode = require('vscode');
 const { ConfigStore } = require('./config/config-store');
-const { MonitorService } = require('./services/monitor-service');
+const { MonitorSession } = require('./services/monitor-session');
 const { MonitorViewProvider } = require('./view/monitor-view-provider');
 const { MultiMonitorViewProvider } = require('./view/multi-monitor-view-provider');
 const { DeviceMonitorManager } = require('./services/device-monitor-manager');
@@ -130,29 +130,29 @@ function activate(context) {
   vscode.commands.executeCommand('setContext', 'sysmonitor.editorSshActive', false);
 
   let provider = null;
-  const monitorService = new MonitorService({
-    runtimeConfig: getConfig(),
-    isSsh: isSSH,
-    sshClientIp,
+  const session = new MonitorSession({
+    configStore,
+    language: vscode.env.language,
+    serviceOptions: { isSsh: isSSH, sshClientIp },
     onLog: logDebug,
-    onTick: (snapshot) => {
-      if (provider) {
-        const viewModel = provider.renderSnapshot(snapshot);
-        currentStatusBarViewModel = viewModel.performance;
-        currentUserNativeIndices = viewModel.currentUserNativeIndices;
+    onUpdate: (current) => {
+      if (provider) provider.renderSession();
+      if (current.model) {
+        currentStatusBarViewModel = current.model.performance;
+        currentUserNativeIndices = current.model.currentUserNativeIndices;
       }
       updateBar();
     },
   });
   provider = new MonitorViewProvider({
     vscode,
-    monitorService,
+    session,
     configStore,
     uiStateStore: context.globalState,
     logger: logDebug,
     onConfigUpdated: () => updateBar(),
   });
-  context.subscriptions.push({ dispose: () => monitorService.dispose() });
+  context.subscriptions.push({ dispose: () => session.dispose() });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('sysmonitor.panel', provider, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -169,7 +169,7 @@ function activate(context) {
         provider.updateActionVisibility();
         provider.pushConfig();
       }
-      monitorService.updateConfig(getConfig());
+      session.updateConfig();
       statusBarController.recreate();
       updateBar();
     }
@@ -196,7 +196,7 @@ function activate(context) {
       return provider.attachEditorPanel(panel, state);
     },
   }));
-  monitorService.start();
+  session.start();
 }
 
 function deactivate() { }

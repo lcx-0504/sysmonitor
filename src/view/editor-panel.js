@@ -1,7 +1,29 @@
 'use strict';
 
 const path = require('node:path');
+const os = require('node:os');
 let moveQueue = Promise.resolve();
+
+async function getMonitorEditorTitle(vscode) {
+  if (vscode.env && vscode.env.remoteName === 'ssh-remote' && vscode.commands) {
+    try {
+      const host = await vscode.commands.executeCommand('remote-internal.getActiveSshRemote');
+      if (host && typeof host.hostName === 'string' && host.hostName) return host.hostName;
+    } catch (_) { /* Remote-SSH may not expose its connection details. */ }
+  }
+  const workspace = vscode.workspace || {};
+  const uris = [...(workspace.workspaceFolders || []).map((folder) => folder.uri), workspace.workspaceFile];
+  for (const uri of uris) {
+    if (!uri || uri.scheme !== 'vscode-remote' || !uri.authority.startsWith('ssh-remote+')) continue;
+    const authority = uri.authority.slice('ssh-remote+'.length);
+    try {
+      const host = JSON.parse(Buffer.from(authority, 'hex').toString('utf8'));
+      if (host && typeof host.hostName === 'string' && host.hostName) return host.hostName;
+    } catch (_) { /* Plain aliases are also valid remote authorities. */ }
+    if (authority) return authority.slice(authority.lastIndexOf('@') + 1);
+  }
+  return os.hostname();
+}
 
 function setMonitorPanelIcon(vscode, panel) {
   panel.iconPath = {
@@ -30,4 +52,4 @@ function moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError = true } = 
   return operation;
 }
 
-module.exports = { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow };
+module.exports = { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow, getMonitorEditorTitle };

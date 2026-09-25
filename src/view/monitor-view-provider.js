@@ -1,17 +1,15 @@
 'use strict';
 const crypto = require('node:crypto');
-const os = require('node:os');
-const { buildMonitorViewModel } = require('../services/monitor-view-model');
 const { getWebviewHtml } = require('./webview-html');
-const { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow } = require('./editor-panel');
+const { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow, getMonitorEditorTitle } = require('./editor-panel');
 const { setActionVisibilityContexts } = require('./action-visibility');
 const { CONFIGURATION_KEYS } = require('../config/config-store');
 
 const CONFIG_KEYS = new Set(CONFIGURATION_KEYS);
 
 class MonitorViewProvider {
-  constructor({ vscode, monitorService, configStore, uiStateStore = null, onConfigUpdated = () => {}, logger = () => {} }) {
-    this.vscode = vscode; this.monitorService = monitorService; this.configStore = configStore; this.onConfigUpdated = onConfigUpdated; this.logger = logger;
+  constructor({ vscode, session, configStore, uiStateStore = null, onConfigUpdated = () => {}, logger = () => {} }) {
+    this.vscode = vscode; this.session = session; this.monitorService = session.service; this.configStore = configStore; this.onConfigUpdated = onConfigUpdated; this.logger = logger;
     this.uiStateStore = uiStateStore;
     this.processDisplayState = null;
     this.view = null;
@@ -19,7 +17,6 @@ class MonitorViewProvider {
     this.editorPanels = new Map();
     this.editorPages = new Map();
     this.lastFocusedEditor = null;
-    this.lastViewModel = null;
     this.sidebarPage = 'perf';
     this.pendingSidebarPage = null;
     this.actionVisibility = null;
@@ -43,7 +40,7 @@ class MonitorViewProvider {
     const config = this.configStore.getCurrent();
     const acceleratorValue = this.monitorService.readSnapshot().accelerators.value;
     return getWebviewHtml({
-      initConfig: { surface, interval: config.refreshInterval, barCfg: config.statusBar, diskCfg: config.disk, displayCfg: config.display, serversCfg: config.servers, gpuCount: acceleratorValue ? acceleratorValue.devices.length : null, processDisplay: this.getUiState(), paused: this.monitorService.scheduler.isPaused, page: initialPage },
+      initConfig: { surface, language: this.vscode.env && this.vscode.env.language, monitorStatus: this.session.viewState(), interval: config.refreshInterval, barCfg: config.statusBar, diskCfg: config.disk, displayCfg: config.display, serversCfg: config.servers, gpuCount: acceleratorValue ? acceleratorValue.devices.length : null, processDisplay: this.getUiState(), paused: this.session.isPaused(), page: initialPage },
       nonce: crypto.randomBytes(16).toString('base64'),
     });
   }
@@ -59,9 +56,14 @@ class MonitorViewProvider {
   }
 
   async openEditorPanel(page = this.sidebarPage) {
-    const panel = createMonitorEditorPanel(this.vscode, os.hostname());
+    const panel = createMonitorEditorPanel(this.vscode, await this.getEditorTitle());
     await this.attachEditorPanel(panel, { page });
     return panel;
+  }
+
+  getEditorTitle() {
+    if (!this.editorTitlePromise) this.editorTitlePromise = getMonitorEditorTitle(this.vscode);
+    return this.editorTitlePromise;
   }
 
   activeEditorPanel() {
@@ -100,7 +102,6 @@ class MonitorViewProvider {
   }
 
   async attachEditorPanel(panel, state = {}) {
-    panel.title = os.hostname();
     setMonitorPanelIcon(this.vscode, panel);
     panel.webview.options = { enableScripts: true };
     this.editorPanels.set(panel, false);
@@ -113,8 +114,10 @@ class MonitorViewProvider {
       if (this.lastFocusedEditor === panel) this.lastFocusedEditor = null;
     });
     if (panel.onDidChangeViewState) panel.onDidChangeViewState(() => { if (panel.active) this.lastFocusedEditor = panel; });
-    const html = await this.buildHtml(state && state.page === 'proc' ? 'proc' : 'perf', 'editor');
-    if (this.editorPanels.has(panel)) panel.webview.html = html;
+    const [html, title] = await Promise.all([
+      this.buildHtml(state && state.page === 'proc' ? 'proc' : 'perf', 'editor'), this.getEditorTitle(),
+    ]);
+    if (this.editorPanels.has(panel)) { panel.title = title; panel.webview.html = html; }
   }
 
   handleMessage(message, source = this.view) {
@@ -126,8 +129,8 @@ class MonitorViewProvider {
         if (['perf', 'proc'].includes(message.page)) this.editorPages.set(source, message.page);
       }
       else return;
-      if (this.lastViewModel && source) this.sendViewModel(source, this.lastViewModel);
-      if (source) source.webview.postMessage({ cmd: 'uiState', processDisplay: this.getUiState(), paused: this.monitorService.scheduler ? this.monitorService.scheduler.isPaused : false });
+      if (source) this.sendSessionState(source, true);
+      if (source) source.webview.postMessage({ cmd: 'uiState', processDisplay: this.getUiState(), paused: this.session.isPaused() });
       if (source === this.view) {
         if (this.pendingSidebarPage) {
           this.sidebarPage = this.pendingSidebarPage;
@@ -142,7 +145,7 @@ class MonitorViewProvider {
     }
     else if (message.cmd === 'setConfig' && CONFIG_KEYS.has(message.key)) {
       this.configStore.update(message.key, message.value);
-      this.monitorService.updateConfig(this.configStore.getCurrent());
+      this.session.updateConfig();
       if (message.key === 'servers') this.updateActionVisibility();
       this.onConfigUpdated(message.key);
       this.pushConfig(source);
@@ -156,23 +159,19 @@ class MonitorViewProvider {
       this.broadcast({ cmd: 'uiState', processDisplay: state });
     }
     else if (message.cmd === 'openLink' && typeof message.url === 'string' && /^https:\/\//.test(message.url)) this.vscode.env.openExternal(this.vscode.Uri.parse(message.url));
-    else if (message.cmd === 'pause' && typeof message.value === 'boolean') { message.value ? this.monitorService.pause() : this.monitorService.resume(); this.broadcast({ cmd: 'uiState', paused: message.value }); }
+    else if (message.cmd === 'pause' && typeof message.value === 'boolean') { this.session.setPaused(message.value); this.broadcast({ cmd: 'uiState', paused: message.value }); }
+    else if (message.cmd === 'retrySampling') this.session.retry().catch((error) => this.logger(error.message)).finally(() => {
+      if (source && (source === this.view || this.editorPanels.has(source))) source.webview.postMessage({ cmd: 'retryConnectionResult', deviceId: 'local' });
+    });
     else this.logger(`ignored invalid webview message: ${message.cmd}`);
   }
 
-  renderSnapshot(snapshot) {
-    const viewModel = buildMonitorViewModel(snapshot, this.vscode.env.language, this.configStore.getCurrent().disk);
-    this.lastViewModel = viewModel;
-    this.renderViewModel(viewModel);
-    return viewModel;
+  renderSession() {
+    this.forEachReadyView((target) => this.sendSessionState(target));
   }
 
-  renderViewModel(viewModel) {
-    this.forEachReadyView((target) => this.sendViewModel(target, viewModel));
-  }
-
-  sendViewModel(target, viewModel) {
-    target.webview.postMessage({ cmd: 'snapshot', viewModel });
+  sendSessionState(target, hydrate = false) {
+    target.webview.postMessage(this.session.snapshotMessage(hydrate));
   }
 
   broadcast(message) {

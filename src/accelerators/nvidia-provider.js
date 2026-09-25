@@ -1,5 +1,6 @@
 'use strict';
 const fs = require('node:fs/promises');
+const { executionOptions } = require('../core/collection-context');
 
 const CARD_QUERY = ['--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,gpu_uuid', '--format=csv,noheader,nounits'];
 const PROCESS_QUERY = ['--query-compute-apps=pid,gpu_uuid,used_memory', '--format=csv,noheader,nounits'];
@@ -35,7 +36,11 @@ function parseNvidiaProcesses(raw, devicesById) {
 class NvidiaProvider {
   constructor({ commandRunner, fileReader = fs, userId = typeof process.getuid === 'function' ? process.getuid() : null, systemInfo = null }) { this.commandRunner = commandRunner; this.fileReader = fileReader; this.userId = userId; this.systemInfo = systemInfo; this.id = 'nvidia'; this.clockTicksPerSecondPromise = null; }
   async readProcessKeys(pids) {
-    if (!this.clockTicksPerSecondPromise) this.clockTicksPerSecondPromise = this.commandRunner.execFile('getconf', ['CLK_TCK'], { timeoutMilliseconds: 1000 }).then(({ stdout }) => Number.parseInt(stdout, 10) || 100).catch(() => 100);
+    if (!this.clockTicksPerSecondPromise) this.clockTicksPerSecondPromise = this.commandRunner.execFile('getconf', ['CLK_TCK'], { timeoutMilliseconds: 1000 }).then(({ stdout }) => Number.parseInt(stdout, 10) || 100).catch(() => {
+      this.clockTicksPerSecondPromise = null;
+      executionOptions();
+      return 100;
+    });
     const [clockTicksPerSecond, procStat] = await Promise.all([this.clockTicksPerSecondPromise, this.fileReader.readFile('/proc/stat', 'utf8')]);
     const bootTimeMatch = procStat.match(/^btime\s+(\d+)/m); if (!bootTimeMatch) return new Map();
     const bootTimeSeconds = Number(bootTimeMatch[1]); const keys = new Map();
@@ -46,7 +51,7 @@ class NvidiaProvider {
         // ps lstart has one-second precision; use the same precision on both sides
         // when matching a GPU process to the process table.
         if (Number.isFinite(startTimeTicks)) keys.set(pid, `${pid}:${Math.floor(bootTimeSeconds + startTimeTicks / clockTicksPerSecond) * 1000}`);
-      } catch { /* process exited */ }
+      } catch { executionOptions(); /* process exited */ }
     }));
     return keys;
   }
@@ -67,7 +72,7 @@ class NvidiaProvider {
           const status = await this.fileReader.readFile(`/proc/${pid}/status`, 'utf8');
           const match = status.match(/^Uid:\s+(\d+)/m);
           if (match && Number(match[1]) === userId) for (const usage of usages) if (usage.deviceKey) currentUserDeviceKeys.add(usage.deviceKey);
-        } catch { /* process exited */ }
+        } catch { executionOptions(); /* process exited */ }
       }));
     }
     return { devices, usagesByPid, currentUserDeviceKeys: [...currentUserDeviceKeys] };

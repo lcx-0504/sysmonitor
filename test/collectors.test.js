@@ -11,7 +11,9 @@ const { NetworkCollector } = require('../src/collectors/network-collector');
 const { DiskIoCollector } = require('../src/collectors/disk-io-collector');
 const { ProcessCollector } = require('../src/collectors/process-collector');
 const { DiskTopologyCollector } = require('../src/collectors/disk-topology-collector');
-const { parseDfOutput } = require('../src/domain/disk');
+const { parseDfOutput, parseFindmntOutput } = require('../src/domain/disk');
+const { SnapshotStore } = require('../src/core/snapshot-store');
+const { CollectorRunner } = require('../src/core/collector-runner');
 
 test('network parser selects default-route interfaces and avoids bridge/veth double counting', () => {
   const routes = 'Iface Destination Gateway Flags RefCnt Use Metric Mask\neth0 00000000 01010101 0003 0 0 0 00000000\ndocker0 0000A8C0 00000000 0001 0 0 0 00FFFFFF\n';
@@ -158,4 +160,95 @@ test('process and disk topology collectors use async command adapters', async ()
   assert.deepEqual(await topologyCollector.collect(), [{ mountPath: '/data', fileSystemType: 'ext4', totalBytes: 1000, usedBytes: 500, availableBytes: 400, usagePercent: 56 }]);
   assert.match(args.join(','), /AVAIL/);
   assert.deepEqual(parseDfOutput('Filesystem Type 1024-blocks Used Available Capacity Mounted on\n/dev/sda1 ext4 1000 500 400 56% /data\n', { mountFilter: 'all' }), [{ mountPath: '/data', fileSystemType: 'ext4', totalBytes: 1024000, usedBytes: 512000, availableBytes: 409600, usagePercent: 56 }]);
+});
+
+test('disk fallback keeps local and NFS mounts in the same scope', async () => {
+  const df = 'Filesystem Type 1024-blocks Used Available Capacity Mounted on\n'
+    + '/dev/a ext4 100 40 50 45% /\n/dev/b xfs 200 100 90 53% /data\n'
+    + 'nas:/one nfs 300 100 200 34% /nfs-one\nnas:/two nfs4 400 200 200 50% /nfs-two\n';
+  const calls = [];
+  const collector = new DiskTopologyCollector({ getDiskConfig: () => ({ mountFilter: 'default' }), commandRunner: {
+    async execFile(command, args) {
+      calls.push([command, args]);
+      if (command === 'findmnt') throw Object.assign(new Error('findmnt unavailable'), { code: 'ENOENT' });
+      return { stdout: df };
+    },
+  } });
+  const mounts = await collector.collect();
+  assert.deepEqual(mounts.map((mount) => mount.mountPath), ['/', '/data', '/nfs-one', '/nfs-two']);
+  assert.deepEqual(calls[1], ['df', ['-PTk']]);
+});
+
+test('disk timeout and cancellation do not launch a fallback command', async () => {
+  for (const code of ['ETIMEDOUT', 'ABORT_ERR']) {
+    const commands = [];
+    const collector = new DiskTopologyCollector({ getDiskConfig: () => ({}), commandRunner: {
+      async execFile(command) { commands.push(command); throw Object.assign(new Error('stopped'), { code }); },
+    } });
+    await assert.rejects(collector.collect(), { code });
+    assert.deepEqual(commands, ['findmnt']);
+  }
+});
+
+
+test('mounts without capacity are skipped independently of filesystem names and display modes', () => {
+  const valid = [
+    { target: '/', fstype: 'ext4', size: 1000, used: 400, avail: 500 },
+    { target: '/nfs', fstype: 'nfs', size: 2000, used: 700, avail: 1200 },
+    { target: '/new-storage', fstype: 'unrecognized-storage', size: 3000, used: 1000, avail: 2000 },
+  ];
+  const missing = [
+    ['rpc_pipefs', '/run/rpc_pipefs'],
+    ['fuse.portal', '/run/user/1000/doc'],
+    ['bpf', '/sys/fs/bpf'],
+    ['overlay', '/data/docker-data/overlay2/container/merged'],
+    ['unrecognized-filesystem', '/unmeasurable'],
+  ];
+  for (const diskConfig of [
+    { mountFilter: 'default' }, { mountFilter: 'more' }, { mountFilter: 'all' },
+    { mountFilter: 'custom', showVirtualFs: true },
+  ]) {
+    for (const capacity of [null, 0, '-']) {
+      const filesystems = [...valid, ...missing.map(([fstype, target]) => ({ fstype, target, size: capacity, used: capacity, avail: capacity }))];
+      const expected = ['/', '/nfs', '/new-storage'];
+      assert.deepEqual(parseFindmntOutput(JSON.stringify({ filesystems }), diskConfig).map((mount) => mount.mountPath), expected);
+      const df = 'Filesystem Type 1024-blocks Used Available Capacity Mounted on\n'
+        + filesystems.map((entry) => ['source', entry.fstype, entry.size == null ? '-' : entry.size, entry.used == null ? '-' : entry.used, entry.avail == null ? '-' : entry.avail, '-', entry.target].join(' ')).join('\n');
+      assert.deepEqual(parseDfOutput(df, diskConfig).map((mount) => mount.mountPath), expected);
+    }
+  }
+});
+
+test('invalid individual capacity values neither fail the scan nor become invented zero statistics', async () => {
+  const filesystems = [
+    { target: '/', fstype: 'overlay', size: null, used: null, avail: null },
+    { target: '/missing-used', fstype: 'ext4', size: 1000, used: null, avail: 500 },
+    { target: '/invalid-avail', fstype: 'nfs', size: 1000, used: 400, avail: 'unknown' },
+    { target: '/valid', fstype: 'overlay', size: 1000, used: 400, avail: 500 },
+  ];
+  const commands = [];
+  const collector = new DiskTopologyCollector({ getDiskConfig: () => ({ mountFilter: 'all' }), commandRunner: {
+    async execFile(command) { commands.push(command); return { stdout: JSON.stringify({ filesystems }) }; },
+  } });
+  assert.deepEqual((await collector.collect()).map((mount) => mount.mountPath), ['/valid']);
+  assert.deepEqual(commands, ['findmnt']);
+});
+
+test('a failed disk command or malformed result retains the previous valid snapshot', async () => {
+  const previous = [{ mountPath: '/', fileSystemType: 'ext4', totalBytes: 1000, usedBytes: 400, availableBytes: 500 }];
+  const snapshotStore = new SnapshotStore();
+  snapshotStore.commit('diskTopology', previous);
+  const commands = [];
+  const collector = new DiskTopologyCollector({ getDiskConfig: () => ({ mountFilter: 'all' }), commandRunner: {
+    async execFile(command) {
+      commands.push(command);
+      if (command === 'findmnt') return { stdout: '{"unexpected":true}' };
+      throw new Error('disk command failed');
+    },
+  } });
+  const runner = new CollectorRunner({ key: 'diskTopology', collector, snapshotStore, cadenceMilliseconds: 10000, timeoutMilliseconds: 6000 });
+  await runner.run();
+  assert.deepEqual(commands, ['findmnt', 'df']);
+  assert.equal(snapshotStore.read().diskTopology.status, 'stale');
+  assert.equal(snapshotStore.read().diskTopology.value, previous);
 });

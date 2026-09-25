@@ -2,8 +2,6 @@
 
 const path = require('node:path');
 const { listSshHosts } = require('../ssh/ssh-config');
-const { hasCompletePerformanceSample } = require('../services/monitor-sample');
-const INITIAL_SAMPLE_TIMEOUT_MS = 45000;
 
 class ServerDirectory {
   constructor({ vscode, manager, loadHosts = listSshHosts, scheduleErrorClear = setTimeout, cancelErrorClear = clearTimeout, onChange = () => {}, onActionError = () => {}, logger = () => {} }) {
@@ -22,9 +20,7 @@ class ServerDirectory {
     this.hostErrors = new Map();
     this.hostErrorTimers = new Map();
     this.remoteFolders = new Map();
-    this.initialSampleWaiters = new Map();
-    this.completedInitialSamples = new WeakSet();
-    this.connectionStarts = new WeakMap();
+    this.abortController = new AbortController();
     this.disposed = false;
     this.refreshGeneration = 0;
   }
@@ -59,9 +55,9 @@ class ServerDirectory {
     return this.hosts.map((host) => {
       const device = this.manager.get('ssh:' + host);
       const pending = this.pendingHosts.get(host);
-      const currentError = (this.hostErrors.get(host) || {}).message || (device && device.error) || null;
-      const state = pending || (currentError ? 'disconnected' : device ? device.state : 'idle');
-      const error = state === 'disconnected' ? currentError : null;
+      const currentError = (this.hostErrors.get(host) || {}).message || (device && (device.error || device.loadError)) || null;
+      const state = pending || (currentError ? device && device.state === 'connected' ? 'error' : 'disconnected' : device ? device.state : 'idle');
+      const error = state === 'disconnected' || state === 'error' ? currentError : null;
       const snapshot = device && device.service.readSnapshot();
       const metrics = [];
       if (state === 'connected' && snapshot && device.model) {
@@ -101,57 +97,14 @@ class ServerDirectory {
     await device.transport.connect();
   }
 
-  initialSampleReady(device, since, { allowPausedModel = false } = {}) {
-    if (!device || device.state !== 'connected' || !device.model) return false;
-    const snapshot = device.service.readSnapshot();
-    const latestPoint = device.history[device.history.length - 1];
-    const renderedAt = allowPausedModel && typeof device.modelAt === 'number' ? device.modelAt : latestPoint && latestPoint.t;
-    if (typeof renderedAt !== 'number') return false;
-    return hasCompletePerformanceSample(snapshot, { since: since || 0, through: renderedAt });
-  }
-
   hasCompletedInitialSample(device) {
-    if (!device || device.state !== 'connected') return false;
-    if (this.completedInitialSamples.has(device)) return true;
-    if (!this.initialSampleReady(device, this.connectionStarts.get(device) || 0)) return false;
-    this.completedInitialSamples.add(device);
-    return true;
+    return !!device && device.hasCompletedInitialSample();
   }
 
-  settleInitialSample(id, device) {
-    const waiters = this.initialSampleWaiters.get(id);
-    if (!waiters) return;
-    const error = device && device.state === 'disconnected' ? new Error(device.error || 'SSH disconnected while loading') : null;
-    for (const waiter of waiters) {
-      if (!error && !this.initialSampleReady(device, waiter.since, { allowPausedModel: waiter.allowPaused })) continue;
-      waiters.delete(waiter);
-      clearTimeout(waiter.timer);
-      if (error) waiter.reject(error);
-      else {
-        this.completedInitialSamples.add(device);
-        waiter.resolve();
-      }
-    }
-    if (waiters.size === 0) this.initialSampleWaiters.delete(id);
-  }
-
-  waitForInitialSample(host, since, { allowPaused = false } = {}) {
-    const id = 'ssh:' + host;
-    if (this.initialSampleReady(this.manager.get(id), since, { allowPausedModel: allowPaused })) return Promise.resolve();
-    if (this.manager.paused && !allowPaused) return Promise.reject(new Error('Resume monitoring to load this server'));
-    return new Promise((resolve, reject) => {
-      const waiter = { since, allowPaused, resolve, reject, timer: null };
-      let waiters = this.initialSampleWaiters.get(id);
-      if (!waiters) { waiters = new Set(); this.initialSampleWaiters.set(id, waiters); }
-      waiters.add(waiter);
-      waiter.timer = setTimeout(() => {
-        if (!waiters.has(waiter)) return;
-        waiters.delete(waiter);
-        if (waiters.size === 0) this.initialSampleWaiters.delete(id);
-        reject(new Error('Timed out waiting for CPU, memory, disk and GPU data'));
-      }, INITIAL_SAMPLE_TIMEOUT_MS);
-      this.settleInitialSample(id, this.manager.get(id));
-    });
+  waitForInitialSample(host, since, options = {}) {
+    const device = this.manager.get('ssh:' + host);
+    if (!device) return Promise.reject(new Error('Monitor session closed'));
+    return device.waitForInitialSample({ ...options, since, signal: this.abortController.signal });
   }
 
   async runMonitorAction(host, action) {
@@ -160,7 +113,7 @@ class ServerDirectory {
     const previous = this.manager.get(id);
     const ready = this.hasCompletedInitialSample(previous);
     const needsNewSample = !previous || previous.state !== 'connected' || (!this.manager.paused && previous.service.scheduler && previous.service.scheduler.isPaused);
-    const sampleAfter = !ready ? Math.max(needsNewSample ? Date.now() : 0, previous ? this.connectionStarts.get(previous) || 0 : 0) : 0;
+    const sampleAfter = !ready ? Math.max(needsNewSample ? Date.now() : 0, previous ? previous.requiredSince || 0 : 0) : 0;
     const hadHostError = this.hostErrors.has(host);
     if (!ready) {
       this.pendingHosts.set(host, previous && previous.state === 'connected' ? 'loading' : 'connecting');
@@ -253,11 +206,6 @@ class ServerDirectory {
   }
 
   onDeviceUpdate(id, device) {
-    if (device.state === 'connecting' || device.state === 'disconnected') {
-      this.completedInitialSamples.delete(device);
-      this.connectionStarts.set(device, Date.now());
-    } else if (device.state === 'connected') this.hasCompletedInitialSample(device);
-    this.settleInitialSample(id, device);
     if (device.state === 'connected' && device.host && this.lastStatuses.get(id) !== 'connected:') this.clearHostError(device.host);
     const signature = `${device.state}:${device.error || ''}`;
     if (this.lastStatuses.get(id) !== signature || (device.host && device.state === 'connected')) {
@@ -268,13 +216,7 @@ class ServerDirectory {
 
   dispose() {
     this.disposed = true;
-    for (const waiters of this.initialSampleWaiters.values()) {
-      for (const waiter of waiters) {
-        clearTimeout(waiter.timer);
-        waiter.reject(new Error('Server directory disposed'));
-      }
-    }
-    this.initialSampleWaiters.clear();
+    this.abortController.abort(new Error('Server directory disposed'));
     for (const timer of this.hostErrorTimers.values()) this.cancelErrorClear(timer);
     this.hostErrorTimers.clear();
     this.hostErrors.clear();

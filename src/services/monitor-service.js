@@ -13,31 +13,43 @@ const { CollectorRunner } = require('../core/collector-runner');
 const { CommandRunner } = require('../core/command-runner');
 const { MonitorScheduler } = require('../core/monitor-scheduler');
 const { SnapshotStore } = require('../core/snapshot-store');
+const fs = require('node:fs/promises');
+const { executionOptions } = require('../core/collection-context');
+const { COLLECTION_POLICY } = require('./collection-policy');
 
 class MonitorService {
-  constructor({ runtimeConfig, isSsh, sshClientIp, sshConnectionInfo = null, acceleratorProviders = null, commandRunner = null, fileReader = null, systemInfo = null, onTick = () => {}, onLog = () => {} }) {
+  constructor({ runtimeConfig, isSsh, sshClientIp, sshConnectionInfo = null, acceleratorProviders = null, commandRunner = null, fileReader = null, systemInfo = null, onSnapshot = () => {}, onLog = () => {} }) {
     this.runtimeConfig = runtimeConfig;
-    this.onTick = onTick;
+    this.onSnapshot = onSnapshot;
     this.onLog = onLog;
     this.snapshotStore = new SnapshotStore();
     this.commandRunner = commandRunner || new CommandRunner();
-    const collectorInputs = { ...(fileReader ? { fileReader } : {}), ...(systemInfo ? { systemInfo } : {}) };
-    const fileTimeoutMilliseconds = fileReader ? 5000 : 1000;
-    const processTimeoutMilliseconds = fileReader ? 12000 : 3500;
+    const reader = fileReader || { readFile(file, encoding) {
+      const options = executionOptions();
+      return fs.readFile(file, { encoding, signal: options.signal });
+    } };
+    const collectorInputs = { fileReader: reader, ...(systemInfo ? { systemInfo } : {}) };
     const refreshMilliseconds = runtimeConfig.refreshInterval * 1000;
-    this.scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: refreshMilliseconds, onTick: () => this.onTick(this.snapshotStore.read()) });
+    this.scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: refreshMilliseconds, onTick: () => {} });
     const definitions = [
-      ['cpu', new CpuCollector(collectorInputs), refreshMilliseconds, fileTimeoutMilliseconds],
-      ['memory', new MemoryCollector(collectorInputs), refreshMilliseconds, fileTimeoutMilliseconds],
-      ['network', new NetworkCollector(collectorInputs), refreshMilliseconds, fileTimeoutMilliseconds],
-      ['diskIo', new DiskIoCollector(collectorInputs), refreshMilliseconds, fileTimeoutMilliseconds],
-      ['sshTraffic', new SshTrafficCollector({ commandRunner: this.commandRunner, isSsh, clientIp: sshClientIp, connectionInfo: sshConnectionInfo, timeoutMilliseconds: fileReader ? 8000 : 2000 }), refreshMilliseconds, fileReader ? 10000 : 2500],
-      ['processes', new ProcessCollector({ commandRunner: this.commandRunner, ...collectorInputs, timeoutMilliseconds: fileReader ? 10000 : 3000 }), refreshMilliseconds, processTimeoutMilliseconds],
-      ['accelerators', new AcceleratorCollector({ providers: acceleratorProviders || [new NvidiaProvider({ commandRunner: this.commandRunner, ...collectorInputs })] }), refreshMilliseconds, 32000],
-      ['diskTopology', new DiskTopologyCollector({ commandRunner: this.commandRunner, getDiskConfig: () => this.runtimeConfig.disk }), 10000, 6000],
+      ['cpu', new CpuCollector(collectorInputs)],
+      ['memory', new MemoryCollector(collectorInputs)],
+      ['network', new NetworkCollector(collectorInputs)],
+      ['diskIo', new DiskIoCollector(collectorInputs)],
+      ['sshTraffic', new SshTrafficCollector({ commandRunner: this.commandRunner, isSsh, clientIp: sshClientIp, connectionInfo: sshConnectionInfo, timeoutMilliseconds: COLLECTION_POLICY.sshTraffic.timeoutMilliseconds })],
+      ['processes', new ProcessCollector({ commandRunner: this.commandRunner, ...collectorInputs, timeoutMilliseconds: COLLECTION_POLICY.processes.timeoutMilliseconds })],
+      ['accelerators', new AcceleratorCollector({ providers: acceleratorProviders || [new NvidiaProvider({ commandRunner: this.commandRunner, ...collectorInputs })] })],
+      ['diskTopology', new DiskTopologyCollector({ commandRunner: this.commandRunner, getDiskConfig: () => this.runtimeConfig.disk })],
     ];
-    this.runners = definitions.map(([key, collector, cadenceMilliseconds, timeoutMilliseconds]) => {
-      const runner = new CollectorRunner({ key, collector, snapshotStore: this.snapshotStore, cadenceMilliseconds, timeoutMilliseconds, onStatusChange: (name, status, error) => this.logStatus(name, status, error) });
+    this.runners = definitions.map(([key, collector]) => {
+      const policy = COLLECTION_POLICY[key];
+      const runner = new CollectorRunner({
+        key, collector, snapshotStore: this.snapshotStore,
+        cadenceMilliseconds: policy.cadenceMilliseconds || refreshMilliseconds,
+        timeoutMilliseconds: policy.timeoutMilliseconds,
+        onStatusChange: (name, status, error) => this.logStatus(name, status, error),
+        onSettled: () => { if (!this.scheduler.isPaused) this.onSnapshot(this.snapshotStore.read()); },
+      });
       runner.cadenceSource = key === 'diskTopology' ? 'fixed' : 'refreshInterval';
       this.scheduler.addRunner(runner);
       return runner;
