@@ -66,8 +66,10 @@ function normalizeDisplayConfig(rawValue) {
   const rawDisplay = isObject(rawValue) ? rawValue : {};
   const rawHiddenGroups = isObject(rawDisplay.hiddenGroups) ? rawDisplay.hiddenGroups : {};
   const hiddenGroups = {};
+  const legacySystem = isBoolean(rawHiddenGroups.system) ? rawHiddenGroups.system : null;
   for (const [key, fallback] of Object.entries(DEFAULT_CONFIG.display.hiddenGroups)) {
-    hiddenGroups[key] = isBoolean(rawHiddenGroups[key]) ? rawHiddenGroups[key] : fallback;
+    const legacyFallback = (key === 'cpu' || key === 'memory') && legacySystem !== null ? legacySystem : fallback;
+    hiddenGroups[key] = isBoolean(rawHiddenGroups[key]) ? rawHiddenGroups[key] : legacyFallback;
   }
   return {
     ...rawDisplay,
@@ -83,10 +85,18 @@ function normalizeDisplayConfig(rawValue) {
 
 function normalizeServerConfig(rawValue) {
   const rawServers = isObject(rawValue) ? rawValue : {};
+  const rawActions = isObject(rawServers.actions) ? rawServers.actions : {};
   return {
     ...rawServers,
     visibleOnly: isBoolean(rawServers.visibleOnly) ? rawServers.visibleOnly : DEFAULT_CONFIG.servers.visibleOnly,
     restoreTabs: isBoolean(rawServers.restoreTabs) ? rawServers.restoreTabs : DEFAULT_CONFIG.servers.restoreTabs,
+    actions: {
+      ...rawActions,
+      editor: isBoolean(rawActions.editor) ? rawActions.editor : DEFAULT_CONFIG.servers.actions.editor,
+      window: isBoolean(rawActions.window) ? rawActions.window : DEFAULT_CONFIG.servers.actions.window,
+      terminal: isBoolean(rawActions.terminal) ? rawActions.terminal : DEFAULT_CONFIG.servers.actions.terminal,
+      remoteWindow: isBoolean(rawActions.remoteWindow) ? rawActions.remoteWindow : DEFAULT_CONFIG.servers.actions.remoteWindow,
+    },
   };
 }
 

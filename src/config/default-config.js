@@ -2,7 +2,11 @@
 
 const DEFAULT_CONFIG = Object.freeze({
   refreshInterval: 2,
-  servers: Object.freeze({ visibleOnly: false, restoreTabs: true }),
+  servers: Object.freeze({
+    visibleOnly: false,
+    restoreTabs: true,
+    actions: Object.freeze({ editor: true, window: true, terminal: true, remoteWindow: true }),
+  }),
   statusBar: Object.freeze({
     barEnabled: true,
     alignment: 'left',
@@ -31,7 +35,7 @@ const DEFAULT_CONFIG = Object.freeze({
     charts: true,
     sparkMinutes: 5,
     tabularNums: true,
-    hiddenGroups: Object.freeze({ system: false, disk: false, network: false, gpuSummary: false, gpuCards: false }),
+    hiddenGroups: Object.freeze({ cpu: false, memory: false, disk: false, network: false, gpuSummary: false, gpuCards: false }),
     highlightMyGpus: true,
     showGpuPicker: true,
     showGpuUsers: true,

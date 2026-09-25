@@ -67,6 +67,7 @@ function activate(context) {
       if (event.affectsConfiguration('sysmonitor')) {
         if (!configStore.isWriting) configStore.refresh();
         manager.updateConfig();
+        provider.updateActionVisibility();
         provider.pushConfig();
         if (statusBarController) { statusBarController.recreate(); updateBar(); }
       }
@@ -74,12 +75,24 @@ function activate(context) {
       if (event.affectsConfiguration('remote.SSH.defaultExtensions')) provider.pushConfig();
     }));
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openPanel', () => vscode.commands.executeCommand('workbench.view.extension.sysmonitor-container')));
-    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openEditor', () => provider.openEditorPanel()));
-    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openWindow', () => provider.openFloatingPanel()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openEditor', () => provider.moveSidebarDeviceToEditor()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openWindow', () => provider.moveSidebarDeviceToEditor(true)));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.copyToEditor', () => provider.openEditorPanel()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.copyToWindow', () => provider.openFloatingPanel()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openTerminal', () => provider.openTerminalForSidebar()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openRemoteWindow', () => provider.openRemoteWindowForSidebar()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorReturnSidebar', () => provider.returnActiveEditorToSidebar()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorMoveWindow', () => provider.moveActiveEditorToNewWindow()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorTerminal', () => provider.openTerminalForEditor()));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorRemoteWindow', () => provider.openRemoteWindowForEditor()));
     return;
   }
 
   if (process.platform !== 'linux') {
+    vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarDeviceActive', false);
+    vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarSshActive', false);
+    vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarFixedActive', false);
+    vscode.commands.executeCommand('setContext', 'sysmonitor.editorSshActive', false);
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider('sysmonitor.panel', {
         resolveWebviewView(view) {
@@ -100,8 +113,21 @@ function activate(context) {
         vscode.commands.executeCommand('workbench.view.extension.sysmonitor-container');
       })
     );
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openTerminal', () => {}));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openRemoteWindow', () => {}));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.copyToEditor', () => {}));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.copyToWindow', () => {}));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorReturnSidebar', () => {}));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorMoveWindow', () => {}));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorTerminal', () => {}));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorRemoteWindow', () => {}));
     return;
   }
+
+  vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarDeviceActive', true);
+  vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarSshActive', false);
+  vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarFixedActive', true);
+  vscode.commands.executeCommand('setContext', 'sysmonitor.editorSshActive', false);
 
   let provider = null;
   const monitorService = new MonitorService({
@@ -140,6 +166,7 @@ function activate(context) {
       logDebug('onDidChangeConfiguration: selfWriting=' + configStore.isWriting);
       if (!configStore.isWriting) {
         configStore.refresh();
+        provider.updateActionVisibility();
         provider.pushConfig();
       }
       monitorService.updateConfig(getConfig());
@@ -153,8 +180,16 @@ function activate(context) {
       vscode.commands.executeCommand('workbench.view.extension.sysmonitor-container');
     })
   );
-  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openEditor', () => provider.openEditorPanel()));
-  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openWindow', () => provider.openFloatingPanel()));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openEditor', () => {}));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openWindow', () => {}));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.copyToEditor', () => provider.openEditorPanel()));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.copyToWindow', () => provider.openFloatingPanel()));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openTerminal', () => {}));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openRemoteWindow', () => {}));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorReturnSidebar', () => provider.returnActiveEditorToSidebar()));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorMoveWindow', () => provider.moveActiveEditorToNewWindow()));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorTerminal', () => {}));
+  context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorRemoteWindow', () => {}));
   context.subscriptions.push(vscode.window.registerWebviewPanelSerializer('sysmonitor.editor', {
     deserializeWebviewPanel: (panel, state) => {
       if (!configStore.getCurrent().servers.restoreTabs) { panel.dispose(); return; }

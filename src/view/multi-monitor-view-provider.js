@@ -1,10 +1,11 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const path = require('node:path');
 const { getWebviewHtml } = require('./webview-html');
-const { listSshHosts, expandHome } = require('../ssh/ssh-config');
-const { SshTransport } = require('../ssh/ssh-transport');
+const { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow } = require('./editor-panel');
+const { setActionVisibilityContexts } = require('./action-visibility');
+const { ServerDirectory } = require('./server-directory');
+const { expandHome } = require('../ssh/ssh-config');
 const pkg = require('../../package.json');
 
 const STATE_KEY = 'sysmonitor.sidebarDevices';
@@ -21,8 +22,27 @@ function normalizeNavigation(raw, localLinux) {
   return { tabs, selected, page: selected ? page : 'servers', processDisplay };
 }
 
+function normalizeEditorNavigation(raw, localLinux) {
+  const state = normalizeNavigation(raw, localLinux);
+  if (!state.selected) return null;
+  return { ...state, tabs: [state.selected], page: state.page === 'proc' ? 'proc' : 'perf' };
+}
+
+function connectionPayload(device) {
+  if (!device) return null;
+  const retryAfter = device.transport && device.transport.retryAfter;
+  return { state: device.state, error: device.error, retryAfter: Number.isFinite(retryAfter) ? retryAfter : null };
+}
+
+function displaySampleTime(device, paused) {
+  if (!device) return null;
+  if (paused && typeof device.modelAt === 'number') return device.modelAt;
+  const latestPoint = device.history[device.history.length - 1];
+  return latestPoint ? latestPoint.t : null;
+}
+
 class MultiMonitorViewProvider {
-  constructor({ vscode, manager, configStore, workspaceState, uiStateStore = null, localLinux, loadHosts = listSshHosts, createProbe = (options) => new SshTransport(options), scheduleErrorClear = (callback, milliseconds) => setTimeout(callback, milliseconds), cancelErrorClear = clearTimeout, onLocalUpdate = () => {}, logger = () => {} }) {
+  constructor({ vscode, manager, configStore, workspaceState, uiStateStore = null, localLinux, loadHosts, scheduleErrorClear, cancelErrorClear, onLocalUpdate = () => {}, logger = () => {} }) {
     this.vscode = vscode;
     this.manager = manager;
     this.configStore = configStore;
@@ -31,141 +51,60 @@ class MultiMonitorViewProvider {
     this.localLinux = localLinux;
     this.onLocalUpdate = onLocalUpdate;
     this.logger = logger;
-    this.loadHosts = loadHosts;
-    this.createProbe = createProbe;
-    this.scheduleErrorClear = scheduleErrorClear;
-    this.cancelErrorClear = cancelErrorClear;
     this.sidebar = null;
     this.editors = new Map();
-    this.hosts = [];
-    this.lastServerStatuses = new Map();
-    this.pendingHosts = new Set();
-    this.hostErrors = new Map();
-    this.hostErrorTimers = new Map();
-    this.remoteFolders = new Map();
+    this.retryingDevices = new Map();
+    this.lastFocusedEditor = null;
+    this.editorSshContext = null;
+    this.actionVisibility = null;
+    this.serverDirectory = new ServerDirectory({ vscode, manager, loadHosts, scheduleErrorClear, cancelErrorClear, logger,
+      onChange: (hosts, error) => {
+        if (this.sidebar && this.sidebar.ready) this.sidebar.target.webview.postMessage({ cmd: 'servers', hosts, ...(error ? { error } : {}) });
+      },
+      onActionError: () => this.refreshReferences(),
+    });
     const saved = configStore.getCurrent().servers.restoreTabs ? workspaceState.get(STATE_KEY, {}) : {};
     this.sidebarState = normalizeNavigation(saved, localLinux);
+    this.updateActionVisibility();
+    this.updateTitleActions();
+    this.updateEditorTitleActions();
     this.refreshReferences();
     this.refreshHosts();
   }
 
-  async refreshHosts() {
-    try {
-      const configured = this.vscode.workspace.getConfiguration('remote.SSH').get('configFile');
-      this.manager.setConfigFile(configured || null);
-      this.hosts = await this.loadHosts(configured || undefined);
-      this.remoteFolders.clear();
-      for (const host of this.hostErrors.keys()) this.clearHostError(host);
-      this.broadcast({ cmd: 'servers', hosts: this.serverRows() });
-    } catch (error) {
-      this.logger(`SSH config: ${error.message}`);
-      this.broadcast({ cmd: 'servers', hosts: [], error: error.message });
-    }
-  }
+  refreshHosts() { return this.serverDirectory.refresh(); }
 
   isSshDefaultExtension() {
     const values = this.vscode.workspace.getConfiguration('remote.SSH').get('defaultExtensions');
     return Array.isArray(values) && values.some((value) => typeof value === 'string' && value.toLowerCase() === EXTENSION_ID.toLowerCase());
   }
 
-  serverRows() {
-    return this.hosts.map((host) => {
-      const device = this.manager.get('ssh:' + host);
-      const pending = this.pendingHosts.has(host);
-      const error = (this.hostErrors.get(host) || {}).message || (device && device.error) || null;
-      const state = pending ? 'connecting' : error ? 'disconnected' : device ? device.state : 'idle';
-      const snapshot = device && device.service.readSnapshot();
-      const metrics = [];
-      if (state === 'connected' && snapshot && device.model) {
-        const performance = device.model.performance;
-        if (snapshot.cpu.status === 'fresh') metrics.push(`CPU ${performance.cpu.usagePercent}%`);
-        if (snapshot.memory.status === 'fresh') metrics.push(`RAM ${performance.memory.usagePercent}%`);
-        if (snapshot.accelerators.status === 'fresh' && performance.gpus.length) {
-          metrics.push(`GPU ${performance.gpus.filter((gpu) => gpu.isIdle).length}/${performance.gpus.length}`);
-        }
-      }
-      return { host, state, error, busy: pending, metrics };
-    });
+  serverRows() { return this.serverDirectory.rows(); }
+
+  updateActionVisibility() {
+    this.actionVisibility = setActionVisibilityContexts(this.vscode, this.configStore.getCurrent().servers, this.actionVisibility);
   }
 
-  clearHostError(host) {
-    const timer = this.hostErrorTimers.get(host);
-    if (this.hostErrorTimers.has(host)) this.cancelErrorClear(timer);
-    this.hostErrorTimers.delete(host);
-    this.hostErrors.delete(host);
+  updateTitleActions() {
+    if (!this.vscode.commands || !this.vscode.commands.executeCommand) return;
+    const active = !!this.sidebarState.selected && this.sidebarState.page !== 'servers';
+    this.vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarDeviceActive', active);
+    this.vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarSshActive', active && this.sidebarState.selected.startsWith('ssh:'));
+    this.vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarFixedActive', active && this.sidebarState.selected === 'local');
   }
 
-  setHostError(host, message) {
-    this.clearHostError(host);
-    const record = { message };
-    this.hostErrors.set(host, record);
-    const timer = this.scheduleErrorClear(() => {
-      if (this.hostErrors.get(host) !== record) return;
-      this.clearHostError(host);
-      this.broadcast({ cmd: 'servers', hosts: this.serverRows() });
-    }, 10000);
-    this.hostErrorTimers.set(host, timer);
+  updateEditorTitleActions() {
+    if (!this.vscode.commands || !this.vscode.commands.executeCommand) return;
+    const source = this.activeEditorSource();
+    if (!source && this.editors.size) return;
+    const sshActive = !!(source && source.state.selected.startsWith('ssh:'));
+    if (sshActive === this.editorSshContext) return;
+    this.editorSshContext = sshActive;
+    this.vscode.commands.executeCommand('setContext', 'sysmonitor.editorSshActive', sshActive);
   }
 
-  async connectHost(host, { retain = false } = {}) {
-    const id = 'ssh:' + host;
-    const existing = this.manager.get(id);
-    if (retain) {
-      const device = existing || this.manager.open(id);
-      await device.transport.connect();
-      return;
-    }
-    if (existing) { await existing.transport.connect(); return; }
-    const transport = this.createProbe({ host, configFile: this.manager.configFile });
-    try { await transport.connect(); }
-    finally { transport.dispose(); }
-  }
-
-  async runHostAction(host, kind, action) {
-    if (this.pendingHosts.has(host)) return;
-    this.pendingHosts.add(host);
-    this.clearHostError(host);
-    this.broadcast({ cmd: 'servers', hosts: this.serverRows() });
-    try {
-      if (kind !== 'remoteWindow') await this.connectHost(host, { retain: kind !== 'terminal' });
-      await action();
-      this.clearHostError(host);
-    } catch (error) {
-      this.setHostError(host, error && error.message ? error.message : String(error));
-      this.logger(`SSH ${host}: ${error && error.message ? error.message : error}`);
-      this.refreshReferences();
-    } finally {
-      this.pendingHosts.delete(host);
-      this.broadcast({ cmd: 'servers', hosts: this.serverRows() });
-    }
-  }
-
-  async readRemoteFolders(host) {
-    try {
-      const records = await this.vscode.commands.executeCommand('remote-internal.getSshFoldersHistory', host);
-      if (!Array.isArray(records)) return [];
-      const seen = new Set();
-      return records.filter((record) => {
-        if (!record || typeof record.remote !== 'string' || !record.remote || /[\0\r\n]/.test(record.remote)
-          || typeof record.folder !== 'string' || !path.posix.isAbsolute(record.folder) || /[\0\r\n]/.test(record.folder)) return false;
-        const key = record.remote + '\0' + record.folder;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }).map(({ remote, folder }) => ({ remote, folder }));
-    } catch (error) {
-      this.logger(`Remote-SSH folder history: ${error.message}`);
-      return [];
-    }
-  }
-
-  async openEmptyRemoteWindow(host) {
-    try {
-      await this.vscode.commands.executeCommand('opensshremotes.openEmptyWindow', { host });
-    } catch (error) {
-      if (!/command .*not found/i.test(error && error.message || '')) throw error;
-      await this.vscode.commands.executeCommand('vscode.newWindow', { remoteAuthority: `ssh-remote+${host}`, reuseWindow: false });
-    }
+  deviceTitle(id) {
+    return id === 'local' ? (String(this.vscode.env.language || '').startsWith('zh') ? '本机' : 'Local') : id.slice(4);
   }
 
   async buildHtml(state, { sidebar = false } = {}) {
@@ -202,37 +141,109 @@ class MultiMonitorViewProvider {
   }
 
   async attachEditor(panel, rawState) {
-    const state = normalizeNavigation(this.configStore.getCurrent().servers.restoreTabs ? rawState : {}, this.localLinux);
+    const state = normalizeEditorNavigation(rawState, this.localLinux);
+    if (!state) { panel.dispose(); return; }
     const source = { target: panel, state, ready: false, sidebar: false };
     this.editors.set(panel, source);
-    panel.title = 'System Monitor';
-    panel.iconPath = {
-      light: this.vscode.Uri.file(path.join(__dirname, '..', '..', 'icon-tab-light.svg')),
-      dark: this.vscode.Uri.file(path.join(__dirname, '..', '..', 'icon-tab-dark.svg')),
-    };
+    if (panel.active) this.lastFocusedEditor = source;
+    panel.title = this.deviceTitle(state.selected);
+    setMonitorPanelIcon(this.vscode, panel);
     panel.webview.options = { enableScripts: true };
     panel.webview.onDidReceiveMessage((message) => this.handleMessage(message, source));
-    panel.onDidDispose(() => { this.editors.delete(panel); this.refreshReferences(); });
-    if (panel.onDidChangeViewState) panel.onDidChangeViewState(() => this.refreshReferences());
+    panel.onDidDispose(() => {
+      this.editors.delete(panel);
+      if (this.lastFocusedEditor === source) this.lastFocusedEditor = null;
+      this.updateEditorTitleActions();
+      this.refreshReferences();
+    });
+    if (panel.onDidChangeViewState) panel.onDidChangeViewState(() => {
+      if (panel.active) this.lastFocusedEditor = source;
+      this.updateEditorTitleActions();
+      this.refreshReferences();
+    });
     panel.webview.html = await this.buildHtml(state);
+    this.updateEditorTitleActions();
     this.refreshReferences();
   }
 
   async openEditorPanel(initialState = this.sidebarState) {
-    const state = normalizeNavigation(initialState, this.localLinux);
-    const panel = this.vscode.window.createWebviewPanel('sysmonitor.editor', 'System Monitor', this.vscode.ViewColumn.Active, { enableScripts: true });
+    const state = normalizeEditorNavigation(initialState, this.localLinux);
+    if (!state) return null;
+    const panel = createMonitorEditorPanel(this.vscode, this.deviceTitle(state.selected));
     await this.attachEditor(panel, state);
     return panel;
   }
 
   async openFloatingPanel(initialState = this.sidebarState) {
     const panel = await this.openEditorPanel(initialState);
-    try {
-      panel.reveal(this.vscode.ViewColumn.Active);
-      await this.vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow');
-    } catch (error) {
-      panel.dispose();
-      throw error;
+    if (!panel) return null;
+    await moveMonitorPanelToNewWindow(this.vscode, panel);
+    return panel;
+  }
+
+  activeEditorSource() {
+    const active = [...this.editors.values()].find((source) => source.target.active);
+    if (active) {
+      this.lastFocusedEditor = active;
+      return active;
+    }
+    if (this.lastFocusedEditor && this.editors.get(this.lastFocusedEditor.target) === this.lastFocusedEditor
+      && this.lastFocusedEditor.target.visible !== false) return this.lastFocusedEditor;
+    const visible = [...this.editors.values()].filter((source) => source.target.visible !== false);
+    return visible.length === 1 ? visible[0] : null;
+  }
+
+  async returnActiveEditorToSidebar() {
+    const source = this.activeEditorSource();
+    if (!source) return;
+    const id = source.state.selected;
+    const state = normalizeNavigation({
+      ...this.sidebarState,
+      tabs: [...this.sidebarState.tabs, id],
+      selected: id,
+      page: source.state.page,
+      processDisplay: source.state.processDisplay,
+    }, this.localLinux);
+    const previous = this.sidebarState;
+    this.sidebarState = state;
+    if (this.sidebar) {
+      this.sidebar.state = state;
+      this.persist(this.sidebar, { hydrate: previous.selected !== id });
+      if (typeof this.sidebar.target.show === 'function') this.sidebar.target.show();
+      else await this.vscode.commands.executeCommand('workbench.view.extension.sysmonitor-container');
+    } else {
+      await this.workspaceState.update(STATE_KEY, state);
+      this.updateTitleActions();
+      await this.vscode.commands.executeCommand('workbench.view.extension.sysmonitor-container');
+    }
+    source.target.dispose();
+  }
+
+  async moveActiveEditorToNewWindow() {
+    const source = this.activeEditorSource();
+    if (source) await moveMonitorPanelToNewWindow(this.vscode, source.target, { disposeOnError: false });
+  }
+
+  async moveSidebarDeviceToEditor(floating = false) {
+    const current = this.sidebarState;
+    if (!current.selected || current.page === 'servers') return;
+    const id = current.selected;
+    const viewState = { tabs: [id], selected: id, page: current.page, processDisplay: current.processDisplay };
+    const panel = floating ? await this.openFloatingPanel(viewState) : await this.openEditorPanel(viewState);
+    if (!panel || id === 'local') return;
+    const latest = this.sidebarState;
+    if (!latest.tabs.includes(id)) return;
+    const tabs = latest.tabs.filter((tab) => tab !== id);
+    const selected = latest.selected === id ? (this.localLinux && tabs.includes('local') ? 'local' : tabs[0] || null) : latest.selected;
+    const state = { ...latest, tabs, selected, page: selected ? latest.page : 'servers' };
+    this.sidebarState = state;
+    if (this.sidebar) {
+      this.sidebar.state = state;
+      this.persist(this.sidebar, { hydrate: selected !== latest.selected });
+    } else {
+      this.workspaceState.update(STATE_KEY, state).catch((error) => this.logger(error.message));
+      this.updateTitleActions();
+      this.refreshReferences();
     }
   }
 
@@ -246,17 +257,16 @@ class MultiMonitorViewProvider {
       for (const id of source.state.tabs) open.add(id);
       if (source.target.visible && source.state.page !== 'servers' && source.state.selected) visible.add(source.state.selected);
     }
-    const previous = this.hosts.map((host) => !!this.manager.get('ssh:' + host));
+    const previous = this.serverDirectory.hosts.map((host) => !!this.manager.get('ssh:' + host));
     this.manager.sync(open, visible);
-    if (this.hosts.some((host, index) => previous[index] !== !!this.manager.get('ssh:' + host))) {
-      this.broadcast({ cmd: 'servers', hosts: this.serverRows() });
-    }
+    if (this.serverDirectory.hosts.some((host, index) => previous[index] !== !!this.manager.get('ssh:' + host))) this.serverDirectory.notify();
   }
 
   persist(source, { hydrate = false } = {}) {
     if (source.sidebar) {
       this.sidebarState = source.state;
       this.workspaceState.update(STATE_KEY, source.state).catch((error) => this.logger(error.message));
+      this.updateTitleActions();
     }
     if (!hydrate) {
       source.target.webview.postMessage({ cmd: 'navigation', state: source.state });
@@ -266,15 +276,15 @@ class MultiMonitorViewProvider {
     source.switching = true;
     this.refreshReferences();
     const device = this.manager.get(source.state.selected);
-    const latestPoint = device && device.history[device.history.length - 1];
+    const sampleTime = displaySampleTime(device, this.manager.paused);
     source.target.webview.postMessage({
       cmd: 'deviceState', state: source.state, deviceId: source.state.selected,
       samples: device ? device.history : [],
       viewModel: device ? device.model : null,
-      sampleTime: latestPoint ? latestPoint.t : null,
-      connection: device ? { state: device.state, error: device.error } : null,
+      sampleTime,
+      connection: connectionPayload(device),
     });
-    source.lastSnapshotAt = latestPoint ? latestPoint.t : null;
+    source.lastSnapshotAt = sampleTime;
     source.switching = false;
   }
 
@@ -282,38 +292,126 @@ class MultiMonitorViewProvider {
     if (!source.ready || !source.state.selected) return;
     const device = this.manager.get(source.state.selected);
     if (!device) return;
-    const latestPoint = device.history[device.history.length - 1];
+    const sampleTime = displaySampleTime(device, this.manager.paused);
     source.target.webview.postMessage({ cmd: 'history', samples: device.history });
-    if (device.model) source.target.webview.postMessage({ cmd: 'snapshot', deviceId: device.id, viewModel: device.model, sampleTime: latestPoint ? latestPoint.t : null, instant: true, skipHistory: true });
-    source.lastSnapshotAt = latestPoint ? latestPoint.t : null;
-    source.target.webview.postMessage({ cmd: 'connection', deviceId: device.id, state: device.state, error: device.error });
+    if (device.model) source.target.webview.postMessage({ cmd: 'snapshot', deviceId: device.id, viewModel: device.model, sampleTime, instant: true, skipHistory: true });
+    source.lastSnapshotAt = sampleTime;
+    source.target.webview.postMessage({ cmd: 'connection', deviceId: device.id, ...connectionPayload(device) });
   }
 
   onDeviceUpdate(id, device) {
-    if (device.state === 'connected' && device.host && this.lastServerStatuses.get(id) !== 'connected:') this.clearHostError(device.host);
     if (id === 'local' && device.model) this.onLocalUpdate(device.model);
     for (const source of this.sources()) {
       if (!source.ready) continue;
       if (!source.switching && source.state.selected === id) {
-        const latestPoint = device.history[device.history.length - 1];
-        const sampleTime = latestPoint ? latestPoint.t : null;
+        const sampleTime = displaySampleTime(device, this.manager.paused);
         if (device.model && sampleTime !== source.lastSnapshotAt) {
-          source.target.webview.postMessage({ cmd: 'snapshot', deviceId: id, viewModel: device.model, sampleTime });
+          source.target.webview.postMessage({ cmd: 'snapshot', deviceId: id, viewModel: device.model, sampleTime, skipHistory: this.manager.paused });
           source.lastSnapshotAt = sampleTime;
         }
-        source.target.webview.postMessage({ cmd: 'connection', deviceId: id, state: device.state, error: device.error });
+        source.target.webview.postMessage({ cmd: 'connection', deviceId: id, ...connectionPayload(device) });
       }
     }
-    const signature = `${device.state}:${device.error || ''}`;
-    if (this.lastServerStatuses.get(id) !== signature || (device.host && device.state === 'connected')) {
-      this.lastServerStatuses.set(id, signature);
-      this.broadcast({ cmd: 'servers', hosts: this.serverRows() });
-    }
+    this.serverDirectory.onDeviceUpdate(id, device);
   }
 
   pushConfig() {
     const config = this.configStore.getCurrent();
     this.broadcast({ cmd: 'config', interval: config.refreshInterval, barCfg: config.statusBar, diskCfg: config.disk, displayCfg: config.display, serversCfg: config.servers, sshDefaultInstalled: this.isSshDefaultExtension() });
+  }
+
+  async openRemoteWindow(host, folderIndex) {
+    if (!this.serverDirectory.hasHost(host)) return;
+    const folder = this.serverDirectory.remoteFolder(host, folderIndex);
+    if (folderIndex !== undefined && !folder) return;
+    await this.serverDirectory.runAction(host, 'remoteWindow', async () => {
+      if (!folder) { await this.serverDirectory.openEmptyRemoteWindow(host); return; }
+      const uri = this.vscode.Uri.from({ scheme: 'vscode-remote', authority: `ssh-remote+${folder.remote}`, path: folder.folder });
+      const opened = await this.vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
+      if (opened === false) throw new Error('Could not open remote folder');
+    });
+  }
+
+  async openRemoteWindowPicker(host) {
+    const folders = await this.serverDirectory.refreshRemoteFolders(host);
+    const choices = [
+      { label: this.vscode.env.language.startsWith('zh') ? '连接主机' : 'Connect to host' },
+      ...folders.map((folder) => ({ label: folder.folder, folderIndex: folder.index })),
+    ];
+    const picked = await this.vscode.window.showQuickPick(choices, { placeHolder: `SSH: ${host}` });
+    if (picked) await this.openRemoteWindow(host, picked.folderIndex);
+  }
+
+  async openRemoteWindowForSidebar() {
+    const state = this.sidebarState;
+    if (state.page !== 'servers' && state.selected && state.selected.startsWith('ssh:')) await this.openRemoteWindowPicker(state.selected.slice(4));
+  }
+
+  async openRemoteWindowForEditor() {
+    const source = this.activeEditorSource();
+    if (source && source.state.selected.startsWith('ssh:')) await this.openRemoteWindowPicker(source.state.selected.slice(4));
+  }
+
+  async openTerminal(host) {
+    if (!this.serverDirectory.hasHost(host)) return;
+    await this.serverDirectory.runAction(host, 'terminal', () => {
+      const configured = this.vscode.workspace.getConfiguration('remote.SSH').get('configFile');
+      const args = configured ? ['-F', expandHome(configured), host] : [host];
+      const terminal = this.vscode.window.createTerminal({ name: `SSH: ${host}`, shellPath: 'ssh', shellArgs: args });
+      terminal.show();
+    });
+  }
+
+  async openTerminalForSidebar() {
+    const state = this.sidebarState;
+    if (state.page !== 'servers' && state.selected && state.selected.startsWith('ssh:')) await this.openTerminal(state.selected.slice(4));
+  }
+
+  async openTerminalForEditor() {
+    const source = this.activeEditorSource();
+    if (source && source.state.selected.startsWith('ssh:')) await this.openTerminal(source.state.selected.slice(4));
+  }
+
+  async retryConnection(source, id) {
+    if (!source || !source.ready || source.state.page === 'servers' || source.state.selected !== id || !id.startsWith('ssh:')) return;
+    const device = this.manager.get(id);
+    if (!device || !device.transport) {
+      if (source.ready && this.sources().includes(source)) source.target.webview.postMessage({ cmd: 'retryConnectionResult', deviceId: id });
+      return;
+    }
+    let task = this.retryingDevices.get(id);
+    if (!task) {
+      if (device.state !== 'disconnected') {
+        if (source.ready && this.sources().includes(source)) source.target.webview.postMessage({ cmd: 'retryConnectionResult', deviceId: id });
+        return;
+      }
+      task = this.retryDevice(id, device);
+      this.retryingDevices.set(id, task);
+    }
+    const errorMessage = await task;
+    if (this.retryingDevices.get(id) === task) this.retryingDevices.delete(id);
+    if (source.ready && this.sources().includes(source)) source.target.webview.postMessage({ cmd: 'retryConnectionResult', deviceId: id, ...(errorMessage ? { error: errorMessage } : {}) });
+  }
+
+  async retryDevice(id, device) {
+    const pausedAtStart = this.manager.paused;
+    const sampleAfter = Date.now();
+    try {
+      await device.transport.retryNow();
+      if (pausedAtStart && this.manager.paused && this.manager.get(id) === device) {
+        device.service.resume({ force: true });
+        try {
+          await this.serverDirectory.waitForInitialSample(id.slice(4), sampleAfter, { allowPaused: true });
+        } finally {
+          if (this.manager.paused && this.manager.get(id) === device) device.service.pause();
+        }
+      }
+      return null;
+    } catch (error) {
+      const errorMessage = error && error.message ? error.message : String(error);
+      this.logger(`SSH retry ${id}: ${errorMessage}`);
+      return errorMessage;
+    }
   }
 
   async handleMessage(message, source) {
@@ -322,25 +420,16 @@ class MultiMonitorViewProvider {
     if (message.cmd === 'ready') {
       source.ready = true;
       source.target.webview.postMessage({ cmd: 'navigation', state });
-      source.target.webview.postMessage({ cmd: 'servers', hosts: this.serverRows() });
+      if (source.sidebar) source.target.webview.postMessage({ cmd: 'servers', hosts: this.serverRows() });
       source.target.webview.postMessage({ cmd: 'uiState', processDisplay: state.processDisplay, paused: this.manager.paused });
       this.sendCurrent(source);
-    } else if (message.cmd === 'refreshServers') this.refreshHosts();
-    else if (message.cmd === 'listRemoteFolders' && typeof message.host === 'string' && this.hosts.includes(message.host)) {
-      const folders = await this.readRemoteFolders(message.host);
-      this.remoteFolders.set(message.host, folders);
-      source.target.webview.postMessage({ cmd: 'remoteFolders', host: message.host, folders: folders.map(({ folder }, index) => ({ index, folder })) });
+    } else if (message.cmd === 'retryConnection' && typeof message.deviceId === 'string') await this.retryConnection(source, message.deviceId);
+    else if (message.cmd === 'refreshServers' && source.sidebar) this.refreshHosts();
+    else if (message.cmd === 'listRemoteFolders' && source.sidebar && typeof message.host === 'string' && this.serverDirectory.hasHost(message.host)) {
+      const folders = await this.serverDirectory.refreshRemoteFolders(message.host);
+      source.target.webview.postMessage({ cmd: 'remoteFolders', host: message.host, folders });
     }
-    else if (message.cmd === 'openRemoteWindow' && typeof message.host === 'string' && this.hosts.includes(message.host)) {
-      const folder = Number.isInteger(message.folderIndex) ? (this.remoteFolders.get(message.host) || [])[message.folderIndex] : null;
-      if (message.folderIndex !== undefined && !folder) return;
-      await this.runHostAction(message.host, 'remoteWindow', async () => {
-        if (!folder) { await this.openEmptyRemoteWindow(message.host); return; }
-        const uri = this.vscode.Uri.from({ scheme: 'vscode-remote', authority: `ssh-remote+${folder.remote}`, path: folder.folder });
-        const opened = await this.vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
-        if (opened === false) throw new Error('Could not open remote folder');
-      });
-    }
+    else if (message.cmd === 'openRemoteWindow' && source.sidebar && typeof message.host === 'string') await this.openRemoteWindow(message.host, message.folderIndex);
     else if (message.cmd === 'addSshDefaultExtension') {
       try {
         const configuration = this.vscode.workspace.getConfiguration('remote.SSH');
@@ -348,6 +437,13 @@ class MultiMonitorViewProvider {
         const entries = Array.isArray(current) ? current.slice() : [];
         if (!entries.some((value) => typeof value === 'string' && value.toLowerCase() === EXTENSION_ID.toLowerCase())) {
           await configuration.update('defaultExtensions', [...entries, EXTENSION_ID], true);
+        }
+        if (message.dismissIntro === true && this.uiStateStore) {
+          try {
+            await this.uiStateStore.update('sysmonitor.localIntroDismissed', true);
+            this.broadcast({ cmd: 'localIntroDismissed' });
+          }
+          catch (error) { this.logger(`Local intro dismissal: ${error.message}`); }
         }
         this.broadcast({ cmd: 'sshDefaultExtensions', installed: true });
       } catch (error) {
@@ -359,9 +455,9 @@ class MultiMonitorViewProvider {
       this.uiStateStore.update('sysmonitor.localIntroDismissed', true).catch((error) => this.logger(error.message));
       this.broadcast({ cmd: 'localIntroDismissed' });
     }
-    else if (message.cmd === 'openServer' && typeof message.host === 'string' && this.hosts.includes(message.host)) {
+    else if (message.cmd === 'openServer' && source.sidebar && typeof message.host === 'string' && this.serverDirectory.hasHost(message.host)) {
       const id = 'ssh:' + message.host;
-      await this.runHostAction(message.host, 'monitor', async () => {
+      await this.serverDirectory.runAction(message.host, 'monitor', async () => {
         if (message.inWindow) {
           await this.openFloatingPanel({ tabs: [id], selected: id, page: 'perf', processDisplay: { cpu: 'core', ram: 'size' } });
         } else if (message.inEditor) {
@@ -372,27 +468,21 @@ class MultiMonitorViewProvider {
           this.persist(source, { hydrate: current.selected !== id });
         }
       });
-    } else if (message.cmd === 'openTerminal' && typeof message.host === 'string' && this.hosts.includes(message.host)) {
-      await this.runHostAction(message.host, 'terminal', () => {
-        const configured = this.vscode.workspace.getConfiguration('remote.SSH').get('configFile');
-        const args = configured ? ['-F', expandHome(configured), message.host] : [message.host];
-        const terminal = this.vscode.window.createTerminal({ name: `SSH: ${message.host}`, shellPath: 'ssh', shellArgs: args });
-        terminal.show();
-      });
-    } else if (message.cmd === 'switchDevice' && state.tabs.includes(message.id)) {
+    } else if (message.cmd === 'openTerminal' && source.sidebar && typeof message.host === 'string') await this.openTerminal(message.host);
+    else if (message.cmd === 'switchDevice' && source.sidebar && state.tabs.includes(message.id)) {
       source.state = { ...state, selected: message.id, page: state.page === 'servers' ? 'perf' : state.page };
       this.persist(source, { hydrate: state.selected !== message.id });
-    } else if (message.cmd === 'reorderDevices' && Array.isArray(message.tabs)) {
+    } else if (message.cmd === 'reorderDevices' && source.sidebar && Array.isArray(message.tabs)) {
       const original = new Set(state.tabs);
       if (message.tabs.length !== state.tabs.length || new Set(message.tabs).size !== original.size || !message.tabs.every((id) => original.has(id))) return;
       source.state = { ...state, tabs: message.tabs.slice() };
       this.persist(source);
-    } else if (message.cmd === 'closeDevice' && message.id !== 'local' && state.tabs.includes(message.id)) {
+    } else if (message.cmd === 'closeDevice' && source.sidebar && message.id !== 'local' && state.tabs.includes(message.id)) {
       const tabs = state.tabs.filter((id) => id !== message.id);
       const selected = state.selected === message.id ? tabs[0] || null : state.selected;
       source.state = { ...state, tabs, selected, page: selected ? state.page : 'servers' };
       this.persist(source, { hydrate: selected !== state.selected });
-    } else if (message.cmd === 'switchPage' && ['perf', 'proc', 'servers'].includes(message.page)) {
+    } else if (message.cmd === 'switchPage' && (source.sidebar ? ['perf', 'proc', 'servers'] : ['perf', 'proc']).includes(message.page)) {
       source.state = { ...state, page: message.page };
       this.persist(source);
     } else if (message.cmd === 'setProcessDisplay' && ['cpu', 'ram'].includes(message.key)) {
@@ -403,6 +493,7 @@ class MultiMonitorViewProvider {
     } else if (message.cmd === 'setConfig' && CONFIG_KEYS.has(message.key)) {
       this.configStore.update(message.key, message.value);
       this.manager.updateConfig();
+      if (message.key === 'servers') this.updateActionVisibility();
       this.pushConfig();
     } else if (message.cmd === 'getConfig') this.pushConfig();
     else if (message.cmd === 'openSettings') this.vscode.commands.executeCommand('workbench.action.openSettings', 'sysmonitor');
@@ -414,10 +505,8 @@ class MultiMonitorViewProvider {
   }
 
   dispose() {
-    for (const timer of this.hostErrorTimers.values()) this.cancelErrorClear(timer);
-    this.hostErrorTimers.clear();
-    this.hostErrors.clear();
+    this.serverDirectory.dispose();
   }
 }
 
-module.exports = { MultiMonitorViewProvider, normalizeNavigation };
+module.exports = { MultiMonitorViewProvider, normalizeNavigation, normalizeEditorNavigation };

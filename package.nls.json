@@ -5,6 +5,12 @@
   "viewName": "System Monitor",
   "procsName": "Processes",
   "cmdOpen": "System Monitor: Open Panel",
-  "cmdOpenEditor": "System Monitor: Open in Editor",
-  "cmdOpenWindow": "System Monitor: Open in New Window"
+  "cmdOpenEditor": "System Monitor: Move to Editor",
+  "cmdOpenWindow": "System Monitor: Move to New Window",
+  "cmdCopyToEditor": "System Monitor: Open in Editor",
+  "cmdCopyToWindow": "System Monitor: Open in New Window",
+  "cmdOpenTerminal": "System Monitor: Open SSH Terminal",
+  "cmdOpenRemoteWindow": "System Monitor: Open Remote Window",
+  "cmdEditorReturnSidebar": "System Monitor: Return to Sidebar",
+  "cmdEditorMoveWindow": "System Monitor: Move to New Window"
 }

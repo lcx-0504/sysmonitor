@@ -2,7 +2,7 @@
   "name": "sysmonitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "publisher": "LiChenxi",
   "license": "MIT",
   "icon": "icon.png",
@@ -66,25 +66,103 @@
       {
         "command": "sysmonitor.openEditor",
         "title": "%cmdOpenEditor%",
-        "icon": "$(open-in-product)"
+        "icon": "$(arrow-swap)"
       },
       {
         "command": "sysmonitor.openWindow",
         "title": "%cmdOpenWindow%",
         "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "sysmonitor.copyToEditor",
+        "title": "%cmdCopyToEditor%",
+        "icon": "$(open-in-product)"
+      },
+      {
+        "command": "sysmonitor.copyToWindow",
+        "title": "%cmdCopyToWindow%",
+        "icon": "$(empty-window)"
+      },
+      {
+        "command": "sysmonitor.openTerminal",
+        "title": "%cmdOpenTerminal%",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "sysmonitor.openRemoteWindow",
+        "title": "%cmdOpenRemoteWindow%",
+        "icon": "$(vm-connect)"
+      },
+      {
+        "command": "sysmonitor.editorReturnSidebar",
+        "title": "%cmdEditorReturnSidebar%",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "sysmonitor.editorMoveWindow",
+        "title": "%cmdEditorMoveWindow%",
+        "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "sysmonitor.editorTerminal",
+        "title": "%cmdOpenTerminal%",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "sysmonitor.editorRemoteWindow",
+        "title": "%cmdOpenRemoteWindow%",
+        "icon": "$(vm-connect)"
       }
     ],
     "menus": {
+      "commandPalette": [
+        { "command": "sysmonitor.openEditor", "when": "sysmonitor.sidebarSshActive" },
+        { "command": "sysmonitor.openWindow", "when": "sysmonitor.sidebarSshActive" },
+        { "command": "sysmonitor.copyToEditor", "when": "sysmonitor.sidebarFixedActive" },
+        { "command": "sysmonitor.copyToWindow", "when": "sysmonitor.sidebarFixedActive" },
+        { "command": "sysmonitor.openTerminal", "when": "sysmonitor.sidebarSshActive" },
+        { "command": "sysmonitor.openRemoteWindow", "when": "sysmonitor.sidebarSshActive" },
+        { "command": "sysmonitor.editorReturnSidebar", "when": "activeWebviewPanelId == sysmonitor.editor" },
+        { "command": "sysmonitor.editorMoveWindow", "when": "activeWebviewPanelId == sysmonitor.editor" },
+        { "command": "sysmonitor.editorTerminal", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive" },
+        { "command": "sysmonitor.editorRemoteWindow", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive" }
+      ],
+      "editor/title": [
+        { "command": "sysmonitor.editorReturnSidebar", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionEditorVisible", "group": "navigation@1" },
+        { "command": "sysmonitor.editorMoveWindow", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionWindowVisible", "group": "navigation@2" },
+        { "command": "sysmonitor.editorTerminal", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive && sysmonitor.actionTerminalVisible", "group": "navigation@3" },
+        { "command": "sysmonitor.editorRemoteWindow", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive && sysmonitor.actionRemoteWindowVisible", "group": "navigation@4" }
+      ],
       "view/title": [
         {
           "command": "sysmonitor.openEditor",
-          "when": "view == sysmonitor.panel",
+          "when": "view == sysmonitor.panel && sysmonitor.sidebarSshActive && sysmonitor.actionEditorVisible",
           "group": "navigation@1"
         },
         {
           "command": "sysmonitor.openWindow",
-          "when": "view == sysmonitor.panel",
+          "when": "view == sysmonitor.panel && sysmonitor.sidebarSshActive && sysmonitor.actionWindowVisible",
           "group": "navigation@2"
+        },
+        {
+          "command": "sysmonitor.copyToEditor",
+          "when": "view == sysmonitor.panel && sysmonitor.sidebarFixedActive && sysmonitor.actionEditorVisible",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sysmonitor.copyToWindow",
+          "when": "view == sysmonitor.panel && sysmonitor.sidebarFixedActive && sysmonitor.actionWindowVisible",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sysmonitor.openTerminal",
+          "when": "view == sysmonitor.panel && sysmonitor.sidebarSshActive && sysmonitor.actionTerminalVisible",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sysmonitor.openRemoteWindow",
+          "when": "view == sysmonitor.panel && sysmonitor.sidebarSshActive && sysmonitor.actionRemoteWindowVisible",
+          "group": "navigation@4"
         }
       ]
     },
@@ -137,7 +215,8 @@
             "sparkMinutes": 5,
             "tabularNums": true,
             "hiddenGroups": {
-              "system": false,
+              "cpu": false,
+              "memory": false,
               "disk": false,
               "network": false,
               "gpuSummary": false,
@@ -153,9 +232,15 @@
           "type": "object",
           "default": {
             "visibleOnly": false,
-            "restoreTabs": true
+            "restoreTabs": true,
+            "actions": {
+              "editor": true,
+              "window": true,
+              "terminal": true,
+              "remoteWindow": true
+            }
           },
-          "description": "SSH server monitoring and session restoration settings"
+          "description": "Server monitoring, session restoration, and action button visibility settings"
         }
       }
     }

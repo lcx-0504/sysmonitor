@@ -7,13 +7,15 @@ const { expandHome } = require('./ssh-config');
 function shellQuote(value) { return "'" + String(value).replace(/'/g, "'\\''") + "'"; }
 
 class SshTransport {
-  constructor({ host, configFile = null, spawnProcess = spawn, onState = () => {}, requireLinux = true }) {
+  constructor({ host, configFile = null, spawnProcess = spawn, onState = () => {}, requireLinux = true, shouldReconnect = () => true, retryDelayMilliseconds = 10000 }) {
     if (!host || /[\s\0]/.test(host) || host.startsWith('-')) throw new Error('Invalid SSH host alias');
     this.host = host;
     this.configFile = configFile ? expandHome(configFile) : null;
     this.spawnProcess = spawnProcess;
     this.onState = onState;
     this.requireLinux = requireLinux;
+    this.shouldReconnect = shouldReconnect;
+    this.retryDelayMilliseconds = retryDelayMilliseconds;
     this.child = null;
     this.buffer = '';
     this.waiting = null;
@@ -22,6 +24,7 @@ class SshTransport {
     this.closed = false;
     this.sequence = 0;
     this.retryAfter = 0;
+    this.retryTimer = null;
     this.lastError = null;
     this.sshConnection = null;
     this.prefix = '__SYSMON_' + crypto.randomBytes(12).toString('hex') + '_';
@@ -42,7 +45,7 @@ class SshTransport {
       this.buffer = '';
       let stderr = '';
       const timeout = setTimeout(() => this.disconnect(new Error('SSH connection timed out')), 12000);
-      this.waiting = { kind: 'connect', resolve: () => { clearTimeout(timeout); this.retryAfter = 0; this.lastError = null; this.onState('connected'); resolve(); }, reject: (error) => { clearTimeout(timeout); reject(error); } };
+      this.waiting = { kind: 'connect', resolve: () => { clearTimeout(timeout); if (this.retryTimer) clearTimeout(this.retryTimer); this.retryTimer = null; this.retryAfter = 0; this.lastError = null; this.onState('connected'); resolve(); }, reject: (error) => { clearTimeout(timeout); reject(error); } };
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk) => this.receive(chunk));
       child.stderr.setEncoding('utf8');
@@ -55,6 +58,15 @@ class SshTransport {
         : `printf '%s %s\\n' '${this.prefix}READY' "$SSH_CONNECTION"\n`);
     }).finally(() => { this.connecting = null; });
     return this.connecting;
+  }
+
+  retryNow() {
+    if (this.closed) return Promise.reject(new Error('SSH transport disposed'));
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retryAfter = 0;
+    this.lastError = null;
+    return this.connect();
   }
 
   receive(chunk) {
@@ -131,9 +143,11 @@ class SshTransport {
   }
 
   disconnect(error) {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     if (!this.child && !this.waiting) return;
     this.sshConnection = null;
-    if (!this.closed) { this.retryAfter = error && error.code === 'EPLATFORM' ? Infinity : Date.now() + 10000; this.lastError = error; }
+    if (!this.closed) { this.retryAfter = error && error.code === 'EPLATFORM' ? Infinity : Date.now() + this.retryDelayMilliseconds; this.lastError = error; }
     const child = this.child;
     this.child = null;
     if (child) child.kill();
@@ -141,6 +155,12 @@ class SshTransport {
     this.waiting = null;
     if (waiting) { if (waiting.timeout) clearTimeout(waiting.timeout); waiting.reject(error); }
     if (!this.closed) this.onState('disconnected', error);
+    if (!this.closed && Number.isFinite(this.retryAfter)) {
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        if (!this.closed && this.shouldReconnect()) this.connect().catch(() => {});
+      }, Math.max(0, this.retryAfter - Date.now()));
+    }
     if (this.queue.length && !this.closed && !this.connecting) setTimeout(() => this.drain(), 1000);
   }
 

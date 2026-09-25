@@ -23,11 +23,27 @@ test('English and Chinese package localization expose the same keys', () => {
   const english = readJson('package.nls.json');
   const chinese = readJson('package.nls.zh-cn.json');
   assert.deepEqual(Object.keys(chinese).sort(), Object.keys(english).sort());
+  assert.equal(english.cmdEditorMoveWindow, english.cmdOpenWindow);
+  assert.equal(chinese.cmdEditorMoveWindow, chinese.cmdOpenWindow);
+  const serverList = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview-servers.js'), 'utf8');
+  assert.match(serverList, /floating\.title = zh \? '在新窗口打开' : 'Open in New Window'/);
+  assert.match(serverList, /remote\.title = zh \? '打开远程窗口' : 'Open Remote Window'/);
+  assert.equal(chinese.cmdCopyToWindow, '系统监控: 在新窗口打开');
+  assert.equal(chinese.cmdOpenRemoteWindow, '系统监控: 打开远程窗口');
+  const settings = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview-settings.js'), 'utf8');
+  assert.match(settings, /新建 \/ 切换编辑器视图/);
+  assert.match(settings, /新建 \/ 移动到新窗口/);
+  assert.match(settings, /打开 SSH 终端/);
+  assert.match(settings, /打开远程窗口/);
 });
 
 test('public configuration defaults remain characterized', () => {
   const manifest = readJson('package.json');
   const properties = manifest.contributes.configuration.properties;
+
+  assert.deepEqual(properties['sysmonitor.servers'].default.actions, {
+    editor: true, window: true, terminal: true, remoteWindow: true,
+  });
 
   assert.equal(properties['sysmonitor.refreshInterval'].default, 2);
   assert.deepEqual(properties['sysmonitor.statusBar'].default, {
@@ -58,19 +74,39 @@ test('public configuration defaults remain characterized', () => {
     charts: true,
     sparkMinutes: 5,
     tabularNums: true,
-    hiddenGroups: { system: false, disk: false, network: false, gpuSummary: false, gpuCards: false },
+    hiddenGroups: { cpu: false, memory: false, disk: false, network: false, gpuSummary: false, gpuCards: false },
     highlightMyGpus: true,
     showGpuPicker: true,
     showGpuUsers: true,
   });
 });
 
-test('Editor pop-out action is contributed to the native view title', () => {
+test('native title actions distinguish creating a view from moving one', () => {
   const manifest = readJson('package.json');
-  assert.equal(manifest.contributes.commands.some((command) => command.command === 'sysmonitor.openEditor' && command.icon === '$(open-in-product)'), true);
-  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.openEditor' && item.when === 'view == sysmonitor.panel'), true);
+  assert.equal(manifest.contributes.commands.some((command) => command.command === 'sysmonitor.openEditor' && command.icon === '$(arrow-swap)'), true);
+  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.openEditor' && item.when === 'view == sysmonitor.panel && sysmonitor.sidebarSshActive && sysmonitor.actionEditorVisible'), true);
   assert.equal(manifest.contributes.commands.some((item) => item.command === 'sysmonitor.openWindow' && item.icon === '$(multiple-windows)'), true);
-  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.openWindow' && item.when === 'view == sysmonitor.panel'), true);
+  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.openWindow' && item.when === 'view == sysmonitor.panel && sysmonitor.sidebarSshActive && sysmonitor.actionWindowVisible'), true);
+  assert.equal(manifest.contributes.commands.some((item) => item.command === 'sysmonitor.copyToEditor' && item.icon === '$(open-in-product)'), true);
+  assert.equal(manifest.contributes.commands.some((item) => item.command === 'sysmonitor.copyToWindow' && item.icon === '$(empty-window)'), true);
+  assert.equal(manifest.contributes.commands.some((item) => item.command === 'sysmonitor.editorReturnSidebar' && item.icon === '$(arrow-swap)'), true);
+  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.copyToEditor' && item.when === 'view == sysmonitor.panel && sysmonitor.sidebarFixedActive && sysmonitor.actionEditorVisible'), true);
+  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.copyToWindow' && item.when === 'view == sysmonitor.panel && sysmonitor.sidebarFixedActive && sysmonitor.actionWindowVisible'), true);
+  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.openTerminal' && item.when === 'view == sysmonitor.panel && sysmonitor.sidebarSshActive && sysmonitor.actionTerminalVisible'), true);
+  assert.equal(manifest.contributes.menus['view/title'].some((item) => item.command === 'sysmonitor.openRemoteWindow' && item.when === 'view == sysmonitor.panel && sysmonitor.sidebarSshActive && sysmonitor.actionRemoteWindowVisible'), true);
+  assert.equal(manifest.contributes.commands.some((item) => item.command === 'sysmonitor.openRemoteWindow' && item.icon === '$(vm-connect)'), true);
+  assert.equal(manifest.contributes.menus.commandPalette.some((item) => item.command === 'sysmonitor.openRemoteWindow' && item.when === 'sysmonitor.sidebarSshActive'), true);
+  const editorActions = manifest.contributes.menus['editor/title'];
+  assert.deepEqual(editorActions.map((item) => item.command), [
+    'sysmonitor.editorReturnSidebar', 'sysmonitor.editorMoveWindow', 'sysmonitor.editorTerminal', 'sysmonitor.editorRemoteWindow',
+  ]);
+  assert.equal(manifest.contributes.commands.some((item) => item.command === 'sysmonitor.editorDuplicate'), false);
+  assert.deepEqual(editorActions.map((item) => item.when), [
+    'activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionEditorVisible',
+    'activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionWindowVisible',
+    'activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive && sysmonitor.actionTerminalVisible',
+    'activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive && sysmonitor.actionRemoteWindowVisible',
+  ]);
 });
 
 test('development-only refactor documents and tests are excluded from VSIX', () => {

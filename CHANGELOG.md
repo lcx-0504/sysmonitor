@@ -1,19 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.5.0 — 2026-09-25
 
-- Added local SSH monitoring of several Linux servers from SSH config aliases, with independent per-device snapshots and shared history across views of the same device.
-- Added a Servers page, device tabs, direct Editor and terminal actions, connection status, and per-workspace restoration of sidebar and Editor views.
-- Added a Remote-SSH window action with a menu for direct connection or previously opened remote folders.
-- Added one-click floating System Monitor windows from the view title and individual server rows.
-- Refined the server list with Codicon actions, live summaries, flat device tabs below the page navigation, and connection checks before opening a view or terminal. Failed connections stay in the list with an inline error.
-- Kept device snapshots, chart histories, and their last-sampled update time stable across page changes, made the device strip follow page switches immediately, and applied device switches without replaying metric-bar animations. Server rows now update as soon as their last monitor view closes. Remote process collection allows longer SSH queue time.
-- Made the active device tab fill the available width when alone and moved its accent line to the bottom. The Servers page hides the device strip and shows Refresh List in place of update time and Running; server rows use the same spacing as monitor cards and expose an explicit Open action.
-- Restored the monitor's outlined card and button styling, shortened native Editor tab titles, and kept the original tab-icon shape with light/dark variants. Device tabs support drag ordering and middle-click close for SSH hosts. Fixed SSH retry backoff so a transient command timeout can recover instead of remaining on screen indefinitely.
-- Showed the monitored SSH session's traffic and TCP latency in local SSH views by matching its exact socket, and restored the global status-bar settings section in local macOS and Windows panels.
-- Added a dismissible first-use guide to the local Servers page, with wording for Linux and macOS/Windows, and a scope explanation beside status-bar settings. The guide and Servers settings provide an explicit action to add System Monitor to `remote.SSH.defaultExtensions`. Device tabs reorder only within their own strip with live displacement, and chart hydration keeps the original sample timestamps so switching devices does not introduce a delayed jump.
-- Added Servers settings for startup tab restoration (on by default) and visible-only refresh (off by default). Local macOS/Windows windows show the Servers page without a System Monitor status bar; local Linux status bars remain tied to the local machine.
-- Clarified status-bar and Remote-SSH auto-install descriptions in Settings and aligned the info trigger with the circular monitor icon.
+- Monitor multiple Linux servers from a local macOS, Windows, or Linux window using SSH config aliases, including `Include` files. Local Linux also retains a built-in device tab for its own machine.
+- Manage devices from a Servers page with live CPU, RAM, and GPU summaries. Device tabs support drag ordering and middle-click close; views of the same machine share collection snapshots and chart history.
+- Open a server in the sidebar, an independent single-device Editor, a floating System Monitor window, an SSH terminal, or a Remote-SSH window. Server-list actions create new views; sidebar title actions move the selected SSH tab or copy a fixed local/remote device. Active Editor title actions duplicate or move the view and expose SSH-specific operations. The Remote-SSH menu lists recently opened remote folders when available.
+- Restore sidebar device tabs by workspace and Editor views with VS Code. Startup restoration is on by default; the optional visible-only refresh mode is off by default.
+- Reuse the Linux collectors over a persistent SSH connection, including remote CPU, process, and GPU user data. The SSH card measures traffic and latency for the monitor's own connection.
+- Preserve chart timing and the last sample's update time across view switches. Connection errors clear from the server list after a short interval, and closing the final monitor view updates its status immediately.
+- Provide a first-use guide, Remote-SSH default-extension installation action, and Linux-specific status-bar behavior in local windows. The interface retains theme-aware icons and compact outlined cards.
 
 ## 1.4.2 — 2026-09-24
 

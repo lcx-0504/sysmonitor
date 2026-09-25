@@ -5,6 +5,7 @@ const { SnapshotStore } = require('../src/core/snapshot-store');
 const { CollectorRunner } = require('../src/core/collector-runner');
 const { CommandRunner } = require('../src/core/command-runner');
 const { MonitorScheduler } = require('../src/core/monitor-scheduler');
+const { MonitorService } = require('../src/services/monitor-service');
 
 test('SnapshotStore distinguishes successful empty results from failures with stale data', () => {
   const store = new SnapshotStore();
@@ -46,6 +47,16 @@ test('MonitorScheduler uses one tick for due runners and pauses all collection',
   scheduler.setRefreshInterval(5000);
   assert.equal(scheduler.runners[0].cadenceMilliseconds, 5000);
   scheduler.dispose();
+});
+
+test('one-shot resume makes every collector due without changing the global pause state', () => {
+  const service = Object.create(MonitorService.prototype);
+  service.runners = [{ nextDueAt: 100 }, { nextDueAt: 200 }];
+  let resumed = false;
+  service.scheduler = { resume() { resumed = true; } };
+  service.resume({ force: true });
+  assert.deepEqual(service.runners.map((runner) => runner.nextDueAt), [0, 0]);
+  assert.equal(resumed, true);
 });
 
 test('CommandRunner executes without a shell and returns bounded command output', async () => {

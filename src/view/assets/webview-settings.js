@@ -54,19 +54,21 @@
     statusBarInfoButton.setAttribute('aria-label', zh ? '状态栏生效范围' : 'Status bar scope');
     document.getElementById('sett-disk-label').textContent = T.diskLabel;
     document.getElementById('sett-display-label').textContent = T.displayLabel;
+    document.getElementById('sett-actions-label').textContent = zh ? '操作按钮' : 'Action Buttons';
     document.getElementById('sett-servers-label').textContent = zh ? '服务器' : 'Servers';
     renderIntervalRow();
     renderSettingsBody();
     requestAnimationFrame(updateModalScrollbar);
   }
-  function closeModal() { closeSettingMenu(); modalOpen = false; modalScrollbar.hidden = true; statusBarInfoPopover.hidden = true; document.getElementById('modal-mask').classList.remove('open'); }
+  function closeModal() { closeSettingMenu(); modalOpen = false; clearTimeout(settingsRenderTimer); modalScrollbar.hidden = true; statusBarInfoPopover.hidden = true; document.getElementById('modal-mask').classList.remove('open'); }
   var sshDefaultPending = false;
   function updateSshDefaultUi(error) {
     var introButton = document.getElementById('server-intro-ssh-default');
     introButton.hidden = sshDefaultInstalled;
-    introButton.textContent = sshDefaultPending ? (zh ? '添加中…' : 'Adding…') : (zh ? '自动安装' : 'Auto-install');
+    introButton.textContent = sshDefaultPending ? (zh ? '添加中…' : 'Adding…') : (zh ? '加入默认扩展' : 'Add to defaults');
     introButton.disabled = sshDefaultPending;
     document.querySelectorAll('[data-act="ssh-default-add"]').forEach(function(button) {
+      button.classList.toggle('on', !sshDefaultInstalled);
       button.textContent = sshDefaultInstalled ? (zh ? '已加入' : 'Added') : sshDefaultPending ? (zh ? '添加中…' : 'Adding…') : (zh ? '加入默认扩展' : 'Add to defaults');
       button.disabled = sshDefaultInstalled || sshDefaultPending;
     });
@@ -78,11 +80,11 @@
     });
     updateLocalIntro();
   }
-  function addSshDefaultExtension() {
+  function addSshDefaultExtension(event) {
     if (sshDefaultInstalled || sshDefaultPending) return;
     sshDefaultPending = true;
     updateSshDefaultUi();
-    sendToExtension({ cmd: 'addSshDefaultExtension' });
+    sendToExtension({ cmd: 'addSshDefaultExtension', dismissIntro: !!(event && event.currentTarget && event.currentTarget.id === 'server-intro-ssh-default') });
   }
   var statusBarInfoButton = document.getElementById('sett-bar-info');
   statusBarInfoPopover = document.createElement('div');
@@ -192,10 +194,25 @@
   window.addEventListener('resize', closeSettingMenu);
   document.addEventListener('keydown', function(event) { if (event.key === 'Escape') closeSettingMenu(); });
 
+  var settingsTransitionUntil = 0;
+  var settingsRenderTimer = null;
+  function renderSettingsAfterTransition() {
+    clearTimeout(settingsRenderTimer);
+    var delay = Math.max(0, settingsTransitionUntil - Date.now());
+    if (!delay) { if (modalOpen && !settingMenu) renderSettingsBody(); return; }
+    settingsRenderTimer = setTimeout(function() {
+      settingsRenderTimer = null;
+      if (modalOpen && !settingMenu) renderSettingsBody();
+    }, delay);
+  }
+  function holdSettingsTransition() {
+    settingsTransitionUntil = Date.now() + 190;
+  }
   function animateSwitch(button, enabled, rerender) {
+    holdSettingsTransition();
     button.classList.toggle('on', enabled);
     button.setAttribute('aria-checked', String(enabled));
-    if (rerender) setTimeout(function() { if (modalOpen) renderSettingsBody(); }, 190);
+    if (rerender) renderSettingsAfterTransition();
   }
 
   function renderSettingsBody() {
@@ -324,7 +341,7 @@
     var dph = settingRow(T.chartsToggle, switchButton('charts-toggle', displayCfg.charts !== false));
     dph += settingRow(T.sparkLabel, selectControl('spark-min', String(displayCfg.sparkMinutes || 5), [1,2,5,10,30].map(function(m) { return [String(m), m + (zh?' 分钟':' min')]; })));
     dph += settingRow(T.tabularNums, switchButton('tabular-toggle', displayCfg.tabularNums !== false), T.tabularNumsTip);
-    var groupLabels = {system:T.systemGroup,disk:T.diskLabel,network:T.networkGroup,gpuSummary:T.gpuSummaryGroup,gpuCards:T.gpuCardsGroup};
+    var groupLabels = {cpu:'CPU',memory:'RAM',disk:T.diskLabel,network:T.networkGroup,gpuSummary:T.gpuSummaryGroup,gpuCards:T.gpuCardsGroup};
     Object.keys(groupLabels).forEach(function(key) {
       dph += settingRow(groupLabels[key], switchButton('group-toggle', !(displayCfg.hiddenGroups || {})[key], key));
     });
@@ -380,14 +397,36 @@
       applyGroupVisibility();
       animateSwitch(this, displayCfg.showGpuUsers);
     });
+    var actionControls = [
+      ['editor', zh ? '新建 / 切换编辑器视图' : 'Create / Switch Editor View'],
+      ['window', zh ? '新建 / 移动到新窗口' : 'Create / Move to New Window'],
+    ];
+    if (typeof localMode !== 'undefined' && localMode) {
+      actionControls.push(['terminal', zh ? '打开 SSH 终端' : 'Open SSH Terminal']);
+      actionControls.push(['remoteWindow', zh ? '打开远程窗口' : 'Open Remote Window']);
+    }
+    var actionCfg = serversCfg.actions || {};
+    var actionsBody = document.getElementById('sett-actions-body');
+    actionsBody.innerHTML = actionControls.map(function(entry) {
+      return settingRow(entry[1], switchButton('action-' + entry[0], actionCfg[entry[0]] !== false));
+    }).join('');
+    actionControls.forEach(function(entry) {
+      actionsBody.querySelector('[data-act="action-' + entry[0] + '"]').addEventListener('click', function() {
+        var actions = Object.assign({}, serversCfg.actions || {});
+        actions[entry[0]] = actions[entry[0]] === false;
+        serversCfg.actions = actions;
+        sendToExtension({cmd:'setConfig',key:'servers',value:serversCfg});
+        if (typeof localMode !== 'undefined' && localMode) renderServers();
+        animateSwitch(this, actions[entry[0]]);
+      });
+    });
     var serversSection = document.getElementById('sett-servers-section');
     if (typeof localMode !== 'undefined' && localMode) {
       serversSection.hidden = false;
       var serversBody = document.getElementById('sett-servers-body');
-      serversBody.innerHTML = settingRow(zh ? '仅刷新可见面板' : 'Refresh visible panels only', switchButton('servers-visible', serversCfg.visibleOnly === true))
+      serversBody.innerHTML = settingRow(zh ? '仅刷新可见面板' : 'Refresh visible panels only', switchButton('servers-visible', serversCfg.visibleOnly === true), zh ? '开启后，未显示的服务器会暂停采样，图表趋势可能中断，切换回来时加载会更慢。' : 'Hidden servers stop sampling when enabled. Charts may have gaps, and switching back can load more slowly.')
         + settingRow(zh ? '启动时恢复上次的标签页' : 'Restore tabs on startup', switchButton('servers-restore', serversCfg.restoreTabs !== false))
-        + settingRow(zh ? 'Remote-SSH 自动安装' : 'Remote-SSH auto-install', '<button type="button" class="tb" data-act="ssh-default-add"></button>', zh ? '加入默认列表后，连接服务器时自动安装。' : 'Add to the default list to install automatically on SSH hosts.')
-        + '<div class="sett-hint ssh-default-error" id="ssh-default-error" hidden></div>';
+        + settingRow(zh ? 'Remote-SSH 自动安装' : 'Remote-SSH auto-install', '<button type="button" class="tb" data-act="ssh-default-add"></button>', zh ? '加入默认列表后，连接服务器时自动安装。' : 'Add to the default list to install automatically on SSH hosts.');
       serversBody.querySelector('[data-act="ssh-default-add"]').addEventListener('click', addSshDefaultExtension);
       updateSshDefaultUi();
       serversBody.querySelector('[data-act="servers-visible"]').addEventListener('click', function() {
@@ -477,6 +516,7 @@
         else if (a==='bar-toggle') { cfg.barEnabled = !(cfg.barEnabled !== false); }
         pushCfg();
         if (a === 'radio') {
+          holdSettingsTransition();
           this.parentElement.querySelectorAll('button').forEach(function(button) { button.classList.toggle('on', button === btn); });
         } else if (a === 'bar-toggle') animateSwitch(this, cfg.barEnabled, true);
         else if (a === 'gpu-summary') animateSwitch(this, cfg.gpu.summary, true);

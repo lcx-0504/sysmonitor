@@ -54,7 +54,10 @@ class MonitorService {
 
   start() { this.scheduler.start(); }
   pause() { this.scheduler.pause(); }
-  resume() { this.scheduler.resume(); }
+  resume({ force = false } = {}) {
+    if (force) for (const runner of this.runners) runner.nextDueAt = 0;
+    this.scheduler.resume();
+  }
   updateConfig(runtimeConfig) {
     const intervalChanged = this.runtimeConfig.refreshInterval !== runtimeConfig.refreshInterval;
     this.runtimeConfig = runtimeConfig;

@@ -2,7 +2,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const pkg = require('../../package.json');
-const WEBVIEW_SCRIPT_FILES = ['webview.js', 'webview-performance.js', 'webview-settings.js', 'webview-navigation.js', 'webview-processes.js'];
+const WEBVIEW_SCRIPT_FILES = ['webview.js', 'webview-performance.js', 'webview-settings.js', 'webview-navigation.js', 'webview-servers.js', 'webview-processes.js'];
 
 async function getWebviewHtml({ initConfig, nonce }) {
   const [style, ...scripts] = await Promise.all([
@@ -36,7 +36,7 @@ async function getWebviewHtml({ initConfig, nonce }) {
 </div>
 <div class="device-strip" id="device-strip" role="tablist" aria-label="Devices" hidden></div>
 
-<div class="connection-banner" id="connection-banner"></div>
+<div class="connection-banner" id="connection-banner"><span id="connection-banner-text"></span><button type="button" class="connection-retry" id="connection-retry" hidden>重试</button></div>
 
 <!-- ── 设置模态 ── -->
 <div class="modal-mask" id="modal-mask">
@@ -59,9 +59,14 @@ async function getWebviewHtml({ initConfig, nonce }) {
     <div class="sett-label" id="sett-display-label">显示</div>
     <div id="sett-display-body"></div>
   </div>
+  <div class="sett-section" id="sett-actions-section">
+    <div class="sett-label" id="sett-actions-label">操作按钮</div>
+    <div id="sett-actions-body"></div>
+  </div>
   <div class="sett-section" id="sett-servers-section" hidden>
     <div class="sett-label" id="sett-servers-label">服务器</div>
     <div id="sett-servers-body"></div>
+    <div class="sett-hint ssh-default-error" id="ssh-default-error" hidden></div>
   </div>
   <div class="copyright">v${pkg.version} · © ${new Date().getFullYear()} Li Chenxi · ${pkg.license}<br><a href="https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor">Marketplace</a> · <a href="https://open-vsx.org/extension/LiChenxi/sysmonitor">Open VSX</a> · <a href="https://github.com/lcx-0504/sysmonitor">GitHub</a></div>
   </div>
@@ -72,7 +77,7 @@ async function getWebviewHtml({ initConfig, nonce }) {
 <!-- ── 性能 tab ── -->
 <div class="tab-content active" id="tab-perf">
 <div class="net-ssh-row" id="system-row">
-  <div class="card">
+  <div class="card" id="cpu-card">
     <svg class="spark-bg" id="cpu-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="cpu-spark-area" /></svg>
     <div class="card-head"><span class="card-label">CPU</span><span class="card-value" id="cpu-val">--</span></div>
     <div class="track"><div class="fill" id="cpu-bar" style="width:0%"></div></div>
@@ -80,7 +85,7 @@ async function getWebviewHtml({ initConfig, nonce }) {
     <div class="detail-row"><span id="l-5m">5 分钟</span><span id="load-5">--</span></div>
     <div class="detail-row"><span id="l-15m">15 分钟</span><span id="load-15">--</span></div>
   </div>
-  <div class="card">
+  <div class="card" id="mem-card">
     <svg class="spark-bg" id="ram-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="ram-spark-area" /></svg>
     <div class="card-head"><span class="card-label">RAM</span><span class="card-value" id="mem-val">--</span></div>
     <div class="track"><div class="fill" id="mem-bar" style="width:0%"></div></div>
@@ -154,7 +159,7 @@ async function getWebviewHtml({ initConfig, nonce }) {
 
 <div class="tab-content server-page" id="tab-servers">
   <div class="server-page-head"><strong id="server-page-title">服务器</strong><span class="spacer"></span><button class="tb" id="server-refresh-btn">刷新</button><button class="tb" id="server-settings-btn">设置</button></div>
-  <div class="filter-hint server-intro-hint" id="server-intro-hint"><span id="server-intro-text"></span><div class="server-intro-actions"><small id="server-intro-ssh-error" hidden></small><button type="button" class="tb" id="server-intro-close">我知道了</button><button type="button" class="tb on" id="server-intro-ssh-default">自动安装</button></div></div>
+  <div class="filter-hint server-intro-hint" id="server-intro-hint"><span id="server-intro-text"></span><div class="server-intro-actions"><small id="server-intro-ssh-error" hidden></small><button type="button" class="tb" id="server-intro-close">我知道了</button><button type="button" class="tb on" id="server-intro-ssh-default">加入默认扩展</button></div></div>
   <div class="server-list" id="server-list"></div>
 </div>
 

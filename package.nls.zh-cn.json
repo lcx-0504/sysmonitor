@@ -5,6 +5,12 @@
   "viewName": "系统监控",
   "procsName": "进程",
   "cmdOpen": "系统监控: 打开面板",
-  "cmdOpenEditor": "系统监控: 在编辑器中打开",
-  "cmdOpenWindow": "系统监控: 在新窗口中打开"
+  "cmdOpenEditor": "系统监控: 移到编辑器",
+  "cmdOpenWindow": "系统监控: 移到新窗口",
+  "cmdCopyToEditor": "系统监控: 在编辑器中打开",
+  "cmdCopyToWindow": "系统监控: 在新窗口打开",
+  "cmdOpenTerminal": "系统监控: 打开 SSH 终端",
+  "cmdOpenRemoteWindow": "系统监控: 打开远程窗口",
+  "cmdEditorReturnSidebar": "系统监控: 放回侧边栏",
+  "cmdEditorMoveWindow": "系统监控: 移到新窗口"
 }

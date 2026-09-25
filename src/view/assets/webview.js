@@ -1,6 +1,6 @@
   var vscode = acquireVsCodeApi();
   function sendToExtension(message) { vscode.postMessage(Object.assign({ version: 1 }, message)); }
-  var zh = true, T = {}, paused = false;
+  var zh = true, T = {}, paused = false, connectionAllowsAnimation = true;
 
   function colorClass(p) { return p >= 90 ? 'danger' : p >= 70 ? 'warn' : ''; }
   function tagColorClass(p) { return 'tag-' + (colorClass(p) || 'accent'); }
@@ -9,7 +9,7 @@
   function setLang(lang) {
     zh = lang && lang.startsWith('zh');
     T = zh
-      ? { min:' 分钟',cores:' 核',used:'已用',avail:'可用',total:'总计',srvNet:'服务器网络',net:'网络',localSSH:'本机 SSH',up:'↑ 上传',down:'↓ 下载',selAll:'全选空闲',clear:'清除',copyEnv:'复制环境变量',detecting:'检测中…',noGpu:'未检测到 GPU',updAt:'更新于 ',utilLabel:'利用率',memLabel:'显存',tempLabel:'温度',pwLabel:'功耗',
+      ? { min:' 分钟',cores:' 核',used:'已用',avail:'可用',total:'总计',srvNet:'服务器网络',net:'网络',localSSH:'本机 SSH',up:'↑ 上传',down:'↓ 下载',selAll:'全选空闲',clear:'清除',copyEnv:'复制环境变量',detecting:'检测中…',noGpu:'未检测到 GPU',updAt:'更新',utilLabel:'利用率',memLabel:'显存',tempLabel:'温度',pwLabel:'功耗',
           perfTab:'性能',procTab:'进程',serversTab:'服务器',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',barAlign:'位置',barPriority:'优先级',barPriorityTip:'数值越大越靠边（默认 10）',close:'关闭',
           netLabel:'网络速率',gpuLabel:'GPU',
           scopeOff:'关',scopeSummary:'总览',scopeCard:'指定卡',scopeMy:'我的卡',metUtil:'仅利用率',metVram:'仅显存',metBoth:'全部显示',
@@ -17,7 +17,7 @@
           sshLabel:'SSH速率',gpuSummary:'GPU总览',gpuIdleIds:'显示空闲卡号',gpuPerf:'GPU性能显示',gpuAll:'所有卡',gpuSpecify:'指定卡',gpuFirst:'前几张',gpuMetric:'GPU显示指标',gpuSkipIdle:'隐藏空闲卡',viewProcs:'查看进程',
           diskLabel:'磁盘',diskUsage:'磁盘容量',diskIO:'磁盘速率',diskIORead:'仅读',diskIOWrite:'仅写',diskNoData:'无磁盘数据',diskReserved:'预留',diskFilter:'挂载过滤',diskDefault:'默认',diskMore:'更多',diskAll:'全部',diskCustom:'自定义',diskShowVirtual:'排除虚拟 FS',diskShowVirtualTip:'如 tmpfs、sysfs、proc',diskExcludeFs:'排除 FS 类型',diskExcludeFsTip:'如 vfat、ntfs、fuse',diskExcludePath:'排除路径前缀',diskExcludePathTip:'如 /proc、/sys、/run',diskHideParent:'仅显示叶子挂载点',diskHideParentTip:'父子挂载并存时仅显示子挂载，如 /autodl-fs/data',
           displayLabel:'显示',chartsToggle:'卡片背景图表',sparkLabel:'图表时长',tabularNums:'等宽数字',tabularNumsTip:'数字等宽，减少布局跳动',
-          pcpu:'CPU',pmem:'内存',pgpu:'GPU',ppid:'PID',puser:'用户',pname:'进程名',pcpuPct:'CPU',pmemCol:'内存',pgpuCol:'GPU',pcount:'共 {n} 进程',pnoGpu:'—',pcmd:'命令',filterHint:'搜索进程...',coreMode:'单核',wholeMode:'整机',bothMode:'都显示',sizeMode:'占用量',percentMode:'占比',expand:'展开',collapse:'收起',latency:'延迟',systemGroup:'CPU + 内存',networkGroup:'网络',gpuSummaryGroup:'GPU 总览',gpuCardsGroup:'GPU 卡片',myGpuBorder:'标记我的 GPU',gpuPicker:'空闲 GPU 选择器',gpuUsers:'GPU 占用用户',openEditor:'在编辑器中打开' }
+          pcpu:'CPU',pmem:'内存',pgpu:'GPU',ppid:'PID',puser:'用户',pname:'进程名',pcpuPct:'CPU',pmemCol:'内存',pgpuCol:'GPU',pcount:'共 {n} 进程',pnoGpu:'—',pcmd:'命令',filterHint:'搜索进程...',coreMode:'单核',wholeMode:'整机',bothMode:'都显示',sizeMode:'占用量',percentMode:'占比',expand:'展开',collapse:'收起',latency:'延迟',networkGroup:'网络',gpuSummaryGroup:'GPU 总览',gpuCardsGroup:'GPU 卡片',myGpuBorder:'标记我的 GPU',gpuPicker:'空闲 GPU 选择器',gpuUsers:'GPU 占用用户',openEditor:'在编辑器中打开' }
       : { min:' min',cores:' cores',used:'Used',avail:'Avail',total:'Total',srvNet:'Server Net',net:'Network',localSSH:'Local SSH',up:'↑ Up',down:'↓ Down',selAll:'Select All',clear:'Clear',copyEnv:'Copy Env Var',detecting:'Detecting…',noGpu:'No GPU detected',updAt:'Updated ',utilLabel:'Util',memLabel:'VRAM',tempLabel:'Temp',pwLabel:'Power',
           perfTab:'Perf',procTab:'Procs',serversTab:'Servers',settBtn:'Settings',running:'Running',stopped:'Paused',enabled:'Enabled',disabled:'Disabled',settTitle:'Settings',interval:'Refresh Interval',statusBar:'Status Bar',barToggle:'Show Status Bar',barAlign:'Position',barPriority:'Priority',barPriorityTip:'Higher values move toward the edge (default 10)',close:'Close',
           netLabel:'Network',gpuLabel:'GPU',
@@ -26,7 +26,7 @@
           sshLabel:'SSH Traffic',gpuSummary:'GPU Summary',gpuIdleIds:'Show Idle IDs',gpuPerf:'GPU Performance',gpuAll:'All Cards',gpuSpecify:'Specific',gpuFirst:'First N',gpuMetric:'GPU Metric',gpuSkipIdle:'Hide Idle',viewProcs:'View Procs',
           diskLabel:'Disk',diskUsage:'Disk Usage',diskIO:'Disk I/O',diskIORead:'Read',diskIOWrite:'Write',diskNoData:'No disk data',diskReserved:'Reserved',diskFilter:'Mount Filter',diskDefault:'Default',diskMore:'More',diskAll:'All',diskCustom:'Custom',diskShowVirtual:'Exclude Virtual FS',diskShowVirtualTip:'e.g. tmpfs, sysfs, proc',diskExcludeFs:'Exclude FS Type',diskExcludeFsTip:'e.g. vfat, ntfs, fuse',diskExcludePath:'Exclude Path Prefix',diskExcludePathTip:'e.g. /proc, /sys, /run',diskHideParent:'Leaf mounts only',diskHideParentTip:'Show only child mounts, e.g. /autodl-fs/data',
           displayLabel:'Display',chartsToggle:'Card Background Charts',sparkLabel:'Chart Duration',tabularNums:'Tabular Numbers',tabularNumsTip:'Equal-width digits reduce layout shifts',
-          pcpu:'CPU',pmem:'Memory',pgpu:'GPU',ppid:'PID',puser:'User',pname:'Process',pcpuPct:'CPU',pmemCol:'Memory',pgpuCol:'GPU',pcount:'{n} processes',pnoGpu:'—',pcmd:'Command',filterHint:'Search...',coreMode:'Core',wholeMode:'Machine',bothMode:'Both',sizeMode:'Used',percentMode:'Percent',expand:'Expand',collapse:'Collapse',latency:'Latency',systemGroup:'CPU + RAM',networkGroup:'Network',gpuSummaryGroup:'GPU Overview',gpuCardsGroup:'GPU Cards',myGpuBorder:'Highlight my GPUs',gpuPicker:'Idle GPU Picker',gpuUsers:'GPU Users',openEditor:'Open in Editor' };
+          pcpu:'CPU',pmem:'Memory',pgpu:'GPU',ppid:'PID',puser:'User',pname:'Process',pcpuPct:'CPU',pmemCol:'Memory',pgpuCol:'GPU',pcount:'{n} processes',pnoGpu:'—',pcmd:'Command',filterHint:'Search...',coreMode:'Core',wholeMode:'Machine',bothMode:'Both',sizeMode:'Used',percentMode:'Percent',expand:'Expand',collapse:'Collapse',latency:'Latency',networkGroup:'Network',gpuSummaryGroup:'GPU Overview',gpuCardsGroup:'GPU Cards',myGpuBorder:'Highlight my GPUs',gpuPicker:'Idle GPU Picker',gpuUsers:'GPU Users',openEditor:'Open in Editor' };
     document.getElementById('l-1m').textContent = '1' + T.min;
     document.getElementById('l-5m').textContent = '5' + T.min;
     document.getElementById('l-15m').textContent = '15' + T.min;
@@ -53,6 +53,25 @@
   // ── 趋势图（时间基准）──
   var SPARK_WINDOW = 5 * 60 * 1000;
   var cpuHist = [], ramHist = [], netTxHist = [], netRxHist = [], sshTxHist = [], sshRxHist = [], diskRHist = [], diskWHist = [], gpuHist = {};
+  var sparkStoppedAt = null;
+
+  function allSparkSeries() {
+    return [cpuHist, ramHist, netTxHist, netRxHist, sshTxHist, sshRxHist, diskRHist, diskWHist].concat(Object.keys(gpuHist).map(function(index) { return gpuHist[index]; }));
+  }
+  function setSparkActivity(nextPaused, nextConnectionAllowsAnimation) {
+    var wasActive = !paused && connectionAllowsAnimation;
+    var willBeActive = !nextPaused && nextConnectionAllowsAnimation;
+    if (wasActive && !willBeActive) sparkStoppedAt = Date.now();
+    else if (!wasActive && willBeActive && sparkStoppedAt !== null) {
+      var stoppedDuration = Date.now() - sparkStoppedAt;
+      allSparkSeries().forEach(function(series) {
+        if (series.length && typeof series[series.length - 1].receivedAt === 'number') series[series.length - 1].receivedAt += stoppedDuration;
+      });
+      sparkStoppedAt = null;
+    }
+    paused = nextPaused;
+    connectionAllowsAnimation = nextConnectionAllowsAnimation;
+  }
 
   function sparkColor(pct) {
     return pct >= 90 ? 'var(--danger)' : pct >= 70 ? 'var(--warn)' : 'var(--accent)';
@@ -61,8 +80,10 @@
     if (hist.length < 2) return Date.now();
     var latest = hist[hist.length - 1];
     var previous = hist[hist.length - 2];
-    var progress = Math.max(0, Math.min(1, (Date.now() - latest.t) / Math.max(1, (curInterval || 2) * 1000)));
-    return previous.t + (latest.t - previous.t) * progress;
+    var displayNow = typeof sparkStoppedAt === 'number' ? sparkStoppedAt : Date.now();
+    var progress = Math.max(0, Math.min(1, (displayNow - (typeof latest.receivedAt === 'number' ? latest.receivedAt : latest.t)) / Math.max(1, (curInterval || 2) * 1000)));
+    var start = typeof latest.animationFrom === 'number' ? latest.animationFrom : previous.t;
+    return start + (latest.t - start) * progress;
   }
   function sparkInterpolatedValue(before, after, time) {
     var span = after.t - before.t;
@@ -132,7 +153,7 @@
   }
   var lastSparkFrame = 0;
   function animateSparks(frameTime) {
-    if (frameTime - lastSparkFrame >= 32 && !paused && displayCfg && displayCfg.charts !== false && document.getElementById('tab-perf').classList.contains('active')) {
+    if (frameTime - lastSparkFrame >= 32 && !paused && connectionAllowsAnimation && displayCfg && displayCfg.charts !== false && document.getElementById('tab-perf').classList.contains('active')) {
       lastSparkFrame = frameTime;
       renderSpark(document.getElementById('cpu-spark-area'), null, cpuHist, 100, sparkColor(cpuHist.length ? cpuHist[cpuHist.length - 1].v : 0));
       renderSpark(document.getElementById('ram-spark-area'), null, ramHist, 100, sparkColor(ramHist.length ? ramHist[ramHist.length - 1].v : 0));
@@ -147,11 +168,16 @@
     }
     requestAnimationFrame(animateSparks);
   }
-  function pushHist(arr, val, sampleTime) {
-    var now = typeof sampleTime === 'number' ? sampleTime : Date.now();
-    if (arr.length && arr[arr.length - 1].t === now) { arr[arr.length - 1].v = val; return; }
-    arr.push({t: now, v: val});
-    var cutoff = now - SPARK_WINDOW - Math.max(1, (curInterval || 2) * 1000) * 2;
+  function pushHist(arr, val, sampleTime, restoring) {
+    var sourceTime = typeof sampleTime === 'number' ? sampleTime : Date.now();
+    var previous = arr.length ? arr[arr.length - 1] : null;
+    if (previous && (previous.sourceTime === sourceTime || previous.sourceTime === undefined && previous.t === sourceTime)) { previous.v = val; return; }
+    var interval = Math.max(1, (curInterval || 2) * 1000);
+    var sourceDelta = previous ? Math.max(1, sourceTime - (previous.sourceTime === undefined ? previous.t : previous.sourceTime)) : 0;
+    var chartTime = previous ? previous.t + (sourceDelta > interval * 2 ? interval : sourceDelta) : sourceTime;
+    var animationFrom = previous ? restoring || arr.length < 2 ? previous.t : sparkDisplayTime(arr) : chartTime;
+    arr.push({t: chartTime, sourceTime: sourceTime, receivedAt: Date.now(), animationFrom: animationFrom, v: val});
+    var cutoff = chartTime - SPARK_WINDOW - interval * 2;
     // 留出延迟滚动所需的左边界锚点，避免旧点过早移除。
     while (arr.length > 2 && arr[1].t < cutoff) arr.shift();
   }
@@ -159,10 +185,16 @@
   // ── 消息处理 ──
   window.addEventListener('message', function(evt) {
     var data = evt.data;
+    if (data.cmd === 'navigatePage' && (data.page === 'perf' || data.page === 'proc')) {
+      if (typeof localMode !== 'undefined' && !localMode) vscode.setState(Object.assign({}, vscode.getState() || {}, { page: data.page }));
+      switchTab(data.page, false);
+      return;
+    }
     if (data.cmd === 'uiState') {
       if (data.processDisplay) { processDisplay = data.processDisplay; renderProcTable(); }
       if (typeof data.paused === 'boolean') {
-        paused = data.paused;
+        setSparkActivity(data.paused, connectionAllowsAnimation);
+        if (typeof localMode !== 'undefined' && localMode) refreshConnectionRetryButton();
         var pauseButton = document.getElementById('pause-btn');
         pauseButton.textContent = paused ? T.stopped : T.running;
         pauseButton.classList.toggle('on', !paused);
@@ -173,6 +205,7 @@
       barCfg = data.barCfg || barCfg;
       diskCfg = data.diskCfg || diskCfg;
       displayCfg = data.displayCfg || displayCfg;
+      if (data.serversCfg) serversCfg = data.serversCfg;
       SPARK_WINDOW = (displayCfg.sparkMinutes || 5) * 60 * 1000;
       applyTabularNums();
       applyCharts();
@@ -184,7 +217,7 @@
         sshDefaultPending = false;
         updateSshDefaultUi();
       }
-      if (modalOpen && !settingMenu) renderSettingsBody();
+      if (modalOpen && !settingMenu) renderSettingsAfterTransition();
       return;
     }
     if (data.cmd !== 'snapshot') return;
@@ -348,6 +381,7 @@
           renderGpuUsers(g);
         });
       }
+      updateGpuStatsFit();
     } else {
       gpuBody.innerHTML = '';
       renderedAcceleratorKeys = [];
@@ -436,12 +470,13 @@
 
   // ── Tab 切换 ──
   function switchTab(name, notify) {
+    if (typeof editorMode !== 'undefined' && editorMode && name === 'servers') return;
     if (notify !== false && typeof localMode !== 'undefined' && localMode) {
       requestedPage = name;
       navigation = Object.assign({}, navigation, { page: name });
       updateDeviceTabsPresentation();
       updateLocalIntro();
-      connectionBanner.classList.toggle('show', !!connectionBanner.textContent && name !== 'servers');
+      connectionBanner.classList.toggle('show', !!connectionBannerText.textContent && name !== 'servers');
       closeRemoteMenu();
       storeNavigation();
       sendToExtension({cmd:'switchPage',page:name});
@@ -465,7 +500,8 @@
 
   // ── 暂停 ──
   document.getElementById('pause-btn').addEventListener('click',function(){
-    paused = !paused;
+    setSparkActivity(!paused, connectionAllowsAnimation);
+    if (typeof localMode !== 'undefined' && localMode) refreshConnectionRetryButton();
     this.textContent = paused ? T.stopped : T.running;
     this.classList.toggle('on', !paused);
     sendToExtension({cmd:'pause',value:paused});

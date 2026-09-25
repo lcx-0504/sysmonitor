@@ -1,14 +1,55 @@
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const { formatStatusBarText } = require('../src/view/status-bar-controller');
 const { getWebviewHtml, WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-html');
 const { MonitorViewProvider } = require('../src/view/monitor-view-provider');
+const { moveMonitorPanelToNewWindow } = require('../src/view/editor-panel');
+const { normalizeConfig } = require('../src/config/normalize-config');
 const { buildMonitorViewModel, displayDeviceName } = require('../src/services/monitor-view-model');
 const readWebviewScript = () => WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(__dirname, '..', 'src/view/assets', fileName), 'utf8')).join('\n');
+
+test('server rows wrap at the CPU and RAM card breakpoint', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
+  assert.match(css, /\.net-ssh-row \{[^}]*gap: 8px;/);
+  assert.match(css, /\.net-ssh-row > \.card \{ flex: 1 1 146px;/);
+  assert.match(css, /\.server-list \{[^}]*container-type: inline-size;/);
+  assert.match(css, /@container \(max-width: 299px\) \{\s*\.server-row \{ flex-direction: column;/);
+  assert.match(css, /\.server-actions \{ width: 100%; justify-content: flex-end; \}/);
+});
+
+test('CPU and memory cards can be hidden independently', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src/view/webview-html.js'), 'utf8');
+  const settings = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview-settings.js'), 'utf8');
+  assert.match(html, /id="cpu-card"/);
+  assert.match(html, /id="mem-card"/);
+  assert.match(settings, /groupLabels = \{cpu:'CPU',memory:'RAM'/);
+  const script = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview-performance.js'), 'utf8');
+  const visibilityCode = script.slice(script.indexOf('  function applyGroupVisibility()'), script.indexOf('  function gpuStatsDescription('));
+  const ids = ['cpu-card', 'mem-card', 'system-row', 'disk-card', 'network-row', 'free-gpu-card', 'gpu-body', 'gpu-capsules', 'capsule-actions'];
+  const elements = Object.fromEntries(ids.map((id) => [id, { style: {} }]));
+  const context = {
+    document: { getElementById: (id) => elements[id], querySelector: () => ({ style: {} }), querySelectorAll: () => [] },
+    displayCfg: { hiddenGroups: { cpu: true, memory: false } },
+    lastGpuPayload: [], renderedDiskKeys: [], gpuInfoPopover: null, renderGpuUsers() {}, updateGpuStatsFit() {},
+  };
+  vm.runInNewContext(`${visibilityCode}\nthis.applyGroupVisibility = applyGroupVisibility;`, context);
+  context.applyGroupVisibility();
+  assert.equal(elements['cpu-card'].style.display, 'none');
+  assert.equal(elements['mem-card'].style.display, '');
+  assert.equal(elements['system-row'].style.display, '');
+  context.displayCfg.hiddenGroups = { cpu: false, memory: true };
+  context.applyGroupVisibility();
+  assert.equal(elements['cpu-card'].style.display, '');
+  assert.equal(elements['mem-card'].style.display, 'none');
+  context.displayCfg.hiddenGroups.cpu = true;
+  context.applyGroupVisibility();
+  assert.equal(elements['system-row'].style.display, 'none');
+});
 
 test('status bar consumes shared idle decisions instead of recomputing thresholds', () => {
   const text = formatStatusBarText({ cpu: false, ram: false, disk: false, diskIO: 'off', net: 'off', ssh: false, gpu: { summary: true, showIdleIds: true, mode: 'off' } }, {
@@ -140,6 +181,7 @@ test('editor panel preserves the original icon shape with light and dark variant
   });
   provider.buildHtml = async () => '<html></html>';
   await provider.openEditorPanel();
+  assert.equal(panel.title, os.hostname());
   assert.equal(path.basename(panel.iconPath.light), 'icon-tab-light.svg');
   assert.equal(path.basename(panel.iconPath.dark), 'icon-tab-dark.svg');
   const paths = [panel.iconPath.light, panel.iconPath.dark].map((file) => fs.readFileSync(file, 'utf8'));
@@ -148,6 +190,108 @@ test('editor panel preserves the original icon shape with light and dark variant
   assert.deepEqual(lineTags(paths[0]), lineTags(fs.readFileSync(path.join(__dirname, '..', 'icon.svg'), 'utf8')));
   assert.match(paths[0], /stroke="#424242"/);
   assert.match(paths[1], /stroke="#c5c5c5"/);
+});
+
+test('remote Editor actions move the active panel or return to its sidebar', async () => {
+  const panels = [];
+  const commands = [];
+  const vscode = {
+    ViewColumn: { Active: 1 }, Uri: { file: (file) => file },
+    window: { createWebviewPanel: () => {
+      const panel = { active: true, webview: { onDidReceiveMessage() {} }, onDidDispose() {}, reveal() { commands.push('reveal'); }, dispose() { commands.push('dispose'); } };
+      panels.push(panel);
+      return panel;
+    } },
+    commands: { async executeCommand(command) { commands.push(command); } },
+  };
+  const provider = new MonitorViewProvider({ vscode, monitorService: {}, configStore: {} });
+  provider.buildHtml = async () => '<html></html>';
+  provider.view = { show() { commands.push('show-sidebar'); }, webview: { postMessage(message) { commands.push(message); } } };
+  provider.isReady = true;
+  const first = await provider.openEditorPanel('proc');
+  assert.equal(provider.editorPages.get(first), 'proc');
+  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'perf' }, first);
+  assert.equal(provider.editorPages.get(first), 'perf');
+  first.active = false;
+  await provider.moveActiveEditorToNewWindow();
+  assert.deepEqual(commands.slice(-3), ['reveal', 'workbench.action.moveEditorToNewWindow', 'reveal']);
+  assert.equal(commands.includes('dispose'), false);
+  await provider.returnActiveEditorToSidebar();
+  assert.equal(provider.sidebarPage, 'perf');
+  assert.deepEqual(commands.slice(-3), [{ cmd: 'navigatePage', page: 'perf' }, 'show-sidebar', 'dispose']);
+  assert.equal(panels.length, 1);
+});
+
+test('remote Linux settings expose window action switches and update native title contexts', async () => {
+  const contexts = [];
+  let current = normalizeConfig({});
+  const provider = new MonitorViewProvider({
+    vscode: { commands: { executeCommand: (...args) => contexts.push(args) } },
+    monitorService: { scheduler: { isPaused: false }, readSnapshot: () => ({ accelerators: { value: null } }), updateConfig() {} },
+    configStore: {
+      getCurrent: () => current,
+      update(key, value) { current = normalizeConfig({ ...current, [key]: value }); },
+    },
+  });
+  contexts.length = 0;
+  provider.handleMessage({ version: 1, cmd: 'setConfig', key: 'servers', value: { actions: { editor: false, window: false } } });
+  assert.deepEqual(contexts.filter(([command, key]) => command === 'setContext' && key.startsWith('sysmonitor.action')), [
+    ['setContext', 'sysmonitor.actionEditorVisible', false],
+    ['setContext', 'sysmonitor.actionWindowVisible', false],
+  ]);
+  const html = await provider.buildHtml();
+  const init = JSON.parse(Buffer.from(html.match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
+  assert.equal(init.serversCfg.actions.editor, false);
+  assert.equal(init.serversCfg.actions.window, false);
+});
+
+test('repeated Editor moves remain sequential and keep the panel in its current window until each move', async () => {
+  const calls = [];
+  const complete = [];
+  const panel = { reveal(...args) { calls.push(['reveal', args.length]); }, dispose() { calls.push(['dispose']); } };
+  const vscode = { commands: { executeCommand(command) {
+    calls.push(['command', command]);
+    return new Promise((resolve) => complete.push(resolve));
+  } } };
+  const first = moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError: false });
+  const second = moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError: false });
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, [['reveal', 0], ['command', 'workbench.action.moveEditorToNewWindow']]);
+  complete.shift()();
+  await first;
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, [
+    ['reveal', 0], ['command', 'workbench.action.moveEditorToNewWindow'],
+    ['reveal', 0],
+    ['reveal', 0], ['command', 'workbench.action.moveEditorToNewWindow'],
+  ]);
+  complete.shift()();
+  await second;
+  assert.equal(calls.some(([name]) => name === 'dispose'), false);
+});
+
+test('a failed Editor move does not block a later move', async () => {
+  let attempts = 0;
+  const panel = { reveal() {}, dispose() { throw new Error('existing Editor must stay open'); } };
+  const vscode = { commands: { async executeCommand() {
+    attempts++;
+    if (attempts === 1) throw new Error('window move failed');
+  } } };
+  await assert.rejects(moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError: false }), /window move failed/);
+  await moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError: false });
+  assert.equal(attempts, 2);
+});
+
+test('returning to an unready remote sidebar preserves the Editor page', () => {
+  const messages = [];
+  const provider = new MonitorViewProvider({ vscode: {}, monitorService: { scheduler: { isPaused: false } }, configStore: {} });
+  const view = { webview: { postMessage(message) { messages.push(message); } } };
+  provider.view = view;
+  provider.sidebarPage = 'proc';
+  provider.pendingSidebarPage = 'proc';
+  provider.handleMessage({ version: 1, cmd: 'ready', page: 'perf' }, view);
+  assert.equal(provider.sidebarPage, 'proc');
+  assert.deepEqual(messages.at(-1), { cmd: 'navigatePage', page: 'proc' });
 });
 
 test('remote monitor opens its current page in a native floating window', async () => {
@@ -170,7 +314,7 @@ test('remote monitor opens its current page in a native floating window', async 
   provider.buildHtml = async (page) => `<html>${page}</html>`;
   await provider.openFloatingPanel();
   assert.equal(panel.webview.html, '<html>proc</html>');
-  assert.deepEqual(calls, [['reveal', 1], ['command', 'workbench.action.moveEditorToNewWindow']]);
+  assert.deepEqual(calls, [['reveal', undefined], ['command', 'workbench.action.moveEditorToNewWindow'], ['reveal', undefined]]);
 });
 
 test('multiple editor panels share snapshots and controls without sharing their lifecycle', async () => {
@@ -385,7 +529,9 @@ test('GPU footer shows users with a compact info button or falls back to stats',
   assert.equal(line.style.display, 'none');
   assert.equal(stats.style.display, 'flex');
   assert.match(style, /\.gpu-footer\s*\{[^}]*min-height:\s*18px;/);
+  assert.match(style, /\.gpu-mini\s*\{[^}]*flex:\s*1 1 146px;/);
   assert.match(style, /\.gpu-stats\s*\{[^}]*flex:\s*1 1 auto;[^}]*height:\s*18px;/);
+  assert.match(style, /\.gpu-stats\s*\{[^}]*gap:\s*12px;/);
   assert.match(style, /\.gpu-users\s*\{[^}]*font-size:\s*9px;/);
   assert.match(style, /\.gpu-user\s*\{[^}]*height:\s*14px;/);
   assert.match(style, /\.gpu-info\s*\{[^}]*border:\s*0;[^}]*opacity:\s*\.55;/);
@@ -396,6 +542,39 @@ test('GPU footer shows users with a compact info button or falls back to stats',
   assert.ok(script.indexOf('class="gpu-users" id="gpu-users-') < script.indexOf('class="gpu-stats" id="gpu-stats-'));
   assert.ok(script.indexOf('class="gpu-stats" id="gpu-stats-') < script.indexOf('class="gpu-info"'));
   assert.match(script, /statsElement\.innerHTML = gpuStatsMarkup\(g\)/);
+});
+
+test('GPU cards share the 146px wrap basis and hide footer labels only when text actually overflows', () => {
+  const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
+  const script = readWebviewScript();
+  assert.match(style, /\.net-ssh-row > \.card \{ flex: 1 1 146px;/);
+  assert.match(style, /\.gpu-mini \{ flex: 1 1 146px;/);
+  assert.match(style, /\.gpu-stats\.compact \.gpu-stat-label \{ display: none; \}/);
+  assert.match(script, /class="gpu-stat-label"/);
+  assert.doesNotMatch(script, /updateGpuCardBasis/);
+  const helper = script.slice(script.indexOf('  function updateGpuStatsFit('), script.indexOf('  function renderGpuUsers('));
+  let available = 150, required = 140, compact = null;
+  const stats = {
+    style: { display: 'flex' }, innerHTML: '<span>温度 35°C</span><span>功耗 42/250W</span>',
+    getBoundingClientRect: () => ({ width: available }),
+    classList: { toggle(name, value) { assert.equal(name, 'compact'); compact = value; } },
+  };
+  const measure = {
+    setAttribute() {}, getBoundingClientRect: () => ({ width: required }), remove() {},
+  };
+  const context = {
+    document: { querySelectorAll: () => [stats], createElement: () => measure, body: { appendChild() {} } },
+    window: { addEventListener() {} },
+  };
+  vm.runInNewContext(`${helper}\nthis.updateGpuStatsFit = updateGpuStatsFit;`, context);
+  context.updateGpuStatsFit();
+  assert.equal(compact, false);
+  available = 130;
+  context.updateGpuStatsFit();
+  assert.equal(compact, true);
+  available = 150;
+  context.updateGpuStatsFit();
+  assert.equal(compact, false);
 });
 
 test('GPU info appears immediately and refreshes while hovered', () => {
@@ -592,6 +771,40 @@ test('spark area grows from real samples, then interpolates the left boundary af
   const retained = [{ t: 1000, v: 10 }, { t: 3000, v: 30 }, { t: 5000, v: 50 }, { t: 7000, v: 70 }, { t: 9000, v: 90 }];
   context.geometry.pushHist(retained, 100);
   assert.equal(retained[0].t, 1000);
+});
+
+test('chart animation resumes at the paused position and compresses the inactive interval', () => {
+  const script = readWebviewScript();
+  const activity = script.slice(script.indexOf('  var SPARK_WINDOW ='), script.indexOf('  function sparkColor('));
+  const geometry = script.slice(script.indexOf('  function sparkDisplayTime('), script.indexOf('  function renderSpark('));
+  const history = script.slice(script.indexOf('  function pushHist('), script.indexOf('  // ── 消息处理'));
+  let now = 0;
+  const context = { Date: { now: () => now }, curInterval: 2, paused: false, connectionAllowsAnimation: true, Object };
+  vm.runInNewContext(`${activity}\n${geometry}\n${history}\nthis.chart = { pushHist, sparkDisplayTime, sparkPaths, setSparkActivity, cpuHist };`, context);
+  context.chart.pushHist(context.chart.cpuHist, 10, 0);
+  now = 2000;
+  context.chart.pushHist(context.chart.cpuHist, 20, 2000);
+  now = 4000;
+  context.chart.pushHist(context.chart.cpuHist, 30, 4000);
+  now = 4500;
+  const beforePause = context.chart.sparkDisplayTime(context.chart.cpuHist);
+  const beforeArea = context.chart.sparkPaths(context.chart.cpuHist, 100).area;
+  context.chart.setSparkActivity(true, true);
+  now = 400000;
+  assert.equal(context.chart.sparkDisplayTime(context.chart.cpuHist), beforePause);
+  context.chart.setSparkActivity(false, true);
+  assert.equal(context.chart.sparkDisplayTime(context.chart.cpuHist), beforePause);
+  context.chart.pushHist(context.chart.cpuHist, 40, 400000);
+  assert.equal(context.chart.sparkDisplayTime(context.chart.cpuHist), beforePause);
+  assert.equal(context.chart.sparkPaths(context.chart.cpuHist, 100).area, beforeArea);
+  assert.equal(context.chart.cpuHist.at(-1).t, 6000);
+  assert.equal(context.chart.cpuHist.at(-1).sourceTime, 400000);
+  now = 402000;
+  const beforeNextSample = context.chart.sparkDisplayTime(context.chart.cpuHist);
+  context.chart.pushHist(context.chart.cpuHist, 50, 402000);
+  assert.equal(context.chart.sparkDisplayTime(context.chart.cpuHist), beforeNextSample);
+  assert.equal(context.chart.cpuHist.at(-1).t, 8000);
+  assert.equal(context.chart.cpuHist.length, 5);
 });
 
 test('rate chart scale follows only the visible viewport, including interpolated edges', () => {

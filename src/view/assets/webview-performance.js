@@ -2,7 +2,9 @@
   function applyGroupVisibility() {
     var hidden = displayCfg.hiddenGroups || {};
     var pickerVisible = displayCfg.showGpuPicker !== false && lastGpuPayload.length > 0;
-    document.getElementById('system-row').style.display = hidden.system ? 'none' : '';
+    document.getElementById('cpu-card').style.display = hidden.cpu ? 'none' : '';
+    document.getElementById('mem-card').style.display = hidden.memory ? 'none' : '';
+    document.getElementById('system-row').style.display = hidden.cpu && hidden.memory ? 'none' : '';
     document.getElementById('disk-card').style.display = hidden.disk || !renderedDiskKeys || !renderedDiskKeys.length ? 'none' : '';
     document.getElementById('network-row').style.display = hidden.network ? 'none' : '';
     document.getElementById('free-gpu-card').style.display = hidden.gpuSummary ? 'none' : '';
@@ -12,6 +14,7 @@
     document.getElementById('capsule-actions').style.display = pickerVisible ? '' : 'none';
     document.querySelectorAll('.gpu-mini').forEach(function(card) { card.classList.toggle('my-gpu', displayCfg.highlightMyGpus !== false && card.dataset.mine === '1'); });
     if (!hidden.gpuCards) lastGpuPayload.forEach(renderGpuUsers);
+    updateGpuStatsFit();
     if (gpuInfoPopover) refreshGpuInfoPopover();
   }
   function gpuStatsDescription(gpu) {
@@ -21,12 +24,28 @@
   }
   function gpuStatsMarkup(gpu) {
     var temp = (gpu.temp || 0) + '°C';
-    var html = '<span>' + T.tempLabel + ' <b>' + temp + '</b></span>';
+    var html = '<span><span class="gpu-stat-label">' + T.tempLabel + ' </span><b>' + temp + '</b></span>';
     if (gpu.power) {
       var power = gpu.power.draw + '/' + gpu.power.limit + 'W';
-      html += '<span>' + T.pwLabel + ' <b>' + power + '</b></span>';
+      html += '<span><span class="gpu-stat-label">' + T.pwLabel + ' </span><b>' + power + '</b></span>';
     }
     return html;
+  }
+  function updateGpuStatsFit() {
+    var rows = document.querySelectorAll('.gpu-mini .gpu-stats');
+    if (!rows.length) return;
+    var measure = document.createElement('div');
+    measure.className = 'gpu-stats-measure';
+    measure.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(measure);
+    rows.forEach(function(stats) {
+      if (stats.style.display === 'none') return;
+      var available = stats.getBoundingClientRect().width;
+      if (!available) return;
+      measure.innerHTML = stats.innerHTML;
+      stats.classList.toggle('compact', measure.getBoundingClientRect().width > available);
+    });
+    measure.remove();
   }
   function renderGpuUsers(gpu) {
     var line = document.getElementById('gpu-users-' + gpu.idx);
@@ -109,7 +128,7 @@
     activeGpuInfoButton = button;
     refreshGpuInfoPopover();
   }
-  window.addEventListener('resize', function() { lastGpuPayload.forEach(renderGpuUsers); refreshGpuInfoPopover(); });
+  window.addEventListener('resize', function() { lastGpuPayload.forEach(renderGpuUsers); updateGpuStatsFit(); refreshGpuInfoPopover(); });
   window.addEventListener('blur', function() { hideGpuInfoPopover(); });
 
   var detailPopover = document.createElement('div');

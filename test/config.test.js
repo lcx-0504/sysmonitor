@@ -6,6 +6,27 @@ const test = require('node:test');
 const { DEFAULT_CONFIG } = require('../src/config/default-config');
 const { normalizeConfig } = require('../src/config/normalize-config');
 const { ConfigStore } = require('../src/config/config-store');
+const { setActionVisibilityContexts } = require('../src/view/action-visibility');
+
+test('action button settings default on and drive all four native toolbar contexts', () => {
+  const calls = [];
+  const vscode = { commands: { executeCommand: (...args) => calls.push(args) } };
+  const defaults = setActionVisibilityContexts(vscode, normalizeConfig({}).servers);
+  assert.deepEqual(calls, [
+    ['setContext', 'sysmonitor.actionEditorVisible', true],
+    ['setContext', 'sysmonitor.actionWindowVisible', true],
+    ['setContext', 'sysmonitor.actionTerminalVisible', true],
+    ['setContext', 'sysmonitor.actionRemoteWindowVisible', true],
+  ]);
+  calls.length = 0;
+  setActionVisibilityContexts(vscode, normalizeConfig({}).servers, defaults);
+  assert.deepEqual(calls, []);
+  setActionVisibilityContexts(vscode, normalizeConfig({ servers: { actions: { editor: false, remoteWindow: false } } }).servers, defaults);
+  assert.deepEqual(calls, [
+    ['setContext', 'sysmonitor.actionEditorVisible', false],
+    ['setContext', 'sysmonitor.actionRemoteWindowVisible', false],
+  ]);
+});
 
 test('legacy partial objects are deeply completed without changing explicit values', () => {
   const normalized = normalizeConfig({
@@ -27,7 +48,18 @@ test('legacy partial objects are deeply completed without changing explicit valu
   assert.equal(normalized.display.tabularNums, true);
   assert.equal(normalized.display.showGpuUsers, true);
   assert.equal(normalized.display.showGpuPicker, true);
-  assert.equal(normalized.display.hiddenGroups.system, false);
+  assert.equal(normalized.display.hiddenGroups.cpu, false);
+  assert.equal(normalized.display.hiddenGroups.memory, false);
+});
+
+test('legacy CPU and memory visibility migrates to independent settings', () => {
+  const legacy = normalizeConfig({ display: { hiddenGroups: { system: true } } });
+  assert.equal(legacy.display.hiddenGroups.cpu, true);
+  assert.equal(legacy.display.hiddenGroups.memory, true);
+  const mixed = normalizeConfig({ display: { hiddenGroups: { system: true, cpu: false } } });
+  assert.equal(mixed.display.hiddenGroups.cpu, false);
+  assert.equal(mixed.display.hiddenGroups.memory, true);
+  assert.equal(Object.hasOwn(mixed.display.hiddenGroups, 'system'), false);
 });
 
 test('unknown fields survive in-memory normalization for forward and downgrade compatibility', () => {
