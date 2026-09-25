@@ -26,7 +26,7 @@ The screenshot shows the Chinese UI; the interface follows your VS Code display 
 | **GPU** | Per-card utilization, VRAM, temperature, power, model, and users of VRAM |
 | **Processes** | PID, process name, user, CPU, RAM, GPU memory and command |
 
-The performance panel has five independently hideable groups: CPU/RAM, disk, network/SSH, GPU overview, and GPU cards. Hiding a group changes only the panel layout; collection and status-bar data remain available. Background charts scroll smoothly between samples, can be turned off, and support a 1–30-minute window (5 minutes by default).
+The performance panel has six independently hideable groups: CPU, RAM, disk, network/SSH, GPU overview, and GPU cards. Hiding a group changes only the panel layout; collection and status-bar data remain available. Background charts scroll smoothly between samples, can be turned off, and support a 1–30-minute window (5 minutes by default).
 
 ### Disk capacity
 
@@ -68,7 +68,7 @@ To have Remote-SSH install System Monitor automatically in future remote windows
 
 The built-in **Settings** panel uses switches, segmented controls and dropdowns, with immediate updates. Disk-filter presets keep their custom fields visible as disabled previews. The default refresh interval is 2 seconds; presets of 1, 2, 5 and 10 seconds and custom values from 1–30 seconds are available. Disk mount discovery runs every 10 seconds. Each collector skips a new run if its previous run is still in progress.
 
-Default display settings show all five groups, charts, GPU user labels, current-user GPU borders and the idle-GPU picker. Charts use a 5-minute window and tabular numbers are on. By default, the status bar shows CPU, RAM and the GPU summary; network, SSH, disk and per-card GPU statistics are off.
+Default display settings show all six groups, charts, GPU user labels, current-user GPU borders and the idle-GPU picker. Charts use a 5-minute window and tabular numbers are on. By default, the status bar shows CPU, RAM and the GPU summary; network, SSH, disk and per-card GPU statistics are off.
 
 Servers settings restore open device and Editor tabs at startup by default (`"restoreTabs": true`). All open servers keep refreshing in the background unless `"visibleOnly": true` is selected; that option is off by default. These options are global, while the opened sidebar device tabs are saved per workspace.
 

@@ -1,5 +1,6 @@
 node_modules/
 *.vsix
+release/
 VSCode Extension Token.txt
 TODO.txt
 genai-chat/
@@ -7,3 +8,4 @@ Chat.md
 .DS_Store
 tmp
 .vscode/
+.trash/

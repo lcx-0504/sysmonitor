@@ -30,6 +30,7 @@ class CollectorRunner {
     this.snapshotStore.markAttempted(this.key, attemptedAt);
     const generation = this.generation;
     let timeoutId;
+    let collection;
     try {
       const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -38,7 +39,11 @@ class CollectorRunner {
           reject(error);
         }, this.timeoutMilliseconds);
       });
-      const result = await Promise.race([this.collector.collect(), timeoutPromise]);
+      collection = Promise.resolve(this.collector.collect());
+      // Timing out the wait does not stop the collector's underlying work.
+      const release = () => { this.isRunning = false; };
+      collection.then(release, release);
+      const result = await Promise.race([collection, timeoutPromise]);
       if (generation !== this.generation) return;
       this.snapshotStore.commit(this.key, result, this.clock());
       this.onStatusChange(this.key, 'fresh');
@@ -48,7 +53,7 @@ class CollectorRunner {
       this.onStatusChange(this.key, this.snapshotStore.read()[this.key].status, error);
     } finally {
       clearTimeout(timeoutId);
-      this.isRunning = false;
+      if (!collection) this.isRunning = false;
     }
   }
 }

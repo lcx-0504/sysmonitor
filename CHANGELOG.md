@@ -4,10 +4,11 @@
 
 - Monitor multiple Linux servers from a local macOS, Windows, or Linux window using SSH config aliases, including `Include` files. Local Linux also retains a built-in device tab for its own machine.
 - Manage devices from a Servers page with live CPU, RAM, and GPU summaries. Device tabs support drag ordering and middle-click close; views of the same machine share collection snapshots and chart history.
-- Open a server in the sidebar, an independent single-device Editor, a floating System Monitor window, an SSH terminal, or a Remote-SSH window. Server-list actions create new views; sidebar title actions move the selected SSH tab or copy a fixed local/remote device. Active Editor title actions duplicate or move the view and expose SSH-specific operations. The Remote-SSH menu lists recently opened remote folders when available.
+- Open a server in the sidebar, an independent single-device Editor, a floating System Monitor window, an SSH terminal, or a remote window. Server-list actions create new views; sidebar title actions move the selected SSH tab or copy a fixed local/remote device. Editor title actions return the view to the sidebar or move it to a new window. SSH views also offer terminal and remote-window shortcuts, with recent remote folders available in the connection menu.
 - Restore sidebar device tabs by workspace and Editor views with VS Code. Startup restoration is on by default; the optional visible-only refresh mode is off by default.
 - Reuse the Linux collectors over a persistent SSH connection, including remote CPU, process, and GPU user data. The SSH card measures traffic and latency for the monitor's own connection.
-- Preserve chart timing and the last sample's update time across view switches. Connection errors clear from the server list after a short interval, and closing the final monitor view updates its status immediately.
+- Wait for the first CPU, memory, disk, and GPU sample before opening a monitor view, and reuse cached samples when a server is already connected. Disconnected charts freeze, automatic SSH retries use a 10-second countdown, and manual retry can collect one update while monitoring is paused.
+- Configure CPU and RAM visibility separately, and control Editor, new-window, terminal, and remote-window buttons across server rows and native title bars.
 - Provide a first-use guide, Remote-SSH default-extension installation action, and Linux-specific status-bar behavior in local windows. The interface retains theme-aware icons and compact outlined cards.
 
 ## 1.4.2 — 2026-09-24

@@ -14,12 +14,15 @@ class ConfigStore {
     this.dirtyKeys = new Set();
     this.flushTimer = null;
     this.isWriting = false;
+    this.flushPromise = null;
   }
 
   read() {
     const configuration = this.vscode.workspace.getConfiguration(CONFIGURATION_SECTION);
     const rawConfig = {};
-    for (const key of CONFIGURATION_KEYS) rawConfig[key] = configuration.get(key);
+    for (const key of CONFIGURATION_KEYS) {
+      rawConfig[key] = this.current && this.dirtyKeys.has(key) ? this.current[key] : configuration.get(key);
+    }
     this.current = normalizeConfig(rawConfig);
     return this.current;
   }
@@ -43,28 +46,39 @@ class ConfigStore {
 
   scheduleFlush() {
     if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    if (this.flushPromise) return;
     this.flushTimer = setTimeout(() => {
       this.flush().catch((error) => this.onError(error));
     }, this.flushDelayMilliseconds);
   }
 
-  async flush() {
+  flush() {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = null;
-    if (this.dirtyKeys.size === 0) return;
-
-    const keys = [...this.dirtyKeys];
-    this.dirtyKeys.clear();
-    const configuration = this.vscode.workspace.getConfiguration(CONFIGURATION_SECTION);
+    if (this.flushPromise) return this.flushPromise;
+    if (this.dirtyKeys.size === 0) return Promise.resolve();
     this.isWriting = true;
-
-    try {
-      await Promise.all(keys.map((key) => configuration.update(key, this.current[key], true)));
-    } catch (error) {
-      for (const key of keys) this.dirtyKeys.add(key);
-      throw error;
-    } finally {
+    this.flushPromise = this.writePending().finally(() => {
       this.isWriting = false;
+      this.flushPromise = null;
+    });
+    return this.flushPromise;
+  }
+
+  async writePending() {
+    const configuration = this.vscode.workspace.getConfiguration(CONFIGURATION_SECTION);
+    while (this.dirtyKeys.size > 0) {
+      const keys = [...this.dirtyKeys];
+      const values = this.current;
+      this.dirtyKeys.clear();
+      const results = await Promise.allSettled(keys.map((key) => Promise.resolve().then(() => configuration.update(key, values[key], true))));
+      const failures = results.filter((result, index) => {
+        if (result.status !== 'rejected') return false;
+        this.dirtyKeys.add(keys[index]);
+        return true;
+      });
+      if (failures.length) throw failures[0].reason;
     }
   }
 

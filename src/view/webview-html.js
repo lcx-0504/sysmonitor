@@ -2,7 +2,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const pkg = require('../../package.json');
-const WEBVIEW_SCRIPT_FILES = ['webview.js', 'webview-performance.js', 'webview-settings.js', 'webview-navigation.js', 'webview-servers.js', 'webview-processes.js'];
+const WEBVIEW_SCRIPT_FILES = ['webview.js', 'webview-layout.js', 'webview-performance.js', 'webview-settings.js', 'webview-navigation.js', 'webview-servers.js', 'webview-processes.js'];
 
 async function getWebviewHtml({ initConfig, nonce }) {
   const [style, ...scripts] = await Promise.all([
@@ -34,7 +34,10 @@ async function getWebviewHtml({ initConfig, nonce }) {
     <button class="tb on" id="settings-btn">设置</button>
   </div>
 </div>
-<div class="device-strip" id="device-strip" role="tablist" aria-label="Devices" hidden></div>
+<div class="device-strip-wrap" id="device-strip-wrap" hidden>
+  <div class="device-strip" id="device-strip" role="tablist" aria-label="Devices" hidden></div>
+  <div class="device-scrollbar" id="device-scrollbar" aria-hidden="true" hidden><div class="device-scrollbar-thumb" id="device-scrollbar-thumb"></div></div>
+</div>
 
 <div class="connection-banner" id="connection-banner"><span id="connection-banner-text"></span><button type="button" class="connection-retry" id="connection-retry" hidden>重试</button></div>
 
@@ -158,7 +161,6 @@ async function getWebviewHtml({ initConfig, nonce }) {
 </div>
 
 <div class="tab-content server-page" id="tab-servers">
-  <div class="server-page-head"><strong id="server-page-title">服务器</strong><span class="spacer"></span><button class="tb" id="server-refresh-btn">刷新</button><button class="tb" id="server-settings-btn">设置</button></div>
   <div class="filter-hint server-intro-hint" id="server-intro-hint"><span id="server-intro-text"></span><div class="server-intro-actions"><small id="server-intro-ssh-error" hidden></small><button type="button" class="tb" id="server-intro-close">我知道了</button><button type="button" class="tb on" id="server-intro-ssh-default">加入默认扩展</button></div></div>
   <div class="server-list" id="server-list"></div>
 </div>

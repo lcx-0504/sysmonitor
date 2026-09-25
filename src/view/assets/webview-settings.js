@@ -137,7 +137,6 @@
     });
     row.appendChild(custom);
   }
-  function getCfg() { return barCfg; }
   var configPushTimer = null;
   function pushCfg() {
     if (configPushTimer) clearTimeout(configPushTimer);
@@ -216,7 +215,7 @@
   }
 
   function renderSettingsBody() {
-    var cfg = getCfg();
+    var cfg = barCfg;
     var gpu = cfg.gpu || {};
     var body = document.getElementById('sett-body');
     var h = '';
@@ -290,12 +289,7 @@
           var existFs = diskCfg.customFsExclude || '';
           var existPaths = diskCfg.customPathExclude || '';
           var existVfs = !!diskCfg.showVirtualFs;
-          var presets = [
-            {fs:'vfat',paths:'/proc,/sys,/run,/snap,/usr,/etc,/dev,/init',vfs:false},
-            {fs:'',paths:'',vfs:false},
-            {fs:'',paths:'',vfs:true}
-          ];
-          var matchesPreset = presets.some(function(p){ return existFs===p.fs && existPaths===p.paths && existVfs===p.vfs; });
+          var matchesPreset = Object.values(presetVals).some(function(p){ return existFs===p.fs && existPaths===p.paths && existVfs===p.vfs; });
           if (matchesPreset) {
             diskCfg.customFsExclude = showFs;
             diskCfg.customPathExclude = showPaths;
@@ -508,10 +502,6 @@
         else if (a==='radio') { cfg[this.dataset.key] = this.dataset.val; }
         else if (a==='gpu-summary') { cfg.gpu.summary = !cfg.gpu.summary; }
         else if (a==='gpu-idle-ids') { cfg.gpu.showIdleIds = !cfg.gpu.showIdleIds; }
-        else if (a==='gpu-mode') {
-          cfg.gpu.mode = this.dataset.val;
-        }
-        else if (a==='gpu-metric') { cfg.gpu.metric = this.dataset.val; }
         else if (a==='gpu-skip-idle') { cfg.gpu.skipIdle = !cfg.gpu.skipIdle; }
         else if (a==='bar-toggle') { cfg.barEnabled = !(cfg.barEnabled !== false); }
         pushCfg();

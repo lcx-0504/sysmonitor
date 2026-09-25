@@ -38,6 +38,31 @@ test('invalidated late collector results never overwrite the snapshot', async ()
   assert.equal(store.read().memory.value, null);
 });
 
+test('a timed-out collector stays single-flight until its underlying task settles', async () => {
+  const store = new SnapshotStore();
+  let finish;
+  let calls = 0;
+  const runner = new CollectorRunner({
+    key: 'cpu', snapshotStore: store, cadenceMilliseconds: 10, timeoutMilliseconds: 1,
+    collector: { collect() {
+      calls++;
+      return calls === 1 ? new Promise((resolve) => { finish = resolve; }) : Promise.resolve({ usagePercent: 20 });
+    } },
+    clock: () => 100,
+  });
+  await runner.run(0);
+  assert.equal(store.read().cpu.lastError.code, 'ETIMEDOUT');
+  assert.equal(runner.startIfDue(100), false);
+  assert.equal(calls, 1);
+  finish({ usagePercent: 99 });
+  await new Promise(setImmediate);
+  assert.equal(store.read().cpu.value, null);
+  assert.equal(runner.startIfDue(100), true);
+  await new Promise(setImmediate);
+  assert.equal(calls, 2);
+  assert.equal(store.read().cpu.value.usagePercent, 20);
+});
+
 test('MonitorScheduler uses one tick for due runners and pauses all collection', () => {
   let now = 0; let starts = 0; let renders = 0;
   const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 2000, clock: () => now, onTick: () => { renders += 1; } });

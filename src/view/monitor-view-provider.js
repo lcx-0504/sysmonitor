@@ -5,8 +5,9 @@ const { buildMonitorViewModel } = require('../services/monitor-view-model');
 const { getWebviewHtml } = require('./webview-html');
 const { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow } = require('./editor-panel');
 const { setActionVisibilityContexts } = require('./action-visibility');
+const { CONFIGURATION_KEYS } = require('../config/config-store');
 
-const CONFIG_KEYS = new Set(['refreshInterval', 'statusBar', 'disk', 'display', 'servers']);
+const CONFIG_KEYS = new Set(CONFIGURATION_KEYS);
 
 class MonitorViewProvider {
   constructor({ vscode, monitorService, configStore, uiStateStore = null, onConfigUpdated = () => {}, logger = () => {} }) {

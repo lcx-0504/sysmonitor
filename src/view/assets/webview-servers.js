@@ -181,9 +181,7 @@
     });
   }
 
-  document.getElementById('server-refresh-btn').addEventListener('click', function() { sendToExtension({cmd:'refreshServers'}); });
   document.getElementById('topbar-server-refresh').addEventListener('click', function() { sendToExtension({cmd:'refreshServers'}); });
-  document.getElementById('server-settings-btn').addEventListener('click', openModal);
   document.getElementById('server-intro-ssh-default').addEventListener('click', addSshDefaultExtension);
   updateSshDefaultUi();
   document.getElementById('server-intro-close').textContent = zh ? '我知道了' : 'Got it';

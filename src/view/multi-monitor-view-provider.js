@@ -5,11 +5,12 @@ const { getWebviewHtml } = require('./webview-html');
 const { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow } = require('./editor-panel');
 const { setActionVisibilityContexts } = require('./action-visibility');
 const { ServerDirectory } = require('./server-directory');
+const { CONFIGURATION_KEYS } = require('../config/config-store');
 const { expandHome } = require('../ssh/ssh-config');
 const pkg = require('../../package.json');
 
 const STATE_KEY = 'sysmonitor.sidebarDevices';
-const CONFIG_KEYS = new Set(['refreshInterval', 'statusBar', 'disk', 'display', 'servers']);
+const CONFIG_KEYS = new Set(CONFIGURATION_KEYS);
 const EXTENSION_ID = `${pkg.publisher}.${pkg.name}`;
 
 function normalizeNavigation(raw, localLinux) {
@@ -136,7 +137,9 @@ class MultiMonitorViewProvider {
     view.webview.onDidReceiveMessage((message) => this.handleMessage(message, source));
     view.onDidDispose(() => { if (this.sidebar === source) this.sidebar = null; this.refreshReferences(); });
     if (view.onDidChangeVisibility) view.onDidChangeVisibility(() => this.refreshReferences());
-    view.webview.html = await this.buildHtml(source.state, { sidebar: true });
+    const html = await this.buildHtml(source.state, { sidebar: true });
+    if (this.sidebar !== source) return;
+    view.webview.html = html;
     this.refreshReferences();
   }
 
@@ -161,7 +164,9 @@ class MultiMonitorViewProvider {
       this.updateEditorTitleActions();
       this.refreshReferences();
     });
-    panel.webview.html = await this.buildHtml(state);
+    const html = await this.buildHtml(state);
+    if (this.editors.get(panel) !== source) return;
+    panel.webview.html = html;
     this.updateEditorTitleActions();
     this.refreshReferences();
   }
@@ -324,7 +329,7 @@ class MultiMonitorViewProvider {
     if (!this.serverDirectory.hasHost(host)) return;
     const folder = this.serverDirectory.remoteFolder(host, folderIndex);
     if (folderIndex !== undefined && !folder) return;
-    await this.serverDirectory.runAction(host, 'remoteWindow', async () => {
+    await this.serverDirectory.runShortcutAction(host, 'remoteWindow', async () => {
       if (!folder) { await this.serverDirectory.openEmptyRemoteWindow(host); return; }
       const uri = this.vscode.Uri.from({ scheme: 'vscode-remote', authority: `ssh-remote+${folder.remote}`, path: folder.folder });
       const opened = await this.vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
@@ -354,7 +359,7 @@ class MultiMonitorViewProvider {
 
   async openTerminal(host) {
     if (!this.serverDirectory.hasHost(host)) return;
-    await this.serverDirectory.runAction(host, 'terminal', () => {
+    await this.serverDirectory.runShortcutAction(host, 'terminal', () => {
       const configured = this.vscode.workspace.getConfiguration('remote.SSH').get('configFile');
       const args = configured ? ['-F', expandHome(configured), host] : [host];
       const terminal = this.vscode.window.createTerminal({ name: `SSH: ${host}`, shellPath: 'ssh', shellArgs: args });
@@ -457,7 +462,7 @@ class MultiMonitorViewProvider {
     }
     else if (message.cmd === 'openServer' && source.sidebar && typeof message.host === 'string' && this.serverDirectory.hasHost(message.host)) {
       const id = 'ssh:' + message.host;
-      await this.serverDirectory.runAction(message.host, 'monitor', async () => {
+      await this.serverDirectory.runMonitorAction(message.host, async () => {
         if (message.inWindow) {
           await this.openFloatingPanel({ tabs: [id], selected: id, page: 'perf', processDisplay: { cpu: 'core', ram: 'size' } });
         } else if (message.inEditor) {

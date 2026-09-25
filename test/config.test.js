@@ -182,3 +182,84 @@ test('ConfigStore restores dirty keys after a failed write and always releases w
   assert.deepEqual(errors, []);
   configStore.dispose();
 });
+
+test('ConfigStore serializes updates made while a write is pending', async () => {
+  const writes = [];
+  const stored = {};
+  const store = new ConfigStore({
+    flushDelayMilliseconds: 60000,
+    vscode: { workspace: { getConfiguration: () => ({
+      get: (key) => stored[key],
+      update: (key, value) => new Promise((resolve) => {
+        writes.push({ value, finish() { stored[key] = value; resolve(); } });
+      }),
+    }) } },
+  });
+  store.update('refreshInterval', 3);
+  const firstFlush = store.flush();
+  await new Promise(setImmediate);
+  store.update('refreshInterval', 7);
+  const secondFlush = store.flush();
+  assert.equal(secondFlush, firstFlush);
+  assert.deepEqual(writes.map((write) => write.value), [3]);
+  writes[0].finish();
+  await new Promise(setImmediate);
+  assert.equal(store.isWriting, true);
+  assert.deepEqual(writes.map((write) => write.value), [3, 7]);
+  writes[1].finish();
+  await secondFlush;
+  assert.equal(stored.refreshInterval, 7);
+  assert.equal(store.isWriting, false);
+  assert.equal(store.dirtyKeys.size, 0);
+  store.dispose();
+});
+
+test('ConfigStore refresh preserves pending edits and reads other external changes', async () => {
+  const stored = { refreshInterval: 2, display: { charts: true } };
+  const store = new ConfigStore({
+    flushDelayMilliseconds: 60000,
+    vscode: { workspace: { getConfiguration: () => ({
+      get: (key) => stored[key], update: async (key, value) => { stored[key] = value; },
+    }) } },
+  });
+  store.update('refreshInterval', 7);
+  stored.display = { charts: false };
+  const refreshed = store.refresh();
+  assert.equal(refreshed.refreshInterval, 7);
+  assert.equal(refreshed.display.charts, false);
+  await store.flush();
+  assert.equal(stored.refreshInterval, 7);
+  store.dispose();
+});
+
+test('ConfigStore waits for all writes to settle and retries only failed keys', async () => {
+  let finishDisplay;
+  let shouldFail = true;
+  const written = [];
+  const store = new ConfigStore({
+    flushDelayMilliseconds: 60000,
+    vscode: { workspace: { getConfiguration: () => ({
+      get: () => undefined,
+      update: (key) => {
+        written.push(key);
+        if (key === 'refreshInterval' && shouldFail) throw new Error('write failed');
+        if (key === 'display') return new Promise((resolve) => { finishDisplay = resolve; });
+        return Promise.resolve();
+      },
+    }) } },
+  });
+  store.update('refreshInterval', 7);
+  store.update('display', { charts: false });
+  const flush = store.flush();
+  const rejected = assert.rejects(flush, /write failed/);
+  await new Promise(setImmediate);
+  assert.equal(store.isWriting, true);
+  assert.equal(store.flush(), flush);
+  finishDisplay();
+  await rejected;
+  assert.deepEqual([...store.dirtyKeys], ['refreshInterval']);
+  shouldFail = false;
+  await store.flush();
+  assert.deepEqual(written, ['refreshInterval', 'display', 'refreshInterval']);
+  store.dispose();
+});

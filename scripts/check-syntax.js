@@ -11,7 +11,11 @@ function listJavaScriptFiles(directory) {
     return entry.isFile() && entry.name.endsWith('.js') ? [absolutePath] : [];
   });
 }
-for (const filePath of listJavaScriptFiles(projectRoot)) {
+const sourceFiles = [
+  path.join(projectRoot, 'extension.js'),
+  ...['src', 'test', 'scripts'].flatMap((directory) => listJavaScriptFiles(path.join(projectRoot, directory))),
+];
+for (const filePath of sourceFiles) {
   const result = spawnSync(process.execPath, ['--check', filePath], { encoding: 'utf8' });
   if (result.status !== 0) {
     process.stderr.write(result.stderr || result.stdout);

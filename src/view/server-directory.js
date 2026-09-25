@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 const { listSshHosts } = require('../ssh/ssh-config');
-const INITIAL_SAMPLE_PARTITIONS = ['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators'];
+const { hasCompletePerformanceSample } = require('../services/monitor-sample');
 const INITIAL_SAMPLE_TIMEOUT_MS = 45000;
 
 class ServerDirectory {
@@ -26,6 +26,7 @@ class ServerDirectory {
     this.completedInitialSamples = new WeakSet();
     this.connectionStarts = new WeakMap();
     this.disposed = false;
+    this.refreshGeneration = 0;
   }
 
   notify(error = null) {
@@ -36,14 +37,19 @@ class ServerDirectory {
   hasHost(host) { return this.hosts.includes(host); }
 
   async refresh() {
+    if (this.disposed) return;
+    const generation = ++this.refreshGeneration;
     try {
       const configured = this.vscode.workspace.getConfiguration('remote.SSH').get('configFile');
+      const hosts = await this.loadHosts(configured || undefined);
+      if (this.disposed || generation !== this.refreshGeneration) return;
       this.manager.setConfigFile(configured || null);
-      this.hosts = await this.loadHosts(configured || undefined);
+      this.hosts = hosts;
       this.remoteFolders.clear();
       for (const host of this.hostErrors.keys()) this.clearHostError(host);
       this.notify();
     } catch (error) {
+      if (this.disposed || generation !== this.refreshGeneration) return;
       this.logger(`SSH config: ${error.message}`);
       this.notify(error.message);
     }
@@ -101,11 +107,7 @@ class ServerDirectory {
     const latestPoint = device.history[device.history.length - 1];
     const renderedAt = allowPausedModel && typeof device.modelAt === 'number' ? device.modelAt : latestPoint && latestPoint.t;
     if (typeof renderedAt !== 'number') return false;
-    return INITIAL_SAMPLE_PARTITIONS.every((key) => {
-      const part = snapshot[key];
-      return part && part.status === 'fresh' && typeof part.collectedAt === 'number'
-        && part.collectedAt <= renderedAt && (!since || part.collectedAt >= since);
-    });
+    return hasCompletePerformanceSample(snapshot, { since: since || 0, through: renderedAt });
   }
 
   hasCompletedInitialSample(device) {
@@ -152,29 +154,26 @@ class ServerDirectory {
     });
   }
 
-  async runAction(host, kind, action) {
-    if (this.disposed) return;
+  async runMonitorAction(host, action) {
+    if (this.disposed || this.pendingHosts.has(host)) return;
     const id = 'ssh:' + host;
-    const monitorAction = kind === 'monitor';
-    const actionKey = `${kind}\0${host}`;
-    if (monitorAction ? this.pendingHosts.has(host) : this.pendingActions.has(actionKey)) return;
-    const previous = monitorAction ? this.manager.get(id) : null;
-    const ready = monitorAction && this.hasCompletedInitialSample(previous);
+    const previous = this.manager.get(id);
+    const ready = this.hasCompletedInitialSample(previous);
     const needsNewSample = !previous || previous.state !== 'connected' || (!this.manager.paused && previous.service.scheduler && previous.service.scheduler.isPaused);
-    const sampleAfter = monitorAction && !ready ? Math.max(needsNewSample ? Date.now() : 0, previous ? this.connectionStarts.get(previous) || 0 : 0) : 0;
-    const hadHostError = monitorAction && this.hostErrors.has(host);
-    if (monitorAction && !ready) {
+    const sampleAfter = !ready ? Math.max(needsNewSample ? Date.now() : 0, previous ? this.connectionStarts.get(previous) || 0 : 0) : 0;
+    const hadHostError = this.hostErrors.has(host);
+    if (!ready) {
       this.pendingHosts.set(host, previous && previous.state === 'connected' ? 'loading' : 'connecting');
       this.manager.setPreparing(id, true);
-    } else if (!monitorAction) this.pendingActions.add(actionKey);
-    if (monitorAction) this.clearHostError(host);
-    if (monitorAction && !ready) this.notify();
+    }
+    this.clearHostError(host);
+    if (!ready) this.notify();
     let failed = false;
     try {
-      if (monitorAction && !ready && (!previous || previous.state !== 'connected')) {
+      if (!ready && (!previous || previous.state !== 'connected')) {
         await this.connect(host);
       }
-      if (monitorAction && !ready) {
+      if (!ready) {
         if (this.pendingHosts.get(host) !== 'loading') {
           this.pendingHosts.set(host, 'loading');
           this.notify();
@@ -182,24 +181,36 @@ class ServerDirectory {
         await this.waitForInitialSample(host, sampleAfter);
       }
       await action();
-      if (monitorAction) this.clearHostError(host);
+      this.clearHostError(host);
     } catch (error) {
       failed = true;
       if (!this.disposed) {
         const message = error && error.message ? error.message : String(error);
-        if (monitorAction) this.setHostError(host, message);
-        else if (this.vscode.window && this.vscode.window.showErrorMessage) this.vscode.window.showErrorMessage(message);
+        this.setHostError(host, message);
         this.logger(`SSH ${host}: ${message}`);
       }
     } finally {
-      if (monitorAction && !ready) this.manager.setPreparing(id, false);
-      if (monitorAction && failed && !this.disposed) this.onActionError();
-      if (monitorAction) {
-        this.pendingHosts.delete(host);
-        if (!ready || failed || hadHostError) this.notify();
-      } else {
-        this.pendingActions.delete(actionKey);
+      if (!ready) this.manager.setPreparing(id, false);
+      if (failed && !this.disposed) this.onActionError();
+      this.pendingHosts.delete(host);
+      if (!ready || failed || hadHostError) this.notify();
+    }
+  }
+
+  async runShortcutAction(host, kind, action) {
+    const actionKey = `${kind}\0${host}`;
+    if (this.disposed || this.pendingActions.has(actionKey)) return;
+    this.pendingActions.add(actionKey);
+    try {
+      await action();
+    } catch (error) {
+      if (!this.disposed) {
+        const message = error && error.message ? error.message : String(error);
+        if (this.vscode.window && this.vscode.window.showErrorMessage) this.vscode.window.showErrorMessage(message);
+        this.logger(`SSH ${host}: ${message}`);
       }
+    } finally {
+      this.pendingActions.delete(actionKey);
     }
   }
 

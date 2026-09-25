@@ -15,8 +15,7 @@ function globPattern(pattern) {
 async function expandInclude(pattern, home = os.homedir(), fileSystem = fs) {
   const homeExpanded = expandHome(pattern, home);
   const absolute = path.isAbsolute(homeExpanded) ? homeExpanded : path.join(home, '.ssh', homeExpanded);
-  const expanded = absolute;
-  const resolved = path.resolve(expanded);
+  const resolved = path.resolve(absolute);
   const root = path.parse(resolved).root;
   const parts = resolved.slice(root.length).split(path.sep).filter(Boolean);
   let candidates = [root];
@@ -35,9 +34,12 @@ async function expandInclude(pattern, home = os.homedir(), fileSystem = fs) {
 
 function parseWords(raw) {
   const words = [];
-  const expression = /(?:"([^"]*)"|'([^']*)'|([^\s#]+))/g;
+  const expression = /(?:#.*$|"([^"]*)"|'([^']*)'|([^\s#]+))/g;
   let match;
-  while ((match = expression.exec(raw))) words.push(match[1] ?? match[2] ?? match[3]);
+  while ((match = expression.exec(raw))) {
+    if (match[0].startsWith('#')) break;
+    words.push(match[1] ?? match[2] ?? match[3]);
+  }
   return words;
 }
 
@@ -50,7 +52,7 @@ async function listSshHosts(configFile, { home = os.homedir(), visited = new Set
   const contents = await fileSystem.readFile(canonical, 'utf8');
   const hosts = [];
   for (const line of contents.split(/\r?\n/)) {
-    const match = line.match(/^\s*(Host|Include)(?:\s+|=\s*)(.*)$/i);
+    const match = line.match(/^\s*(Host|Include)(?:\s*=\s*|\s+)(.*)$/i);
     if (!match) continue;
     const values = parseWords(match[2]);
     if (match[1].toLowerCase() === 'host') {

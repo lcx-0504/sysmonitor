@@ -19,7 +19,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node scripts/check-syntax.js && npm test"
+    "check": "node scripts/check-syntax.js && npm test",
+    "package": "node scripts/package.js"
   },
   "categories": [
     "Visualization",

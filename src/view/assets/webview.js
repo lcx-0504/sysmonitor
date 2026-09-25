@@ -9,7 +9,7 @@
   function setLang(lang) {
     zh = lang && lang.startsWith('zh');
     T = zh
-      ? { min:' 分钟',cores:' 核',used:'已用',avail:'可用',total:'总计',srvNet:'服务器网络',net:'网络',localSSH:'本机 SSH',up:'↑ 上传',down:'↓ 下载',selAll:'全选空闲',clear:'清除',copyEnv:'复制环境变量',detecting:'检测中…',noGpu:'未检测到 GPU',updAt:'更新',utilLabel:'利用率',memLabel:'显存',tempLabel:'温度',pwLabel:'功耗',
+      ? { min:' 分钟',cores:' 核',used:'已用',avail:'可用',total:'总计',srvNet:'服务器网络',net:'网络',localSSH:'本机 SSH',up:'↑ 上传',down:'↓ 下载',selAll:'全选空闲',clear:'清除',copyEnv:'复制环境变量',detecting:'检测中…',noGpu:'未检测到 GPU',updAt:'更新于 ',utilLabel:'利用率',memLabel:'显存',tempLabel:'温度',pwLabel:'功耗',
           perfTab:'性能',procTab:'进程',serversTab:'服务器',settBtn:'设置',running:'运行中',stopped:'已暂停',enabled:'已开启',disabled:'已关闭',settTitle:'设置',interval:'刷新间隔',statusBar:'状态栏',barToggle:'显示状态栏',barAlign:'位置',barPriority:'优先级',barPriorityTip:'数值越大越靠边（默认 10）',close:'关闭',
           netLabel:'网络速率',gpuLabel:'GPU',
           scopeOff:'关',scopeSummary:'总览',scopeCard:'指定卡',scopeMy:'我的卡',metUtil:'仅利用率',metVram:'仅显存',metBoth:'全部显示',
@@ -40,9 +40,7 @@
     document.getElementById('tab-perf-btn').textContent = T.perfTab;
     document.getElementById('tab-proc-btn').textContent = T.procTab;
     document.getElementById('tab-servers-btn').textContent = T.serversTab;
-    document.getElementById('server-page-title').textContent = T.serversTab;
     document.getElementById('topbar-server-refresh').textContent = zh ? '刷新列表' : 'Refresh List';
-    document.getElementById('server-refresh-btn').textContent = zh ? '刷新' : 'Refresh';
     document.getElementById('settings-btn').textContent = T.settBtn;
     document.getElementById('pause-btn').textContent = paused ? T.stopped : T.running;
     document.getElementById('proc-filter').placeholder = T.filterHint || '';
@@ -118,7 +116,7 @@
     var area = line + 'L' + pts[pts.length-1].split(',')[0] + ',100L' + pts[0].split(',')[0] + ',100Z';
     return { line: line, area: area };
   }
-  function renderSpark(areaEl, lineEl, hist, maxVal, color, viewTime) {
+  function renderSpark(areaEl, hist, maxVal, color, viewTime) {
     var p = sparkPaths(hist, maxVal, viewTime);
     if (!p) { areaEl.removeAttribute('d'); return; }
     areaEl.setAttribute('d', p.area);
@@ -148,22 +146,22 @@
     var timeline = first.length >= 2 ? first : second;
     var now = sparkDisplayTime(timeline);
     var maximum = sparkMaximum(first, second, now);
-    renderSpark(document.getElementById(firstAreaId), null, first, maximum, firstColor, now);
-    renderSpark(document.getElementById(secondAreaId), null, second, maximum, secondColor, now);
+    renderSpark(document.getElementById(firstAreaId), first, maximum, firstColor, now);
+    renderSpark(document.getElementById(secondAreaId), second, maximum, secondColor, now);
   }
   var lastSparkFrame = 0;
   function animateSparks(frameTime) {
     if (frameTime - lastSparkFrame >= 32 && !paused && connectionAllowsAnimation && displayCfg && displayCfg.charts !== false && document.getElementById('tab-perf').classList.contains('active')) {
       lastSparkFrame = frameTime;
-      renderSpark(document.getElementById('cpu-spark-area'), null, cpuHist, 100, sparkColor(cpuHist.length ? cpuHist[cpuHist.length - 1].v : 0));
-      renderSpark(document.getElementById('ram-spark-area'), null, ramHist, 100, sparkColor(ramHist.length ? ramHist[ramHist.length - 1].v : 0));
+      renderSpark(document.getElementById('cpu-spark-area'), cpuHist, 100, sparkColor(cpuHist.length ? cpuHist[cpuHist.length - 1].v : 0));
+      renderSpark(document.getElementById('ram-spark-area'), ramHist, 100, sparkColor(ramHist.length ? ramHist[ramHist.length - 1].v : 0));
       renderRatePair(netTxHist, netRxHist, 'net-spark-tx-area', 'net-spark-rx-area', 'var(--warn)', 'var(--accent)');
       renderRatePair(sshTxHist, sshRxHist, 'ssh-spark-tx-area', 'ssh-spark-rx-area', 'var(--warn)', 'var(--accent)');
       renderRatePair(diskRHist, diskWHist, 'disk-spark-r-area', 'disk-spark-w-area', 'var(--warn)', 'var(--accent)');
       Object.keys(gpuHist).forEach(function(index) {
         var series = gpuHist[index];
         var area = document.getElementById('gpu-spark-area-' + index);
-        if (area) renderSpark(area, null, series, 100, sparkColor(series.length ? series[series.length - 1].v : 0));
+        if (area) renderSpark(area, series, 100, sparkColor(series.length ? series[series.length - 1].v : 0));
       });
     }
     requestAnimationFrame(animateSparks);
@@ -243,7 +241,7 @@
     document.getElementById('load-5').textContent = performance.cpu.loadAverage.fiveMinutes + ' / ' + performance.cpu.coreCount + T.cores;
     document.getElementById('load-15').textContent = performance.cpu.loadAverage.fifteenMinutes + ' / ' + performance.cpu.coreCount + T.cores;
     recordHistory(cpuHist, performance.cpu.usagePercent);
-    renderSpark(document.getElementById('cpu-spark-area'), null, cpuHist, 100, sparkColor(performance.cpu.usagePercent));
+    renderSpark(document.getElementById('cpu-spark-area'), cpuHist, 100, sparkColor(performance.cpu.usagePercent));
 
     document.getElementById('mem-val').textContent = performance.memory.usagePercent + '%';
     setBar('mem-bar', performance.memory.usagePercent);
@@ -251,7 +249,7 @@
     document.getElementById('mem-avail').textContent = performance.memory.availableText;
     document.getElementById('mem-total').textContent = performance.memory.totalText;
     recordHistory(ramHist, performance.memory.usagePercent);
-    renderSpark(document.getElementById('ram-spark-area'), null, ramHist, 100, sparkColor(performance.memory.usagePercent));
+    renderSpark(document.getElementById('ram-spark-area'), ramHist, 100, sparkColor(performance.memory.usagePercent));
 
     renderDisk(performance.disks, instant);
 
@@ -352,7 +350,7 @@
             if (ub) ub.style.width = util + '%';
             if (mb) mb.style.width = memPct + '%';
             var ga = document.getElementById('gpu-spark-area-' + g.idx);
-            if (ga && gpuHist[g.idx]) renderSpark(ga, null, gpuHist[g.idx], 100, sparkColor(util));
+            if (ga && gpuHist[g.idx]) renderSpark(ga, gpuHist[g.idx], 100, sparkColor(util));
           });
         };
         if (instant) updateGpuBars(); else requestAnimationFrame(updateGpuBars);
@@ -375,7 +373,7 @@
           var statsElement = document.getElementById('gpu-stats-' + g.idx);
           if (statsElement) statsElement.innerHTML = gpuStatsMarkup(g);
           var ga = document.getElementById('gpu-spark-area-' + g.idx);
-          if (ga && gpuHist[g.idx]) renderSpark(ga, null, gpuHist[g.idx], 100, sparkColor(util));
+          if (ga && gpuHist[g.idx]) renderSpark(ga, gpuHist[g.idx], 100, sparkColor(util));
           var card = document.getElementById('gpu-users-' + g.idx);
           if (card) card.parentElement.dataset.mine = g.isMine ? '1' : '0';
           renderGpuUsers(g);
@@ -493,6 +491,7 @@
     var serversButton = document.getElementById('tab-servers-btn');
     if (serversButton) serversButton.classList.toggle('on', name==='servers');
     if (name === 'perf') requestAnimationFrame(function() { lastGpuPayload.forEach(renderGpuUsers); });
+    updateResponsiveLayout();
   }
   document.getElementById('tab-perf-btn').addEventListener('click',function(){switchTab('perf');});
   document.getElementById('tab-proc-btn').addEventListener('click',function(){switchTab('proc');});

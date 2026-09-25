@@ -109,11 +109,11 @@ test('native title actions distinguish creating a view from moving one', () => {
   ]);
 });
 
-test('development-only refactor documents and tests are excluded from VSIX', () => {
+test('development files are excluded from VSIX and runtime assets exist', () => {
   const vscodeIgnore = fs.readFileSync(path.join(projectRoot, '.vscodeignore'), 'utf8').split(/\r?\n/);
   assert.equal(vscodeIgnore.includes('test/'), true);
-  assert.equal(vscodeIgnore.includes('REFACTOR.md'), true);
-  assert.equal(vscodeIgnore.includes('REFACTOR_CHECKLIST.md'), true);
+  assert.equal(vscodeIgnore.includes('scripts/'), true);
+  assert.equal(vscodeIgnore.includes('.trash/'), true);
   assert.equal(vscodeIgnore.some((entry) => entry === 'src/' || entry === 'src/**'), false);
   assert.equal(fs.existsSync(path.join(projectRoot, 'src/view/assets/webview.css')), true);
   for (const fileName of WEBVIEW_SCRIPT_FILES) assert.equal(fs.existsSync(path.join(projectRoot, 'src/view/assets', fileName)), true);

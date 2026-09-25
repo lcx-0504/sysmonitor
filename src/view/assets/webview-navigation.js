@@ -144,6 +144,7 @@
   function updateDeviceTabsPresentation() {
     var hasTabs = navigation.tabs.length > 0;
     deviceStrip.hidden = editorMode || !hasTabs || navigation.page === 'servers';
+    document.getElementById('device-strip-wrap').hidden = deviceStrip.hidden;
     topbar.hidden = false;
     document.getElementById('tab-perf-btn').hidden = !hasTabs;
     document.getElementById('tab-proc-btn').hidden = !hasTabs;
@@ -154,10 +155,10 @@
       tab.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     var serverPageActive = navigation.page === 'servers';
-    document.querySelector('.server-page-head').hidden = true;
     document.getElementById('updated').hidden = serverPageActive;
     document.getElementById('pause-btn').hidden = serverPageActive;
     document.getElementById('topbar-server-refresh').hidden = editorMode || !serverPageActive;
+    updateDeviceScrollbar();
   }
 
   function renderDeviceTabs() {
