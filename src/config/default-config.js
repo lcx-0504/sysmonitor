@@ -5,6 +5,7 @@ const DEFAULT_CONFIG = Object.freeze({
   servers: Object.freeze({
     visibleOnly: false,
     restoreTabs: true,
+    remoteWindowMode: 'menu',
     actions: Object.freeze({ editor: true, window: true, terminal: true, remoteWindow: true }),
   }),
   statusBar: Object.freeze({

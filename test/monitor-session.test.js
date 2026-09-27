@@ -82,7 +82,7 @@ test('paused retry updates once, preserves history, and deduplicates simultaneou
   session.setConnection('disconnected', new Error('lost'));
   let attempts = 0;
   fixture.transport.retryNow = async () => { attempts++; session.setConnection('connected'); };
-  session.service.resume = function() { this.scheduler.isPaused = false; setImmediate(() => fixture.commit()); };
+  session.service.collectOnce = async () => fixture.commit();
   const first = session.retry();
   const second = session.retry();
   assert.equal(first, second);
@@ -97,10 +97,7 @@ test('failed paused retry stops its one-shot collection', async (t) => {
   const fixture = createSessionFixture({ paused: true });
   const session = fixture.session;
   t.after(() => session.dispose());
-  session.service.resume = function() {
-    this.scheduler.isPaused = false;
-    setImmediate(() => { session.loadError = 'sample failed'; session.settleWaiters(); });
-  };
+  session.service.collectOnce = async () => { session.loadError = 'sample failed'; session.settleWaiters(); };
   await assert.rejects(session.retry(), /sample failed/);
   assert.equal(session.service.scheduler.isPaused, true);
   assert.equal(session.paused, true);
@@ -117,9 +114,10 @@ test('each new view receives the same shared snapshot and history', (t) => {
   assert.equal(first.skipHistory, true);
 });
 
-test('first-sample failure is explicit and a subsequent retry can recover', async (t) => {
-  const fixture = createSessionFixture();
+for (const remote of [false, true]) test((remote ? 'SSH' : 'direct') + ' first-sample failure is explicit and a subsequent retry can recover', async (t) => {
+  const fixture = createSessionFixture({ remote, id: remote ? 'ssh:lab' : 'local' });
   t.after(() => fixture.session.dispose());
+  if (remote) await fixture.transport.connect();
   const ready = fixture.session.waitForInitialSample();
   const rejected = assert.rejects(ready, /NFS unavailable/);
   fixture.store.fail('diskTopology', new Error('NFS unavailable'));
@@ -127,7 +125,7 @@ test('first-sample failure is explicit and a subsequent retry can recover', asyn
   await rejected;
   assert.equal(fixture.session.viewState().hasSnapshot, false);
   assert.equal(fixture.session.loadError, 'NFS unavailable');
-  fixture.session.service.resume = function() { setImmediate(() => fixture.commit()); };
+  fixture.session.service.collectOnce = async () => fixture.commit();
   await fixture.session.retry();
   assert.equal(fixture.session.ready, true);
   assert.equal(fixture.session.loadError, null);

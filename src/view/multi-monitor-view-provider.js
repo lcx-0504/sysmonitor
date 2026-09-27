@@ -6,7 +6,7 @@ const { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWind
 const { setActionVisibilityContexts } = require('./action-visibility');
 const { ServerDirectory } = require('./server-directory');
 const { CONFIGURATION_KEYS } = require('../config/config-store');
-const { expandHome } = require('../ssh/ssh-config');
+const { openSshTerminal } = require('./ssh-terminal');
 const pkg = require('../../package.json');
 
 const STATE_KEY = 'sysmonitor.sidebarDevices';
@@ -318,23 +318,38 @@ class MultiMonitorViewProvider {
     if (picked) await this.openRemoteWindow(host, picked.folderIndex);
   }
 
+  async activateRemoteWindow(host, source = null) {
+    if (!this.serverDirectory.hasHost(host)) return;
+    const mode = this.configStore.getCurrent().servers.remoteWindowMode || 'menu';
+    if (mode === 'menu') {
+      if (!source) { await this.openRemoteWindowPicker(host); return; }
+      const folders = await this.serverDirectory.refreshRemoteFolders(host);
+      source.target.webview.postMessage({ cmd: 'remoteFolders', host, folders });
+      return;
+    }
+    try {
+      const folders = mode === 'recent' ? await this.serverDirectory.refreshRemoteFolders(host) : [];
+      await this.openRemoteWindow(host, folders.length ? folders[0].index : undefined);
+    } finally {
+      if (source) source.target.webview.postMessage({ cmd: 'remoteWindowActionDone', host });
+    }
+  }
+
   async openRemoteWindowForSidebar() {
     const state = this.sidebarState;
-    if (state.page !== 'servers' && state.selected && state.selected.startsWith('ssh:')) await this.openRemoteWindowPicker(state.selected.slice(4));
+    if (state.page !== 'servers' && state.selected && state.selected.startsWith('ssh:')) await this.activateRemoteWindow(state.selected.slice(4));
   }
 
   async openRemoteWindowForEditor() {
     const source = this.activeEditorSource();
-    if (source && source.state.selected.startsWith('ssh:')) await this.openRemoteWindowPicker(source.state.selected.slice(4));
+    if (source && source.state.selected.startsWith('ssh:')) await this.activateRemoteWindow(source.state.selected.slice(4));
   }
 
   async openTerminal(host) {
     if (!this.serverDirectory.hasHost(host)) return;
     await this.serverDirectory.runShortcutAction(host, 'terminal', () => {
       const configured = this.vscode.workspace.getConfiguration('remote.SSH').get('configFile');
-      const args = configured ? ['-F', expandHome(configured), host] : [host];
-      const terminal = this.vscode.window.createTerminal({ name: `SSH: ${host}`, shellPath: 'ssh', shellArgs: args });
-      terminal.show();
+      openSshTerminal(this.vscode, host, configured);
     });
   }
 
@@ -372,10 +387,7 @@ class MultiMonitorViewProvider {
       this.sendCurrent(source);
     } else if ((message.cmd === 'retryConnection' || message.cmd === 'retrySampling') && typeof message.deviceId === 'string') await this.retryConnection(source, message.deviceId);
     else if (message.cmd === 'refreshServers' && source.sidebar) this.refreshHosts();
-    else if (message.cmd === 'listRemoteFolders' && source.sidebar && typeof message.host === 'string' && this.serverDirectory.hasHost(message.host)) {
-      const folders = await this.serverDirectory.refreshRemoteFolders(message.host);
-      source.target.webview.postMessage({ cmd: 'remoteFolders', host: message.host, folders });
-    }
+    else if (message.cmd === 'activateRemoteWindow' && source.sidebar && typeof message.host === 'string') await this.activateRemoteWindow(message.host, source);
     else if (message.cmd === 'openRemoteWindow' && source.sidebar && typeof message.host === 'string') await this.openRemoteWindow(message.host, message.folderIndex);
     else if (message.cmd === 'addSshDefaultExtension') {
       try {
@@ -447,7 +459,22 @@ class MultiMonitorViewProvider {
     else if (message.cmd === 'openLink' && typeof message.url === 'string' && /^https:\/\//.test(message.url)) this.vscode.env.openExternal(this.vscode.Uri.parse(message.url));
     else if (message.cmd === 'pause' && typeof message.value === 'boolean') {
       this.manager.setPaused(message.value);
-      this.broadcast({ cmd: 'uiState', paused: message.value });
+    }
+  }
+
+  async notifyResidualProcesses(host, pids, acknowledge) {
+    const zh = (this.vscode.env.language || '').startsWith('zh');
+    const copy = zh ? '复制 PID' : 'Copy PIDs';
+    const understood = zh ? '我知道了' : 'Got it';
+    const message = zh
+      ? `远程服务器性能采集多次超时，服务器「${host}」有 ${pids.length} 个采集进程在超时或连接断开后仍未退出。监控已自动暂停，通常等待一段时间后这些采集进程会自动退出，但仍建议检查这些进程并按需清理。若服务器性能较低、频繁出现此类问题，建议增加刷新时间间隔（设置->刷新时间）。 PID：${pids.join(', ')}`
+      : `Remote performance collection has timed out repeatedly. Server “${host}” has ${pids.length} collection processes that have not exited after a timeout or disconnection. Monitoring has been paused automatically. These processes will usually exit on their own after a while, but you should still inspect them and clean them up if needed. If the server has limited performance and this happens frequently, consider increasing the refresh interval in Settings. PIDs: ${pids.join(', ')}`;
+    for (;;) {
+      const choice = await this.vscode.window.showWarningMessage(message, copy, understood);
+      if (choice === understood) { acknowledge(); return; }
+      if (choice !== copy) return;
+      try { await this.vscode.env.clipboard.writeText(pids.join(', ')); }
+      catch (error) { this.logger(error.message); }
     }
   }
 

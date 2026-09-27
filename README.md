@@ -10,121 +10,124 @@
 
 [中文说明](README.zh-CN.md)
 
-A lightweight VS Code / Cursor extension for monitoring **Linux systems locally, over SSH, or inside remote windows**. Keep several servers in the sidebar, open independent Editor tabs, and put local-window metrics in the status bar where available.
+Monitor Linux servers from VS Code or Cursor: check resource usage, find busy processes, and see which GPUs are available. View several servers side by side without leaving your editor.
 
-![System Monitor overview](https://raw.githubusercontent.com/lcx-0504/sysmonitor/main/screenshots/overview.png)
+Use it on a Linux machine, from a local macOS or Windows window over SSH, or inside a Remote-SSH, WSL, or Dev Container window.
 
-The screenshot shows the Chinese UI; the interface follows your VS Code display language.
+Monitor multiple servers over SSH from a local window, with views in the sidebar, editor, or separate windows.
 
-## Monitoring
+![Monitoring multiple servers over SSH from local windows](screenshots/local-ssh.png)
 
-| Area | What it shows |
-|------|---------------|
-| **CPU and RAM** | CPU usage, 1/5/15-minute load and core count; used, available and total memory |
-| **Disk** | Mount-point occupied, used, reserved and available capacity, plus read/write speed |
-| **Network and SSH** | Server upload/download rates; SSH connection traffic and TCP round-trip latency |
-| **GPU** | Per-card utilization, VRAM, temperature, power, model, and users of VRAM |
-| **Processes** | PID, process name, user, CPU, RAM, GPU memory and command |
+Monitor the connected machine inside a Remote-SSH window.
 
-The performance panel has six independently hideable groups: CPU, RAM, disk, network/SSH, GPU overview, and GPU cards. Hiding a group changes only the panel layout; collection and status-bar data remain available. Background charts scroll smoothly between samples, can be turned off, and support a 1–30-minute window (5 minutes by default).
+![System Monitor in a Remote-SSH window](screenshots/overview.png)
 
-### Disk capacity
+The screenshots show the Chinese UI. The extension follows your VS Code display language.
 
-Each mount's bar shows reserved space in gray, used space in the normal threshold color, and remaining available space as the unfilled portion. The value beside the bar is `(total − available) / total`; the percentage uses the same occupied-to-total ratio, turning yellow at 70% and red at 90%. Hover over `ⓘ` for reserved, used, available and total capacities. “Reserved” is the display name for `total − used − available`; it includes space unavailable to ordinary users regardless of the filesystem's reason. In narrow panels, the info icon moves to the mount-path row.
+## Get started
 
-### GPU cards
+Install **System Monitor** from [VS Marketplace](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor) or [Open VSX](https://open-vsx.org/extension/LiChenxi/sysmonitor), then open the **System Monitor** view.
 
-NVIDIA GPUs are detected through `nvidia-smi`. Cards can appear or disappear while the monitor runs. Model labels omit leading NVIDIA, GeForce, and Tesla prefixes. Below each VRAM bar, user labels show accumulated VRAM per user, ordered by usage and colored by their share of the card; hover over `(+N)` to see hidden users in a stacked list. You can toggle these labels, the theme-colored border marking GPUs used by your processes, and the idle-GPU picker independently. The picker selects idle cards and copies `CUDA_VISIBLE_DEVICES`.
+| Your environment | How to use it |
+|---|---|
+| Local Linux | View the local machine immediately. Use **Servers** to open other Linux hosts from your SSH config. |
+| Local macOS or Windows | Choose a Linux host from **Servers**. Monitoring your local macOS or Windows machine is not supported. |
+| Remote-SSH, WSL, or Dev Container on Linux | Install or enable the extension in that remote environment to monitor the machine where it runs. |
 
-GPU card metrics and GPU process information are committed together after both collection steps complete, so the panel and process tags use a consistent GPU result.
+### Connect from a local window
 
-### Process manager
+The server list reads host aliases from your SSH config. It uses `remote.SSH.configFile` when configured, otherwise `~/.ssh/config` (or `%USERPROFILE%\.ssh\config` on Windows), and supports included config files.
 
-Sort the full process set by CPU, RAM or GPU usage; the table displays the top 100 results. Search by process name, PID, user or command, or use `GPU0` / `#0` to filter by card. CPU cells switch between single-core percentage (default), whole-machine percentage and both; RAM cells switch between used capacity (default), percentage and both. Combined values stay in one cell and copy together.
+Background monitoring needs a working system `ssh` client and a connection that does not require an interactive password, key-passphrase, or verification-code prompt. SSH keys, an SSH agent, or an already authenticated reusable SSH connection can provide this. To check, replace `your-server` with your host alias and run:
 
-Process-name and command columns expand horizontally from their headers. Only PID is right-aligned. Right-click to copy a cell, a complete row or a PID; the process table stays in place while its context menu is open. Linux `ps` supplies the process CPU percentage as a lifetime average; whole-machine mode divides that value by the logical core count.
-
-### Sidebar, Editor and status bar
-
-In a local window, the Servers page lists aliases from your SSH config. Opening a server adds a sidebar device tab; the row's Editor and new-window actions create independent single-device views without changing that tab. The remote-window menu offers a direct connection and folders from Remote-SSH's recent history. Each Editor uses a native VS Code tab titled with the SSH alias and shows only Performance and Processes. Views of the same server share one collection snapshot and chart history. Open device tabs continue collecting in the background by default. The sidebar tabs are saved per workspace, and VS Code restores Editor panels with their selected device and page. Both restoration and visible-only collection have switches in Servers settings; restoration is on by default and visible-only collection is off. Editor-view, new-window, SSH-terminal, and remote-window action buttons can be shown or hidden independently under Action Buttons; the Servers-page Open button always remains available.
-
-The sidebar's native title actions move the active SSH device tab into an Editor or a separate window; the built-in local Linux device stays in the sidebar and opens as a copy. When an SSH tab is active, the title also offers an SSH terminal and a remote window. Device actions are hidden on the Servers page. An active monitor Editor has title actions to return its view to the sidebar or move it to a new window; SSH Editors also offer terminal and remote-window actions. The SSH terminal button opens an interactive terminal directly, while VS Code's Remote-SSH handles the remote-window connection. In a remote Linux window, the current machine likewise stays in the sidebar when opened in an Editor or new window. Pausing stops collection in that VS Code window; Retry in a disconnection banner can briefly collect one update for that server before returning to pause. The status bar belongs to the window environment: local Linux always shows its own machine, a remote Linux window shows that remote machine, and local macOS/Windows windows have no System Monitor status bar.
-
-The status bar can show CPU, RAM, disk capacity or I/O, network and SSH rates, and a GPU summary or per-card statistics. Its visibility, side, priority and individual metrics are configurable. Capacity and speed use 1024-based K/M/G/T units with one decimal place (`/s` for speed); durations use ms, s, m and h.
-
-## Quick Start
-
-Install the extension from [Marketplace](https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor) or [Open VSX](https://open-vsx.org/extension/LiChenxi/sysmonitor). What you see next depends on where VS Code runs the extension:
-
-- **Local Linux:** The System Monitor sidebar opens on the fixed Local device tab. Select Servers to add Linux machines from your SSH config. The status bar stays on local Linux metrics.
-- **Local macOS or Windows:** The sidebar opens directly on the Servers list, with no local-machine monitoring or System Monitor status bar. Select a Linux server to see Performance and Processes.
-- **Remote Linux:** Connect through Remote-SSH, WSL or a Dev Container, and install or enable the extension in that Linux environment. The System Monitor sidebar and status-bar metrics then appear for the remote system.
-
-The Servers list uses `remote.SSH.configFile` when set, otherwise `~/.ssh/config` (on Windows, `%USERPROFILE%\.ssh\config`). It includes explicit `Host` aliases from included config files. Connections use the system `ssh` command and must work without an interactive password, passphrase or TOTP prompt. They reuse your existing SSH configuration; no monitor service is installed on the server. The SSH card measures the monitor's own connection when the server exposes TCP counters.
-
-To have Remote-SSH install System Monitor automatically in future remote windows, use **Add to defaults** in the first-use guide on the local Servers page or under **Settings → Servers**. This adds the extension ID to the global `remote.SSH.defaultExtensions` setting; Remote-SSH installs the published Marketplace version.
-
-## Configuration
-
-The built-in **Settings** panel uses switches, segmented controls and dropdowns, with immediate updates. Disk-filter presets keep their custom fields visible as disabled previews. The default refresh interval is 2 seconds; presets of 1, 2, 5 and 10 seconds and custom values from 1–30 seconds are available. Disk mount discovery runs every 10 seconds. Each collector skips a new run if its previous run is still in progress.
-
-Local SSH monitoring and monitoring inside a remote window share the same collection session, snapshots, history, and deadlines. Collectors run concurrently; local SSH uses a persistent connection with independent remote requests. A command timeout cancels that request while other collection continues. Collection budgets are 5 seconds for CPU, memory, network and disk I/O, 12 seconds for processes, 6 seconds for disk topology, 32 seconds for GPUs, and 10 seconds for SSH metrics. The budget covers all steps within a collector. Opening a monitor from Servers waits for CPU, memory, disk and GPU data before opening the view. Remote-window and existing or restored views keep the monitor layout visible while loading, with “Loading…” in the GPU summary. Completed samples are published immediately, and existing views retain their last valid data on individual collection failures.
-
-Disk discovery uses `findmnt`, with `df -PTk` as a fallback when the primary command fails or returns malformed output. Both paths include network mounts and apply the same display filters. Mounts without valid capacity statistics are skipped individually. Collection failures, timeouts and cancellation preserve the previous snapshot. The SSH dispatcher uses temporary files for concurrent command output; it requires no installed daemon or additional language runtime.
-
-Each SSH collection connection creates a private `sysmonitor.*` directory under the remote `${TMPDIR:-/tmp}`. Request files are removed on completion, failure or cancellation. Closing the connection, reaching input EOF, or receiving HUP/TERM removes that session's directory while leaving other sessions and sibling files intact. Output files have size limits, and idle connections retain an empty directory. SIGKILL or sudden power loss can prevent exit cleanup; the extension does not bulk-delete historical directories by name prefix.
-
-Default display settings show all six groups, charts, GPU user labels, current-user GPU borders and the idle-GPU picker. Charts use a 5-minute window and tabular numbers are on. By default, the status bar shows CPU, RAM and the GPU summary; network, SSH, disk and per-card GPU statistics are off.
-
-Servers settings restore open device and Editor tabs at startup by default (`"restoreTabs": true`). All open servers keep refreshing in the background unless `"visibleOnly": true` is selected; that option is off by default. These options are global, while the opened sidebar device tabs are saved per workspace.
-
-The built-in status-bar settings are available in every window because they are global. Local macOS and Windows windows do not display a System Monitor status bar; those settings apply when the extension runs in a local or remote Linux window.
-
-You can also edit your VS Code **User** `settings.json`. This example **changes** the defaults to show network/SSH and GPUs used by your processes in the status bar, hide the disk group, and use a longer chart window:
-
-```jsonc
-{
-  "sysmonitor.refreshInterval": 5,
-  "sysmonitor.statusBar": {
-    "net": "both",
-    "ssh": true,
-    "gpu": {
-      "mode": "my"
-    }
-  },
-  "sysmonitor.display": {
-    "sparkMinutes": 10,
-    "hiddenGroups": { "disk": true }
-  }
-}
+```sh
+ssh -T -o BatchMode=yes your-server true
 ```
 
-Existing settings are merged with validated defaults, including settings saved by older versions. The built-in panel writes to User settings rather than workspace settings.
+If it completes successfully without asking for input, choose that host in **Servers** and click **Open**. The SSH terminal shortcut remains available for interactive logins.
 
-### GPU status bar modes
+To install System Monitor automatically in future Remote-SSH windows, click **Add to defaults** in **Settings → Servers**. Remote-SSH will install the published Marketplace version.
 
-| Mode | Description |
-|------|-------------|
-| `"off"` | No per-card stats (default) |
-| `"all"` | Show all cards |
-| `"first"` | Show first N cards (`"firstN": 4`) |
-| `"specify"` | Show specific cards (`"cards": [0, 1, 3]`) |
-| `"my"` | Show only cards used by your processes |
+## Features
 
-### Disk filter modes
+### Check resources and recent trends
 
-| Mode | Description |
-|------|-------------|
-| `"default"` | Excludes vfat, virtual FS, and common system paths |
-| `"more"` | Only excludes virtual FS |
-| `"all"` | Shows everything including virtual FS |
-| `"custom"` | Configure FS type exclusions, path prefix exclusions, and virtual FS visibility |
+The **Performance** page shows CPU usage and load, memory, disk capacity and I/O, network rates, and GPU metrics. Background charts help you spot changes over time. Hide the groups you do not need or turn off charts in Settings.
 
-## Requirements
+Hover over a disk's information icon for its used, reserved, and available space. Disk filters let you focus on the mounts that matter to you, including network storage.
 
-- Linux (remote or local)
-- `nvidia-smi` for NVIDIA GPU monitoring
-- `ss` for SSH traffic and latency on Remote-SSH connections
+### Find resource-heavy processes
+
+The **Processes** page sorts by CPU, memory, or GPU usage. Search by process name, PID, user, or command; use `GPU0` or `#0` to focus on a particular card. The table shows up to 100 matching results.
+
+Expand the command column to inspect how a process was launched, and right-click to copy a PID, cell, or row. CPU usage can be shown relative to a single core or the whole machine; memory can be shown as capacity or a percentage.
+
+### See GPU availability and usage
+
+For NVIDIA GPUs, view utilization, VRAM, temperature, power, and the users occupying memory. Highlight the cards used by your own processes, or choose idle cards and copy a `CUDA_VISIBLE_DEVICES` setting for your next command.
+
+GPU monitoring requires `nvidia-smi` on the monitored machine. Other system metrics remain available on machines without NVIDIA GPUs.
+
+### Multiple servers and windows
+
+Keep server tabs in the sidebar, open individual monitors in Editor tabs, or put them in separate windows. Title-bar buttons let you move existing views between these locations. Multiple views of one server share the same monitoring data.
+
+The **SSH terminal** shortcut opens a command-line session. **Open Remote Window** uses VS Code's Remote-SSH extension to open a development workspace. In **Settings → Action Buttons**, choose whether that button opens a new workspace, the first recent workspace, or a selection menu. With no recent history, it opens a new remote window without a folder.
+
+On local or remote Linux, the status bar can keep selected metrics visible while you work. It always represents the Linux machine running the extension; local macOS and Windows windows have no System Monitor status bar.
+
+## Settings
+
+Open **Settings** in the monitoring view. Changes are saved to VS Code User settings and apply immediately.
+
+| Setting | When it is useful |
+|---|---|
+| Refresh interval | The default is 2 seconds. Increase it when a server is busy or the connection is slow. |
+| Display and charts | Choose visible sections, chart history length, and GPU user labels. |
+| Status bar | Pick the metrics to keep visible, including specific GPUs or only those used by your processes. |
+| Disk filters | Show additional mounts or exclude filesystems and paths you do not need. |
+| Action buttons | Hide unused shortcuts and choose the remote-window button's behavior. |
+| Servers | Restore your tabs on startup, or enable **Refresh visible panels only** to reduce background collection. |
+
+Open server tabs continue collecting in the background by default. Visible-only collection reduces that work, but switching back may take longer to show fresh data. Sidebar device tabs are remembered per workspace.
+
+Click **Running / Paused** to pause or resume all monitoring in the current VS Code window. **Retry** while paused performs one update and leaves monitoring paused.
+
+## Questions and troubleshooting
+
+### A server is missing or will not connect
+
+Check the SSH config selected by VS Code, then refresh the Servers list. Entries need explicit `Host` aliases; wildcard patterns are not listed as individual servers.
+
+Test authentication with the non-interactive SSH command shown above. For a passphrase-protected private key, load the key into an SSH agent first. If the server requires TOTP or another interactive authentication step, complete it in a terminal or through an existing trusted authentication script and establish a reusable SSH master connection.
+
+If the local SSH client supports and is configured for [connection multiplexing](https://man.openbsd.org/ssh_config#ControlMaster), using options such as `ControlMaster`, `ControlPath`, and `ControlPersist`, the extension can reuse the authenticated connection. Run the test command again to confirm. Authentication is needed again when the master connection closes or expires.
+
+If connection multiplexing is unavailable or non-interactive access still fails, use **Open Remote Window** to sign in through Remote-SSH, then install or enable System Monitor in that remote window to monitor the server directly.
+
+### GPU or SSH information is unavailable
+
+Check that `nvidia-smi` works on the monitored machine for NVIDIA metrics. SSH traffic and latency require the Linux `ss` command and accessible TCP statistics. Missing optional metrics do not prevent other sections from working.
+
+With SSH connection multiplexing, traffic figures can include other sessions sharing the same TCP connection.
+
+### Disk usage looks different from “used space”
+
+The disk bar includes space unavailable to ordinary users, such as filesystem reserves. Hover over the information icon to see the breakdown. Mounts without usable capacity information are omitted.
+
+### Collection times out or monitoring pauses automatically
+
+Check the network and server load, and try a longer refresh interval. Existing views keep their last available data when collection fails.
+
+When several collection processes are confirmed to remain after interrupted SSH requests, the extension pauses monitoring and displays their PIDs for inspection. Dismissing the notice does not resume monitoring; resume it manually after checking the server.
+
+Local SSH collection uses the system's SSH configuration. It does not install a monitoring service, require Python, or create monitoring temporary files on the server. It also does not automatically clean up remote processes; an interrupted command may continue until it finishes.
+
+## Feedback
+
+For bugs or feature requests, open a [GitHub issue](https://github.com/lcx-0504/sysmonitor/issues). For connection problems, include the relevant error, your local and remote operating systems, and whether you use local SSH monitoring or a remote window. Remove passwords, tokens, and other private information from logs before sharing them.
+
+See the [changelog](CHANGELOG.md) for release notes.
 
 ## Contributors
 

@@ -8,6 +8,47 @@ const { normalizeConfig } = require('../src/config/normalize-config');
 const { DeviceMonitorManager } = require('../src/services/device-monitor-manager');
 const { createSessionFixture } = require('./session-fixture');
 
+test('residual-process warning copies PIDs and acknowledges without resuming monitoring', async () => {
+  const choices = ['复制 PID', '我知道了'];
+  const messages = [], copied = [], broadcasts = [];
+  let acknowledged = 0;
+  const provider = Object.create(MultiMonitorViewProvider.prototype);
+  provider.manager = { paused: true, setPaused: () => assert.fail('notification must not resume monitoring') };
+  provider.broadcast = (message) => broadcasts.push(message);
+  provider.logger = () => {};
+  provider.vscode = {
+    env: { language: 'zh-cn', clipboard: { writeText: async (text) => copied.push(text) } },
+    window: { showWarningMessage: async (message, ...buttons) => {
+      messages.push(message);
+      assert.deepEqual(buttons, ['复制 PID', '我知道了']);
+      return choices.shift();
+    } },
+  };
+  await provider.notifyResidualProcesses('campus', [1, 2, 3, 4, 5], () => acknowledged++);
+  assert.equal(acknowledged, 1);
+  assert.equal(provider.manager.paused, true);
+  assert.deepEqual(copied, ['1, 2, 3, 4, 5']);
+  assert.deepEqual(broadcasts, []);
+  assert.equal(messages[0], '远程服务器性能采集多次超时，服务器「campus」有 5 个采集进程在超时或连接断开后仍未退出。监控已自动暂停，通常等待一段时间后这些采集进程会自动退出，但仍建议检查这些进程并按需清理。若服务器性能较低、频繁出现此类问题，建议增加刷新时间间隔（设置->刷新时间）。 PID：1, 2, 3, 4, 5');
+});
+
+test('residual threshold uses the existing global pause for every device', () => {
+  const changes = [];
+  const manager = new DeviceMonitorManager({ localLinux: false,
+    configStore: { getCurrent: () => normalizeConfig({}) },
+    onPauseChange: (paused) => changes.push(paused),
+  });
+  const paused = [];
+  manager.devices.set('ssh:a', { running: true, pause: () => paused.push('a') });
+  manager.devices.set('ssh:b', { running: true, pause: () => paused.push('b') });
+  manager.setPaused(true);
+  assert.deepEqual(paused, ['a', 'b']);
+  assert.equal(manager.paused, true);
+  assert.deepEqual(changes, [true]);
+  manager.setPaused(true);
+  assert.deepEqual(changes, [true]);
+});
+
 test('navigation restore preserves selected device and page, with a fixed local Linux tab', () => {
   assert.deepEqual(normalizeNavigation({ tabs: ['ssh:campus', 'ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'proc' }, true), {
     tabs: ['local', 'ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'proc', processDisplay: { cpu: 'core', ram: 'size' },
@@ -159,7 +200,7 @@ test('Editor title actions return the active device to the sidebar or move its w
   provider.editors.set(localPanel, { target: localPanel, state: localState, ready: false, sidebar: false });
   provider.sidebar = { state: provider.sidebarState, sidebar: true, ready: true, target: { visible: true, show() { commands.push(['show-sidebar']); }, webview: { postMessage() {} } } };
   provider.openTerminal = async (host) => commands.push(['terminal', host]);
-  provider.openRemoteWindowPicker = async (host) => commands.push(['remote', host]);
+  provider.activateRemoteWindow = async (host) => commands.push(['remote', host]);
   provider.updateEditorTitleActions();
   assert.deepEqual(contexts.at(-1), ['setContext', 'sysmonitor.editorSshActive', true]);
   sshPanel.active = false;
@@ -202,10 +243,10 @@ test('Editor title actions return the active device to the sidebar or move its w
 
 test('server settings restore by default and normalize invalid values', () => {
   const actions = { editor: true, window: true, terminal: true, remoteWindow: true };
-  assert.deepEqual(normalizeConfig({}).servers, { visibleOnly: false, restoreTabs: true, actions });
-  assert.deepEqual(normalizeConfig({ servers: { visibleOnly: true, restoreTabs: false } }).servers, { visibleOnly: true, restoreTabs: false, actions });
+  assert.deepEqual(normalizeConfig({}).servers, { visibleOnly: false, restoreTabs: true, remoteWindowMode: 'menu', actions });
+  assert.deepEqual(normalizeConfig({ servers: { visibleOnly: true, restoreTabs: false } }).servers, { visibleOnly: true, restoreTabs: false, remoteWindowMode: 'menu', actions });
   assert.deepEqual(normalizeConfig({ servers: { visibleOnly: 'yes', restoreTabs: null, actions: { editor: false, window: 'no' } } }).servers, {
-    visibleOnly: false, restoreTabs: true, actions: { ...actions, editor: false },
+    visibleOnly: false, restoreTabs: true, remoteWindowMode: 'menu', actions: { ...actions, editor: false },
   });
 });
 
@@ -673,7 +714,7 @@ test('Remote-SSH menu exposes recent folders and opens a new remote window witho
   const messages = [];
   const source = { state: provider.sidebarState, sidebar: true, ready: true, target: { webview: { postMessage: (message) => messages.push(message) } } };
   provider.sidebar = source;
-  await provider.handleMessage({ version: 1, cmd: 'listRemoteFolders', host: 'campus' }, source);
+  await provider.handleMessage({ version: 1, cmd: 'activateRemoteWindow', host: 'campus' }, source);
   assert.deepEqual(messages.at(-1), { cmd: 'remoteFolders', host: 'campus', folders: [{ index: 0, folder: '/home/alice' }, { index: 1, folder: '/workspace' }] });
   provider.sidebarState = { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf', processDisplay: { cpu: 'core', ram: 'size' } };
   await provider.openRemoteWindowForSidebar();
@@ -690,10 +731,84 @@ test('Remote-SSH menu exposes recent folders and opens a new remote window witho
   await provider.handleMessage({ version: 1, cmd: 'openRemoteWindow', host: 'campus', folderIndex: 99 }, source);
   assert.equal(commands.length, before);
   historyUnavailable = true;
-  await provider.handleMessage({ version: 1, cmd: 'listRemoteFolders', host: 'campus' }, source);
+  await provider.handleMessage({ version: 1, cmd: 'activateRemoteWindow', host: 'campus' }, source);
   assert.deepEqual(messages.at(-1), { cmd: 'remoteFolders', host: 'campus', folders: [] });
   remoteCommandUnavailable = true;
   await provider.handleMessage({ version: 1, cmd: 'openRemoteWindow', host: 'campus' }, source);
   assert.deepEqual(commands.at(-1), ['vscode.newWindow', { remoteAuthority: 'ssh-remote+campus', reuseWindow: false }]);
   provider.dispose();
+});
+
+for (const surface of ['list', 'sidebar', 'editor']) for (const mode of ['new', 'recent']) {
+  test(`${surface} remote-window button follows ${mode} behavior without opening a picker`, async () => {
+    const commands = [], messages = [];
+    const provider = new MultiMonitorViewProvider({
+      vscode: {
+        env: { language: 'zh-cn' }, Uri: { from: (parts) => parts },
+        workspace: { getConfiguration: () => ({ get: () => null }) },
+        window: { showQuickPick: () => assert.fail('direct mode must not open a menu') },
+        commands: { async executeCommand(...args) {
+          commands.push(args);
+          if (args[0] === 'remote-internal.getSshFoldersHistory') return [
+            { remote: 'campus', folder: 'invalid-relative-path' },
+            { remote: 'user@campus', folder: '/first' },
+            { remote: 'user@campus', folder: '/second' },
+          ];
+          return true;
+        } },
+      },
+      manager: { sync() {}, setConfigFile() {}, get() { return null; } },
+      configStore: { getCurrent: () => normalizeConfig({ servers: { remoteWindowMode: mode } }) },
+      workspaceState: { get: () => ({}), update: async () => {} },
+      localLinux: false, loadHosts: async () => ['campus'],
+    });
+    try {
+      await provider.refreshHosts();
+      commands.length = 0;
+      const state = { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' };
+      if (surface === 'list') {
+        await provider.handleMessage({ version: 1, cmd: 'activateRemoteWindow', host: 'campus' },
+          { sidebar: true, state, target: { webview: { postMessage: (message) => messages.push(message) } } });
+        assert.deepEqual(messages, [{ cmd: 'remoteWindowActionDone', host: 'campus' }]);
+      } else if (surface === 'sidebar') {
+        provider.sidebarState = state;
+        await provider.openRemoteWindowForSidebar();
+      } else {
+        const panel = { active: true };
+        provider.editors.set(panel, { state, target: panel });
+        await provider.openRemoteWindowForEditor();
+      }
+      if (mode === 'new') {
+        assert.deepEqual(commands, [['opensshremotes.openEmptyWindow', { host: 'campus' }]]);
+      } else {
+        assert.deepEqual(commands, [
+          ['remote-internal.getSshFoldersHistory', 'campus'],
+          ['vscode.openFolder', { scheme: 'vscode-remote', authority: 'ssh-remote+user@campus', path: '/first' }, { forceNewWindow: true }],
+        ]);
+      }
+    } finally { provider.dispose(); }
+  });
+}
+
+test('recent workspace falls back to an empty window when history is empty or unavailable', async () => {
+  const provider = Object.create(MultiMonitorViewProvider.prototype);
+  provider.configStore = { getCurrent: () => normalizeConfig({ servers: { remoteWindowMode: 'recent' } }) };
+  const commands = [];
+  const { ServerDirectory } = require('../src/view/server-directory');
+  let unavailable = false;
+  provider.vscode = { commands: { async executeCommand(name) {
+    if (name === 'remote-internal.getSshFoldersHistory') {
+      if (unavailable) throw new Error('history unavailable');
+      return [];
+    }
+    commands.push(name);
+  } } };
+  provider.serverDirectory = new ServerDirectory({ vscode: provider.vscode, manager: {} });
+  provider.serverDirectory.hosts = ['campus'];
+  await provider.activateRemoteWindow('campus');
+  unavailable = true;
+  await provider.activateRemoteWindow('campus');
+  await provider.activateRemoteWindow('unknown');
+  assert.deepEqual(commands, ['opensshremotes.openEmptyWindow', 'opensshremotes.openEmptyWindow']);
+  provider.serverDirectory.dispose();
 });

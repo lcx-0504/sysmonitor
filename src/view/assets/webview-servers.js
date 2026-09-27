@@ -68,12 +68,12 @@
     renderRemoteMenu(folders);
   }
 
-  function openRemoteMenu(host, button) {
+  function activateRemoteWindow(host, button) {
     if (remoteMenuButton === button) { closeRemoteMenu(); return; }
     closeRemoteMenu();
     remoteMenuHost = host; remoteMenuButton = button;
     button.setAttribute('aria-busy', 'true');
-    sendToExtension({ cmd: 'listRemoteFolders', host: host });
+    sendToExtension({ cmd: 'activateRemoteWindow', host: host });
   }
 
   document.addEventListener('click', function(event) {
@@ -85,7 +85,7 @@
 
   function renderServers() {
     if (!localMode) return;
-    if (serversCfg.actions && serversCfg.actions.remoteWindow === false) closeRemoteMenu();
+    if (serversCfg.actions && serversCfg.actions.remoteWindow === false || (serversCfg.remoteWindowMode || 'menu') !== 'menu') closeRemoteMenu();
     var list = document.getElementById('server-list');
     var names = new Set(serverRows.map(function(server) { return server.host; }));
     serverRowNodes.forEach(function(row, host) {
@@ -146,7 +146,7 @@
         remote.setAttribute('aria-label', remote.title);
         remote.setAttribute('aria-haspopup', 'menu');
         remote.setAttribute('aria-expanded', 'false');
-        remote.addEventListener('click', function() { openRemoteMenu(server.host, remote); });
+        remote.addEventListener('click', function() { activateRemoteWindow(server.host, remote); });
         var terminal = document.createElement('button');
         terminal.type = 'button'; terminal.className = 'server-action server-terminal';
         terminal.innerHTML = serverIcons.terminal;
@@ -176,6 +176,7 @@
       row.querySelector('.server-window').hidden = actionsVisible.window === false;
       row.querySelector('.server-terminal').hidden = actionsVisible.terminal === false;
       row.querySelector('.server-remote').hidden = actionsVisible.remoteWindow === false;
+      row.querySelector('.server-remote').setAttribute('aria-haspopup', (serversCfg.remoteWindowMode || 'menu') === 'menu' ? 'menu' : 'false');
       var position = list.children[index] || null;
       if (position !== row) list.insertBefore(row, position);
     });

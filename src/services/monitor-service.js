@@ -48,7 +48,7 @@ class MonitorService {
         cadenceMilliseconds: policy.cadenceMilliseconds || refreshMilliseconds,
         timeoutMilliseconds: policy.timeoutMilliseconds,
         onStatusChange: (name, status, error) => this.logStatus(name, status, error),
-        onSettled: () => { if (!this.scheduler.isPaused) this.onSnapshot(this.snapshotStore.read()); },
+        onSettled: () => { if (!this.scheduler.isPaused || this.scheduler.isCollectingOnce) this.onSnapshot(this.snapshotStore.read()); },
       });
       runner.cadenceSource = key === 'diskTopology' ? 'fixed' : 'refreshInterval';
       this.scheduler.addRunner(runner);
@@ -66,6 +66,7 @@ class MonitorService {
 
   start() { this.scheduler.start(); }
   pause() { this.scheduler.pause(); }
+  collectOnce() { return this.scheduler.collectOnce(); }
   resume({ force = false } = {}) {
     if (force) for (const runner of this.runners) runner.nextDueAt = 0;
     this.scheduler.resume();

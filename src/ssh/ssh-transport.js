@@ -1,150 +1,159 @@
 'use strict';
 
 const { spawn } = require('node:child_process');
-const fs = require('node:fs');
-const path = require('node:path');
-const crypto = require('node:crypto');
 const { expandHome } = require('./ssh-config');
 const { executionOptions, timeoutError } = require('../core/collection-context');
-const dispatcher = fs.readFileSync(path.join(__dirname, 'dispatcher.sh'), 'utf8');
+const { SshChannel } = require('./ssh-channel');
+const { SshProcessGuard } = require('./ssh-process-guard');
 
-function shellQuote(value) { return "'" + String(value).replace(/'/g, "'\\''") + "'"; }
+const MAX_CONNECTIONS = 4;
 
 class SshTransport {
-  constructor({ host, configFile = null, spawnProcess = spawn, onState = () => {}, requireLinux = true, shouldReconnect = () => true, retryDelayMilliseconds = 10000 }) {
+  constructor({ host, configFile = null, spawnProcess = spawn, onState = () => {}, requireLinux = true,
+    shouldReconnect = () => true, retryDelayMilliseconds = 10000, maxConnections = MAX_CONNECTIONS,
+    onResidualProcesses = () => {}, onLog = () => {} }) {
     if (!host || /[\s\0]/.test(host) || host.startsWith('-')) throw new Error('Invalid SSH host alias');
-    Object.assign(this, { host, spawnProcess, onState, requireLinux, shouldReconnect, retryDelayMilliseconds });
+    if (!Number.isInteger(maxConnections) || maxConnections < 1) throw new Error('Invalid SSH pool size');
+    Object.assign(this, { host, spawnProcess, onState, requireLinux, shouldReconnect, retryDelayMilliseconds, maxConnections });
     this.configFile = configFile ? expandHome(configFile) : null;
-    this.child = null;
-    this.connecting = null;
-    this.handshake = null;
-    this.ready = false;
-    this.closed = false;
-    this.sequence = 0;
+    this.channels = new Set();
     this.pending = new Map();
-    this.buffer = '';
-    this.frame = null;
+    this.sequence = 0;
+    this.opening = null;
+    this.connected = false;
+    this.closed = false;
     this.retryAfter = 0;
+    this.expansionAfter = 0;
     this.retryTimer = null;
     this.lastError = null;
-    this.sshConnection = null;
-    this.prefix = '__SYSMON_' + crypto.randomBytes(12).toString('hex') + '_';
+    this.generation = 0;
+    this.processGuard = new SshProcessGuard({ execFile: (...args) => this.execFile(...args),
+      canCheck: () => !this.closed && this.ready && this.shouldReconnect(), onLimit: onResidualProcesses,
+      onError: (error) => onLog('SSH process verification: ' + error.message) });
+  }
+
+  get ready() { return [...this.channels].some((channel) => channel.ready); }
+  get sshConnections() {
+    const connections = [...this.channels].filter((channel) => channel.ready && channel.connection).map((channel) => channel.connection);
+    return [...new Map(connections.map((connection) => [JSON.stringify(connection), connection])).values()];
   }
 
   connect() {
     if (this.closed) return Promise.reject(new Error('SSH transport disposed'));
-    if (this.connecting) return this.connecting;
     if (this.ready) return Promise.resolve();
+    if (this.opening) return this.opening;
     if (Date.now() < this.retryAfter) return Promise.reject(this.lastError || new Error('SSH reconnect waiting'));
-    this.onState('connecting');
-    this.connecting = new Promise((resolve, reject) => {
-      const args = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2'];
-      if (this.configFile) args.push('-F', this.configFile);
-      args.push('--', this.host, 'sh', '-s');
-      const child = this.spawnProcess('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-      this.child = child;
-      this.buffer = '';
-      this.frame = null;
-      let stderr = '';
-      const timer = setTimeout(() => this.disconnect(timeoutError('SSH connection timed out')), 12000);
-      this.handshake = { resolve, reject, timer };
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', (chunk) => { if (this.child === child) this.receive(chunk); });
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-4000); });
-      child.on('error', (error) => { if (this.child === child) this.disconnect(error); });
-      child.on('exit', (code) => { if (this.child === child) this.disconnect(new Error(stderr.trim() || 'SSH exited (' + code + ')')); });
-      child.stdin.on('error', (error) => { if (this.child === child) this.disconnect(error); });
-      child.stdin.write('SYSMON_PREFIX=' + shellQuote(this.prefix) + '; SYSMON_REQUIRE_LINUX=' + (this.requireLinux ? '1' : '0') + '; eval ' + shellQuote(dispatcher) + '\n');
-    }).finally(() => { this.connecting = null; });
-    return this.connecting;
+    if (this.channels.size >= this.maxConnections) {
+      return Promise.race([...this.channels].map((channel) => channel.exitPromise)).then(() => this.connect());
+    }
+    if (!this.connected) this.onState('connecting');
+    return this.openChannel();
+  }
+
+  openChannel() {
+    const generation = this.generation;
+    const channel = new SshChannel({
+      host: this.host, configFile: this.configFile, spawnProcess: this.spawnProcess, requireLinux: this.requireLinux,
+      onInterrupted: (process) => { if (!this.closed) this.processGuard.track(process); },
+      onExit: (channel) => { this.channels.delete(channel); queueMicrotask(() => this.drain()); },
+      onClose: (closed, error, intentional, wasReady) => {
+        if (wasReady && !intentional && !this.closed && !this.ready) this.disconnect(error);
+        else queueMicrotask(() => this.drain());
+      },
+    });
+    this.channels.add(channel);
+    const opening = channel.connect().then(() => {
+      if (this.closed || channel.closed || generation !== this.generation) throw new Error('SSH connection closed');
+      this.lastError = null;
+      this.retryAfter = 0;
+      this.processGuard.schedule();
+      if (!this.connected) {
+        this.connected = true;
+        this.onState('connected');
+      }
+    }).catch((error) => {
+      if (!this.closed && generation === this.generation) {
+        if (!this.ready) this.disconnect(error);
+        else this.expansionAfter = Date.now() + this.retryDelayMilliseconds;
+      }
+      throw error;
+    }).finally(() => {
+      if (this.opening === opening) this.opening = null;
+      this.drain();
+    });
+    this.opening = opening;
+    return opening;
   }
 
   retryNow() {
-    if (this.retryTimer) clearTimeout(this.retryTimer);
+    clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.retryAfter = 0;
+    this.expansionAfter = 0;
     this.lastError = null;
     return this.connect();
   }
 
-  receive(chunk) {
-    this.buffer += chunk;
-    if (this.buffer.length > 48 * 1024 * 1024) { this.disconnect(new Error('Invalid SSH response size')); return; }
-    let end;
-    while ((end = this.buffer.indexOf('\n')) >= 0) {
-      const line = this.buffer.slice(0, end).replace(/\r$/, '');
-      this.buffer = this.buffer.slice(end + 1);
-      if (this.handshake) {
-        if (line === this.prefix + 'NONLINUX') {
-          const error = new Error('Remote host is not Linux');
-          error.code = 'EPLATFORM';
-          this.disconnect(error);
-          return;
-        }
-        if (!line.startsWith(this.prefix + 'READY ')) continue;
-        const fields = line.slice((this.prefix + 'READY ').length).trim().split(/\s+/);
-        const clientPort = Number(fields[1]), serverPort = Number(fields[3]);
-        this.sshConnection = fields.length === 4 && Number.isInteger(clientPort) && clientPort > 0 && Number.isInteger(serverPort) && serverPort > 0
-          ? { clientIp: fields[0], clientPort, serverIp: fields[2], serverPort } : null;
-        const handshake = this.handshake;
-        this.handshake = null;
-        clearTimeout(handshake.timer);
-        if (this.retryTimer) clearTimeout(this.retryTimer);
-        this.retryTimer = null;
-        this.retryAfter = 0;
-        this.lastError = null;
-        this.ready = true;
-        this.onState('connected');
-        handshake.resolve();
-      } else if (line.startsWith(this.prefix + 'BEGIN ')) {
-        const [id, code, limited] = line.slice((this.prefix + 'BEGIN ').length).split(' ').map(Number);
-        this.frame = { id, code, limited, lines: [] };
-      } else if (this.frame && line === this.prefix + 'END ' + this.frame.id) {
-        const frame = this.frame;
-        this.frame = null;
-        const request = this.pending.get(frame.id);
-        if (!request) continue;
-        const stdout = Buffer.from(frame.lines[0] || '', 'base64').toString('utf8');
-        const stderr = Buffer.from(frame.lines[1] || '', 'base64').toString('utf8');
-        if (frame.code === 0 && !frame.limited) request.finish(null, { stdout, stderr });
-        else {
-          const error = new Error(frame.limited ? 'Command output exceeds limit' : stderr.trim() || stdout.trim() || 'Remote command exited (' + frame.code + ')');
-          error.code = frame.limited ? 'EMAXBUFFER' : frame.code === 127 ? 'ENOENT' : 'EREMOTE';
-          error.stderr = stderr;
-          request.finish(error);
-        }
-      } else if (this.frame) this.frame.lines.push(line);
-    }
-  }
-
-  async execFile(command, args = [], options = {}) {
-    options = executionOptions(options);
-    await this.connect();
-    options = executionOptions(options);
-    const timeoutMilliseconds = Number.isFinite(options.timeoutMilliseconds) ? options.timeoutMilliseconds : 10000;
-    const maxBufferBytes = options.maxBufferBytes || 4 * 1024 * 1024;
+  execFile(command, args = [], options = {}) {
+    try { options = executionOptions(options); } catch (error) { return Promise.reject(error); }
+    if (this.closed) return Promise.reject(new Error('SSH transport disposed'));
+    if (Date.now() < this.retryAfter) return Promise.reject(this.lastError || new Error('SSH reconnect waiting'));
+    const timeout = Number.isFinite(options.timeoutMilliseconds) ? options.timeoutMilliseconds : 10000;
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      let timer;
-      const cancel = (error) => {
-        if (this.ready && this.child) this.child.stdin.write('CANCEL ' + id + '\n');
-        finish(error);
-      };
       const onAbort = () => cancel(options.signal.reason || new Error('SSH command cancelled'));
-      const finish = (error, result) => {
-        if (!this.pending.delete(id)) return;
-        clearTimeout(timer);
-        if (options.signal) options.signal.removeEventListener('abort', onAbort);
-        error ? reject(error) : resolve(result);
+      const onPause = () => {
+        if (!task.channel) task.finish(options.dispatchSignal.reason || new Error('Monitoring paused'));
       };
-      this.pending.set(id, { finish });
+      const task = { id, command, args, limit: options.maxBufferBytes || 4 * 1024 * 1024, trackProcess: options.trackProcess !== false, channel: null,
+        finish: (error, result) => {
+          if (!this.pending.delete(id)) return;
+          clearTimeout(task.timer);
+          if (options.signal) options.signal.removeEventListener('abort', onAbort);
+          if (options.dispatchSignal) options.dispatchSignal.removeEventListener('abort', onPause);
+          error ? reject(error) : resolve(result);
+          if (!error && task.trackProcess) this.processGuard.schedule();
+          queueMicrotask(() => this.drain());
+        },
+      };
+      const cancel = (error) => {
+        if (task.channel) task.channel.close(error, true);
+        task.finish(error);
+      };
+      this.pending.set(id, task);
+      task.timer = setTimeout(() => cancel(timeoutError('Command timed out: ' + command)), timeout);
       if (options.signal) options.signal.addEventListener('abort', onAbort, { once: true });
-      timer = setTimeout(() => cancel(timeoutError('Command timed out: ' + command)), timeoutMilliseconds);
-      const invocation = 'exec env LC_ALL=C ' + [command, ...args].map(shellQuote).join(' ');
-      const payload = Buffer.from(invocation).toString('base64');
-      this.child.stdin.write('RUN ' + id + ' ' + maxBufferBytes + ' ' + payload + '\n');
+      if (options.dispatchSignal) options.dispatchSignal.addEventListener('abort', onPause, { once: true });
+      this.drain();
     });
+  }
+
+  nextQueuedTask() {
+    let next = null;
+    for (const task of this.pending.values()) {
+      if (task.channel) continue;
+      // Residual verification must not sit behind the sampling backlog.
+      if (!task.trackProcess) return task;
+      if (!next) next = task;
+    }
+    return next;
+  }
+
+  drain() {
+    if (this.closed || Date.now() < this.retryAfter) return;
+    for (const channel of this.channels) {
+      if (!channel.ready || channel.request) continue;
+      const task = this.nextQueuedTask();
+      if (!task) return;
+      task.channel = channel;
+      channel.execFile(task.id, task.command, task.args, task.limit, task.trackProcess).then(
+        (result) => task.finish(null, result), (error) => task.finish(error));
+    }
+    if (this.nextQueuedTask() && !this.opening
+      && this.channels.size < this.maxConnections && Date.now() >= this.expansionAfter) {
+      if (!this.connected) this.onState('connecting');
+      this.openChannel().catch(() => {});
+    }
   }
 
   readFile(file, encoding) {
@@ -153,41 +162,33 @@ class SshTransport {
   }
 
   disconnect(error) {
-    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.generation++;
+    clearTimeout(this.retryTimer);
     this.retryTimer = null;
-    const child = this.child;
-    this.child = null;
-    this.ready = false;
-    this.sshConnection = null;
-    if (child) {
-      child.stdin.end('QUIT\n');
-      const timer = setTimeout(() => child.kill(), 1000);
-      timer.unref();
-      child.once('exit', () => clearTimeout(timer));
-    }
-    if (this.handshake) {
-      clearTimeout(this.handshake.timer);
-      this.handshake.reject(error);
-      this.handshake = null;
-    }
-    for (const request of this.pending.values()) request.finish(error);
-    this.buffer = '';
-    this.frame = null;
+    this.connected = false;
     if (!this.closed) {
       this.retryAfter = error && error.code === 'EPLATFORM' ? Infinity : Date.now() + this.retryDelayMilliseconds;
       this.lastError = error;
-      this.onState('disconnected', error);
-      if (Number.isFinite(this.retryAfter)) this.retryTimer = setTimeout(() => {
-        this.retryTimer = null;
-        if (!this.closed && this.shouldReconnect()) this.connect().catch(() => {});
-      }, Math.max(0, this.retryAfter - Date.now()));
     }
+    for (const channel of this.channels) channel.close(error, true);
+    for (const task of this.pending.values()) task.finish(error);
+    if (this.closed) return;
+    this.onState('disconnected', error);
+    const retry = () => {
+      this.retryTimer = null;
+      if (this.closed || !this.shouldReconnect()) return;
+      const remaining = this.retryAfter - Date.now();
+      if (remaining > 0) { this.retryTimer = setTimeout(retry, remaining); return; }
+      this.connect().catch(() => {});
+    };
+    if (Number.isFinite(this.retryAfter)) this.retryTimer = setTimeout(retry, Math.max(0, this.retryAfter - Date.now()));
   }
 
   dispose() {
     this.closed = true;
+    this.processGuard.dispose();
     this.disconnect(new Error('SSH transport disposed'));
   }
 }
 
-module.exports = { SshTransport, shellQuote };
+module.exports = { SshTransport };

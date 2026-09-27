@@ -195,7 +195,6 @@ class MonitorSession {
   }
 
   async retryOnce() {
-    const wasPaused = this.isPaused();
     const since = Date.now();
     this.loadError = null;
     if (this.transport && this.state !== 'connected') await this.transport.retryNow();
@@ -203,9 +202,14 @@ class MonitorSession {
     if (!this.ready) { this.requiredSequence = this.service.readSnapshot().sequence; this.requiredSince = since; }
     this.notify();
     const result = this.waitForInitialSample({ since, allowPaused: true, page: 'proc', afterSequence: this.service.readSnapshot().sequence });
-    this.service.resume({ force: true });
-    try { await result; }
-    finally { if (wasPaused && this.isPaused()) this.service.pause(); }
+    const collection = this.service.collectOnce().catch((error) => {
+      this.loadError = error.message;
+      this.settleWaiters();
+      throw error;
+    });
+    const outcomes = await Promise.allSettled([result, collection]);
+    const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+    if (failure) throw failure.reason;
   }
 
   dispose() {

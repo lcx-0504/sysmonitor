@@ -1,7 +1,7 @@
 'use strict';
 
 const { execFile } = require('node:child_process');
-const { executionOptions, timeoutError } = require('./collection-context');
+const { COLLECTION_ENV, executionOptions, timeoutError } = require('./collection-context');
 
 class CommandRunner {
   constructor({ defaultTimeoutMilliseconds = 5000, maxBufferBytes = 4 * 1024 * 1024 } = {}) {
@@ -22,7 +22,7 @@ class CommandRunner {
         encoding: 'utf8',
         signal: options.signal,
         killSignal: 'SIGKILL',
-        env: { ...process.env, LC_ALL: 'C', ...(options.env || {}) },
+        env: { ...process.env, ...COLLECTION_ENV, ...(options.env || {}) },
       }, (error, stdout, stderr) => {
         this.children.delete(child);
         if (options.signal && options.signal.aborted) { reject(options.signal.reason || error); return; }

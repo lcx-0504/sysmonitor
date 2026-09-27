@@ -19,7 +19,7 @@ const createPartition = () => Object.freeze({
 class SnapshotStore {
   constructor() {
     this.sequence = 0;
-    this.snapshot = Object.freeze(Object.fromEntries(PARTITIONS.map((key) => [key, createPartition()])));
+    this.snapshot = Object.freeze({ ...Object.fromEntries(PARTITIONS.map((key) => [key, createPartition()])), sequence: 0 });
   }
 
   read() { return this.snapshot; }

@@ -8,121 +8,242 @@ const { spawn } = require('node:child_process');
 const test = require('node:test');
 const { listSshHosts, parseWords } = require('../src/ssh/ssh-config');
 const { SshTransport } = require('../src/ssh/ssh-transport');
+const { SshChannel } = require('../src/ssh/ssh-channel');
 
 async function waitFor(check) {
   for (let attempt = 0; attempt < 150; attempt++) {
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  assert.fail('Timed out waiting for dispatcher cleanup');
+  assert.fail('Timed out waiting for SSH lifecycle');
 }
 
-async function cleanupFixture(t) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sysmonitor-cleanup-test-'));
-  const sibling = path.join(root, 'sysmonitor.keep');
-  await fs.mkdir(sibling);
-  await fs.writeFile(path.join(sibling, 'keep'), 'another session');
-  await fs.writeFile(path.join(root, 'keep'), 'unrelated file');
-  const sessions = [];
+test('SSH pool performs concurrent requests without any temporary directory or file changes', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sysmonitor-pool-test-'));
+  await fs.writeFile(path.join(root, 'keep'), 'unchanged');
+  const children = [];
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => {
+      const child = spawn('sh', ['-s'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, TMPDIR: path.join(root, 'nonexistent') } });
+      children.push(child);
+      return child;
+    },
+  });
   t.after(async () => {
-    for (const { transport, child } of sessions) {
-      transport.dispose();
-      await waitFor(() => child.exitCode !== null || child.signalCode !== null);
-    }
+    transport.dispose();
+    await waitFor(() => children.every((child) => child.exitCode !== null || child.signalCode !== null));
     await fs.rm(root, { recursive: true, force: true });
   });
-  return {
-    root,
-    async open() {
-      const before = new Set(await fs.readdir(root));
-      const transport = new SshTransport({ host: 'fixture', requireLinux: false, shouldReconnect: () => false,
-        spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, TMPDIR: root } }),
-      });
-      await transport.connect();
-      const child = transport.child;
-      sessions.push({ transport, child });
-      const created = (await fs.readdir(root)).filter((name) => !before.has(name));
-      assert.equal(created.length, 1);
-      return { transport, child, work: path.join(root, created[0]) };
-    },
-    async assertProtected() {
-      assert.equal(await fs.readFile(path.join(root, 'keep'), 'utf8'), 'unrelated file');
-      assert.equal(await fs.readFile(path.join(sibling, 'keep'), 'utf8'), 'another session');
-    },
-  };
-}
-
-test('SSH temporary files are reclaimed after success, failure, output limits and late cancellation', async (t) => {
-  const fixture = await cleanupFixture(t);
-  const { transport, child, work } = await fixture.open();
-  for (let round = 0; round < 5; round++) {
-    await Promise.all(Array.from({ length: 10 }, (_, i) => transport.execFile('printf', [String(i)])));
+  for (let round = 0; round < 3; round++) {
+    await Promise.all(Array.from({ length: 12 }, (_, i) => transport.execFile('printf', [String(i)])));
+    await assert.rejects(transport.execFile('sleep', ['0.3'], { timeoutMilliseconds: 20 }), /timed out/);
     await assert.rejects(transport.execFile('sh', ['-c', 'exit 7']), /exited \(7\)/);
     await assert.rejects(transport.execFile('printf', ['x'.repeat(100)], { maxBufferBytes: 16 }), { code: 'EMAXBUFFER' });
-    await waitFor(async () => (await fs.readdir(work)).length === 0);
-    child.stdin.write('CANCEL ' + transport.sequence + '\n');
-    await transport.execFile('printf', ['barrier']);
-    await waitFor(async () => (await fs.readdir(work)).length === 0);
   }
-  await fixture.assertProtected();
   transport.dispose();
-  await waitFor(async () => !(await fs.stat(work).catch(() => null)));
-  await fixture.assertProtected();
+  await waitFor(() => children.every((child) => child.exitCode !== null || child.signalCode !== null));
+  assert.deepEqual(await fs.readdir(root), ['keep']);
+  assert.equal(await fs.readFile(path.join(root, 'keep'), 'utf8'), 'unchanged');
+  const worker = await fs.readFile(path.join(__dirname, '../src/ssh/dispatcher.sh'), 'utf8');
+  assert.doesNotMatch(worker, /\b(?:rm|rmdir|mktemp|mkdir|touch|ln|kill|pkill|killall|setsid)\b|\$!/);
 });
 
-test('SSH cancellation while awaiting the output lock cleans its job without removing another lock', async (t) => {
-  const fixture = await cleanupFixture(t);
-  const { transport, work } = await fixture.open();
-  const lock = path.join(work, 'output-lock');
-  await fs.writeFile(lock, 'another emitter');
-  const controller = new AbortController();
-  const rejected = assert.rejects(transport.execFile('printf', ['blocked'], { signal: controller.signal }), /cancel blocked emitter/);
-  await waitFor(async () => (await fs.readdir(work)).some((name) => name.endsWith('.out')));
-  controller.abort(new Error('cancel blocked emitter'));
-  await rejected;
-  await waitFor(async () => (await fs.readdir(work)).length === 1);
-  assert.equal(await fs.readFile(lock, 'utf8'), 'another emitter');
-  transport.dispose();
-  await waitFor(async () => !(await fs.stat(work).catch(() => null)));
-  await fixture.assertProtected();
-});
-
-test('SSH timeouts and immediate cancellation leave no per-request files across repeated rounds', async (t) => {
-  const fixture = await cleanupFixture(t);
-  const { transport, child, work } = await fixture.open();
-  for (let round = 0; round < 10; round++) {
-    await assert.rejects(transport.execFile('sleep', ['5'], { timeoutMilliseconds: 20 }), /timed out/);
-    const controller = new AbortController();
-    const rejected = assert.rejects(transport.execFile('sleep', ['5'], { signal: controller.signal }), /immediate cancel/);
-    await new Promise(setImmediate);
-    controller.abort(new Error('immediate cancel'));
-    await rejected;
-    child.stdin.write('CANCEL ' + transport.sequence + '\n');
-    await transport.execFile('printf', ['barrier']);
-    await waitFor(async () => (await fs.readdir(work)).length === 0);
-  }
-  await fixture.assertProtected();
-});
-
-for (const ending of ['dispose', 'SIGTERM', 'SIGHUP', 'EOF']) {
-  test('SSH ' + ending + ' removes only its own session directory with running and blocked jobs', async (t) => {
-    const fixture = await cleanupFixture(t);
-    const first = await fixture.open();
-    const second = await fixture.open();
-    await fs.writeFile(path.join(first.work, 'output-lock'), 'held');
-    const running = assert.rejects(first.transport.execFile('sleep', ['10']));
-    const blocked = assert.rejects(first.transport.execFile('printf', ['blocked']));
-    await waitFor(async () => (await fs.readdir(first.work)).filter((name) => name.endsWith('.out')).length === 2);
-    if (ending === 'dispose') first.transport.dispose();
-    else if (ending === 'EOF') first.child.stdin.end();
-    else first.child.kill(ending);
-    await Promise.all([running, blocked]);
-    await waitFor(async () => !(await fs.stat(first.work).catch(() => null)));
-    assert.equal((await second.transport.execFile('printf', ['still active'])).stdout, 'still active');
-    assert.ok((await fs.stat(second.work)).isDirectory());
-    await fixture.assertProtected();
+test('SSH pool grows on demand to its limit and reuses established channels', async () => {
+  let starts = 0;
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => { starts++; return spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }); },
   });
-}
+  try {
+    await transport.connect();
+    assert.equal(starts, 1);
+    for (let round = 0; round < 2; round++) {
+      await Promise.all(Array.from({ length: 8 }, () => transport.execFile('sleep', ['0.1'])));
+      assert.equal(starts, 4);
+      assert.equal(transport.channels.size, 4);
+    }
+  } finally { transport.dispose(); }
+});
+
+test('SSH pool capacity includes children still shutting down after a timeout', async () => {
+  let alive = 0, peak = 0;
+  const children = [];
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false, maxConnections: 1,
+    spawnProcess: () => {
+      const child = spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] });
+      children.push(child); alive++; peak = Math.max(peak, alive);
+      child.once('exit', () => alive--);
+      return child;
+    },
+  });
+  try {
+    for (let i = 0; i < 5; i++) {
+      await transport.connect();
+      await assert.rejects(transport.execFile('sleep', ['0.08'], { timeoutMilliseconds: 20 }), /timed out/);
+    }
+    assert.equal(peak, 1);
+  } finally {
+    transport.dispose();
+    await waitFor(() => children.every((child) => child.exitCode !== null || child.signalCode !== null));
+  }
+});
+
+test('synchronous SSH spawn failure releases its slot and respects reconnect cooldown', async () => {
+  let attempts = 0;
+  const transport = new SshTransport({ host: 'fixture', spawnProcess() { attempts++; throw new Error('spawn failed'); } });
+  try {
+    await assert.rejects(transport.execFile('true'), /spawn failed/);
+    await new Promise(setImmediate);
+    assert.equal(attempts, 1);
+    assert.equal(transport.channels.size, 0);
+  } finally { transport.dispose(); }
+});
+
+test('queued cancellation and deadlines never execute the abandoned request', async () => {
+  const sent = [];
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false, maxConnections: 1,
+    spawnProcess: () => {
+      const child = spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] });
+      const write = child.stdin.write.bind(child.stdin);
+      child.stdin.write = (text, ...args) => { sent.push(text); return write(text, ...args); };
+      return child;
+    },
+  });
+  try {
+    await transport.connect();
+    const slow = transport.execFile('sleep', ['0.2']);
+    const controller = new AbortController();
+    const cancelled = assert.rejects(transport.execFile('printf', ['cancelled-queued'], { signal: controller.signal }), /queued abort/);
+    controller.abort(new Error('queued abort'));
+    await cancelled;
+    await assert.rejects(transport.execFile('printf', ['expired-queued'], { timeoutMilliseconds: 10 }), { code: 'ETIMEDOUT' });
+    await slow;
+    assert.equal((await transport.execFile('printf', ['healthy'])).stdout, 'healthy');
+    const commands = sent.filter((line) => line.startsWith('RUN ')).map((line) => Buffer.from(line.trim().split(' ')[2], 'base64').toString());
+    assert.equal(commands.some((command) => /cancelled-queued|expired-queued/.test(command)), false);
+  } finally { transport.dispose(); }
+});
+
+test('read-only residual verification gets the next free slot before queued sampling', async () => {
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false, maxConnections: 1,
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    await transport.connect();
+    const order = [];
+    const busy = transport.execFile('sleep', ['0.1']);
+    const normal = transport.execFile('printf', ['sample']).then(() => order.push('sample'));
+    const verification = transport.execFile('printf', ['verify'], { trackProcess: false }).then(() => order.push('verify'));
+    await Promise.all([busy, normal, verification]);
+    assert.deepEqual(order, ['verify', 'sample']);
+  } finally { transport.dispose(); }
+});
+
+test('timeout replaces one busy channel while another channel completes normally', async () => {
+  const states = [];
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false, maxConnections: 2,
+    onState: (state) => states.push(state),
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    await transport.connect();
+    const timedOut = assert.rejects(transport.execFile('sleep', ['0.3'], { timeoutMilliseconds: 80 }), /timed out/);
+    const healthy = transport.execFile('sh', ['-c', 'sleep 0.15; printf healthy']);
+    await timedOut;
+    assert.equal((await healthy).stdout, 'healthy');
+    assert.equal((await transport.execFile('printf', ['next'])).stdout, 'next');
+    assert.equal(states.includes('disconnected'), false);
+  } finally { transport.dispose(); }
+});
+
+test('SSH output preserves empty strings, trailing newlines, UTF-8 and NUL bytes on both streams', async () => {
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    assert.deepEqual(await transport.execFile('true'), { stdout: '', stderr: '' });
+    assert.deepEqual(await transport.execFile('sh', ['-c', 'printf "中文\\000\\n\\n"; printf "error\\n\\n" >&2']),
+      { stdout: '中文\0\n\n', stderr: 'error\n\n' });
+  } finally { transport.dispose(); }
+});
+
+test('SSH dispose rejects queued and running requests and closes every channel', async () => {
+  const children = [];
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false, maxConnections: 2,
+    spawnProcess: () => { const child = spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }); children.push(child); return child; },
+  });
+  const results = Array.from({ length: 6 }, () => assert.rejects(transport.execFile('sleep', ['0.3']), /disposed/));
+  await waitFor(() => transport.channels.size === 2 && [...transport.channels].every((channel) => channel.request));
+  transport.dispose();
+  await Promise.all(results);
+  await waitFor(() => children.every((child) => child.exitCode !== null || child.signalCode !== null));
+  assert.equal(transport.pending.size, 0);
+  assert.equal(transport.channels.size, 0);
+  await assert.rejects(transport.connect(), /disposed/);
+});
+
+test('SSH channel assembles split response markers and waits for both streams', async () => {
+  const writes = [];
+  const channel = new SshChannel({ onClose() {} });
+  channel.ready = true;
+  channel.child = { stdin: { write: (text) => writes.push(text) } };
+  let finished = false;
+  const result = channel.execFile(1, 'true', [], 100).then((value) => { finished = true; return value; });
+  const frame = '\n' + channel.prefix + 'END 1 0\n';
+  for (const char of channel.prefix + 'START 1 123 456 aaaa-bbbb\ndata\n' + frame) channel.receive('stdout', char);
+  assert.deepEqual(channel.request.remoteProcess, { pid: 123, startTime: '456', bootId: 'aaaa-bbbb' });
+  await new Promise(setImmediate);
+  assert.equal(finished, false);
+  for (const char of 'error\n' + frame) channel.receive('stderr', char);
+  assert.deepEqual(await result, { stdout: 'data\n', stderr: 'error\n' });
+  assert.equal(writes.length, 1);
+});
+
+test('failure to add a pool channel preserves the established connection and queued work', async () => {
+  let starts = 0;
+  const states = [];
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    onState: (state) => states.push(state),
+    spawnProcess: () => spawn('sh', ++starts === 1 ? ['-s'] : ['-c', 'exit 255'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    await transport.connect();
+    await Promise.all([transport.execFile('sleep', ['0.1']), transport.execFile('printf', ['queued'])]);
+    assert.equal(starts, 2);
+    assert.equal(transport.channels.size, 1);
+    assert.equal(states.includes('disconnected'), false);
+    assert.equal((await transport.execFile('printf', ['alive'])).stdout, 'alive');
+  } finally { transport.dispose(); }
+});
+
+test('disposing during SSH startup releases the pending connection without scheduling a retry', async () => {
+  let child;
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => { child = spawn('sh', ['-c', 'sleep 0.1; exec sh -s'], { stdio: ['pipe', 'pipe', 'pipe'] }); return child; },
+  });
+  const rejected = assert.rejects(transport.connect(), /disposed/);
+  transport.dispose();
+  await rejected;
+  await waitFor(() => child.exitCode !== null || child.signalCode !== null);
+  assert.equal(transport.retryTimer, null);
+  assert.equal(transport.channels.size, 0);
+});
+
+test('EOF and signals close idle SSH channels without a retry while paused', async () => {
+  for (const ending of ['EOF', 'SIGTERM', 'SIGHUP']) {
+    const transport = new SshTransport({ host: 'fixture', requireLinux: false, shouldReconnect: () => false,
+      spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+    });
+    try {
+      await transport.connect();
+      const channel = [...transport.channels][0];
+      if (ending === 'EOF') channel.child.stdin.end();
+      else channel.child.kill(ending);
+      await waitFor(() => channel.closed);
+      assert.equal(transport.ready, false);
+    } finally { transport.dispose(); }
+  }
+});
 
 test('SSH host list reads explicit aliases and Include globs without duplicate or wildcard devices', async () => {
   const home = path.join(os.homedir(), 'sysmonitor-test-fixture');
@@ -150,7 +271,7 @@ test('SSH config ignores trailing comments and accepts whitespace around equals'
   assert.deepEqual(hosts, ['campus', 'lab', 'work', 'quoted#alias']);
 });
 
-test('SSH transport shares one shell session and preserves command arguments and output', async () => {
+test('SSH pool preserves command arguments and connection identities', async () => {
   let starts = 0;
   const transport = new SshTransport({
     host: 'fixture',
@@ -164,8 +285,9 @@ test('SSH transport shares one shell session and preserves command arguments and
     ]);
     assert.equal(values[0].stdout, "a'b\n");
     assert.equal(values[1].stdout, 'second');
-    assert.equal(starts, 1);
-    assert.deepEqual(transport.sshConnection, { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 22 });
+    assert.ok(starts >= 1 && starts <= 2);
+    assert.deepEqual(transport.sshConnections[0], { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 22 });
+    assert.equal(transport.sshConnections.length, 1);
     await assert.rejects(transport.execFile('sh', ['-c', 'exit 7'], { timeoutMilliseconds: 3000 }), /Remote command exited \(7\)/);
   } finally { transport.dispose(); }
 });
@@ -185,7 +307,6 @@ test('SSH retry delay is stable and one command timeout leaves the session usabl
     assert.equal((await transport.execFile('printf', ['recovered'], { timeoutMilliseconds: 3000 })).stdout, 'recovered');
     assert.equal(transport.retryAfter, 0);
     await assert.rejects(transport.execFile('sleep', ['1'], { timeoutMilliseconds: 10 }), /timed out/);
-    assert.ok(transport.child);
     assert.equal((await transport.execFile('printf', ['still connected'])).stdout, 'still connected');
   } finally { transport.dispose(); }
 });
@@ -203,7 +324,7 @@ test('a fast SSH request completes while a slow request is still running', async
     assert.equal(fast.stdout, 'fast');
     assert.equal(slowFinished, false);
     assert.equal((await slow).stdout, 'slow');
-    assert.equal(starts, 1);
+    assert.equal(starts, 2);
   } finally { transport.dispose(); }
 });
 
@@ -224,7 +345,7 @@ test('cancelling one SSH request leaves concurrent work and the connection intac
   try {
     await transport.connect();
     const controller = new AbortController();
-    const pending = transport.execFile('sleep', ['2'], { signal: controller.signal });
+    const pending = transport.execFile('sleep', ['0.3'], { signal: controller.signal });
     const rejected = assert.rejects(pending, /cancelled by test/);
     await new Promise(setImmediate);
     controller.abort(new Error('cancelled by test'));
@@ -235,31 +356,27 @@ test('cancelling one SSH request leaves concurrent work and the connection intac
   } finally { transport.dispose(); }
 });
 
-test('SSH cancellation terminates the remote command process', async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sysmonitor-cancel-'));
-  const pidFile = path.join(directory, 'pid');
-  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+test('SSH cancellation stops waiting and lets a finite command finish naturally', async () => {
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false, maxConnections: 1,
     spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
   });
   try {
     await transport.connect();
+    const channel = [...transport.channels][0];
+    let kills = 0;
+    const kill = channel.child.kill.bind(channel.child);
+    channel.child.kill = (...args) => { kills++; return kill(...args); };
     const controller = new AbortController();
-    const command = transport.execFile('sh', ['-c', 'printf "%s" "$$" > "$1"; exec sleep 5', 'fixture', pidFile], { signal: controller.signal });
-    const rejected = assert.rejects(command, /cancel process/);
-    let pid;
-    for (let attempt = 0; attempt < 100 && !pid; attempt++) {
-      pid = Number(await fs.readFile(pidFile, 'utf8').catch(() => ''));
-      if (!pid) await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    assert.ok(pid > 0);
-    controller.abort(new Error('cancel process'));
+    const rejected = assert.rejects(transport.execFile('sh', ['-c', 'printf started; sleep 0.3'], { signal: controller.signal }), /cancel waiting/);
+    await waitFor(() => channel.request && channel.request.stdout.text === 'started');
+    controller.abort(new Error('cancel waiting'));
     await rejected;
-    await transport.execFile('printf', ['cancel acknowledged']);
-    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
-  } finally {
-    transport.dispose();
-    await fs.rm(directory, { recursive: true, force: true });
-  }
+    assert.equal(channel.child.exitCode, null);
+    assert.equal((await transport.execFile('printf', ['new channel'])).stdout, 'new channel');
+    await waitFor(() => channel.child.exitCode !== null);
+    assert.equal(channel.child.exitCode, 0);
+    assert.equal(kills, 0);
+  } finally { transport.dispose(); }
 });
 
 test('manual SSH retry bypasses the cooldown and reconnects immediately', async () => {
@@ -272,7 +389,7 @@ test('manual SSH retry bypasses the cooldown and reconnects immediately', async 
     transport.lastError = new Error('previous timeout');
     await assert.rejects(transport.connect(), /previous timeout/);
     await transport.retryNow();
-    assert.ok(transport.child);
+    assert.equal(transport.ready, true);
     assert.equal(transport.retryAfter, 0);
     assert.equal(transport.lastError, null);
   } finally { transport.dispose(); }

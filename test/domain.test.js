@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { execFileSync } = require('node:child_process');
 
 const { parseProcessName } = require('../src/domain/process');
 const { getAcceleratorAvailability } = require('../src/domain/accelerator-availability');
@@ -25,6 +26,15 @@ test('process name parser extracts basename only for normal executable paths', (
   assert.equal(parseProcessName('/usr/bin/python train.py'), 'python');
   assert.equal(parseProcessName('node server.js'), 'node');
   assert.equal(parseProcessName(''), '');
+});
+
+test('process start identity is independent of the local timezone', () => {
+  const parser = JSON.stringify(require.resolve('../src/domain/linux-parsers'));
+  const script = `const { parseProcessOutput } = require(${parser}); process.stdout.write(parseProcessOutput('42 user 1.0 2048 Sat Sep 26 00:00:00 2026 python', 1e9)[0].processKey);`;
+  for (const TZ of ['UTC', 'Asia/Shanghai', 'America/New_York']) {
+    const key = execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { ...process.env, TZ } });
+    assert.equal(key, '42:' + Date.parse('2026-09-26T00:00:00Z'));
+  }
 });
 
 test('size, rate and duration formatters use consistent binary units and one decimal', () => {

@@ -45,6 +45,10 @@ function activate(context) {
       configFile: sshConfigFile,
       onLog: logDebug,
       onUpdate: (id, device) => { if (provider) provider.onDeviceUpdate(id, device); },
+      onPauseChange: (paused) => { if (provider) provider.broadcast({ cmd: 'uiState', paused }); },
+      onResidualProcesses: (host, pids, acknowledge) => {
+        if (provider) return provider.notifyResidualProcesses(host, pids, acknowledge);
+      },
     });
     provider = new MultiMonitorViewProvider({
       vscode, manager, configStore, workspaceState: context.workspaceState, uiStateStore: context.globalState, localLinux, logger: logDebug,

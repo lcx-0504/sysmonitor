@@ -5,8 +5,9 @@ const { SshTransport } = require('../ssh/ssh-transport');
 const { RemoteSystemInfo } = require('../ssh/remote-system-info');
 
 class DeviceMonitorManager {
-  constructor({ configStore, language, localLinux, configFile = null, onUpdate = () => {}, onLog = () => {} }) {
-    Object.assign(this, { configStore, language, localLinux, configFile, onUpdate, onLog });
+  constructor({ configStore, language, localLinux, configFile = null, onUpdate = () => {}, onLog = () => {},
+    onResidualProcesses = () => {}, onPauseChange = () => {} }) {
+    Object.assign(this, { configStore, language, localLinux, configFile, onUpdate, onLog, onResidualProcesses, onPauseChange });
     this.devices = new Map();
     this.visibleIds = new Set();
     this.preparingIds = new Set();
@@ -19,6 +20,11 @@ class DeviceMonitorManager {
     const remote = id !== 'local';
     const host = remote ? id.slice(4) : null;
     const transport = remote ? new SshTransport({ host, configFile: this.configFile,
+      onLog: (message) => this.onLog(id + ': ' + message),
+      onResidualProcesses: (pids, acknowledge) => {
+        this.setPaused(true);
+        return this.onResidualProcesses(host, pids, acknowledge);
+      },
       shouldReconnect: () => {
         const device = this.devices.get(id);
         return !!device && !this.paused && device.running;
@@ -33,7 +39,7 @@ class DeviceMonitorManager {
         isSsh: remote, sshClientIp: '',
         ...(remote ? {
           commandRunner: transport, fileReader: transport,
-          sshConnectionInfo: () => transport.sshConnection,
+          sshConnectionInfo: () => transport.sshConnections,
           systemInfo: new RemoteSystemInfo({ fileReader: transport, commandRunner: transport }),
         } : {}),
       },
@@ -67,7 +73,12 @@ class DeviceMonitorManager {
     }
   }
 
-  setPaused(paused) { this.paused = paused; this.applyVisibility(); }
+  setPaused(paused) {
+    const changed = this.paused !== paused;
+    this.paused = paused;
+    this.applyVisibility();
+    if (changed) this.onPauseChange(paused);
+  }
   setPreparing(id, preparing) {
     if (preparing) this.preparingIds.add(id);
     else this.preparingIds.delete(id);

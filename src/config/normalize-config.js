@@ -90,6 +90,7 @@ function normalizeServerConfig(rawValue) {
     ...rawServers,
     visibleOnly: isBoolean(rawServers.visibleOnly) ? rawServers.visibleOnly : DEFAULT_CONFIG.servers.visibleOnly,
     restoreTabs: isBoolean(rawServers.restoreTabs) ? rawServers.restoreTabs : DEFAULT_CONFIG.servers.restoreTabs,
+    remoteWindowMode: enumValue(rawServers.remoteWindowMode, ['new', 'recent', 'menu'], DEFAULT_CONFIG.servers.remoteWindowMode),
     actions: {
       ...rawActions,
       editor: isBoolean(rawActions.editor) ? rawActions.editor : DEFAULT_CONFIG.servers.actions.editor,

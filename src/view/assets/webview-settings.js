@@ -402,7 +402,15 @@
     var actionCfg = serversCfg.actions || {};
     var actionsBody = document.getElementById('sett-actions-body');
     actionsBody.innerHTML = actionControls.map(function(entry) {
-      return settingRow(entry[1], switchButton('action-' + entry[0], actionCfg[entry[0]] !== false));
+      var row = settingRow(entry[1], switchButton('action-' + entry[0], actionCfg[entry[0]] !== false));
+      if (entry[0] === 'remoteWindow' && actionCfg.remoteWindow !== false) {
+        row += settingRow(zh ? '远程窗口打开方式' : 'Remote window behavior', selectControl('remote-window-mode', serversCfg.remoteWindowMode || 'menu', [
+          ['new', zh ? '新工作区' : 'New workspace'],
+          ['recent', zh ? '最近工作区' : 'Recent workspace'],
+          ['menu', zh ? '菜单选择' : 'Choose from menu'],
+        ]));
+      }
+      return row;
     }).join('');
     actionControls.forEach(function(entry) {
       actionsBody.querySelector('[data-act="action-' + entry[0] + '"]').addEventListener('click', function() {
@@ -411,7 +419,18 @@
         serversCfg.actions = actions;
         sendToExtension({cmd:'setConfig',key:'servers',value:serversCfg});
         if (typeof localMode !== 'undefined' && localMode) renderServers();
-        animateSwitch(this, actions[entry[0]]);
+        animateSwitch(this, actions[entry[0]], entry[0] === 'remoteWindow');
+      });
+    });
+    var remoteWindowMode = actionsBody.querySelector('[data-act="remote-window-mode"]');
+    if (remoteWindowMode) remoteWindowMode.addEventListener('click', function(event) {
+      event.stopPropagation();
+      openSettingMenu(this, function(value) {
+        serversCfg.remoteWindowMode = value;
+        closeRemoteMenu();
+        sendToExtension({cmd:'setConfig',key:'servers',value:serversCfg});
+        renderServers();
+        renderSettingsBody();
       });
     });
     var serversSection = document.getElementById('sett-servers-section');

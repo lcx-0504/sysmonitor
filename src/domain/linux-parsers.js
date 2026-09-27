@@ -73,7 +73,7 @@ function parseProcessOutput(raw, totalMemoryBytes) {
     const cpuUsagePercent = Number(match[3]) || 0;
     const memoryUsedBytes = Number(match[4]) * 1024;
     if (memoryUsedBytes <= 1e6 && cpuUsagePercent <= 0) continue;
-    const startedAt = Date.parse(`${match[5]} ${match[6]} ${match[7]} ${match[8]} ${match[9]}`);
+    const startedAt = Date.parse(`${match[5]} ${match[6]} ${match[7]} ${match[8]} ${match[9]} UTC`);
     const commandLine = match[10].trim();
     processes.push({
       pid,

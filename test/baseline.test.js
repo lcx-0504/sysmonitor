@@ -44,6 +44,7 @@ test('public configuration defaults remain characterized', () => {
   assert.deepEqual(properties['sysmonitor.servers'].default.actions, {
     editor: true, window: true, terminal: true, remoteWindow: true,
   });
+  assert.equal(properties['sysmonitor.servers'].default.remoteWindowMode, 'menu');
 
   assert.equal(properties['sysmonitor.refreshInterval'].default, 2);
   assert.deepEqual(properties['sysmonitor.statusBar'].default, {

@@ -199,7 +199,7 @@
     .disk-footer { display: flex; }
     .disk-header-alert { display: inline-flex; }
   }
-  .gpu-mini { flex: 1 1 var(--card-min-width); min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); position: relative; overflow: hidden; }
+  .gpu-mini { flex: 1 1 max(var(--card-min-width), calc((100% - 3 * var(--card-gap)) / 4)); min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); position: relative; overflow: hidden; }
   .gpu-mini.my-gpu { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
   .gpu-mini > *:not(.spark-bg) { position: relative; z-index: 1; }
   .gpu-na { font-size: 11px; color: var(--muted); }

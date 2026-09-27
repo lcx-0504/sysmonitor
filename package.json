@@ -234,6 +234,7 @@
           "default": {
             "visibleOnly": false,
             "restoreTabs": true,
+            "remoteWindowMode": "menu",
             "actions": {
               "editor": true,
               "window": true,

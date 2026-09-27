@@ -8,6 +8,12 @@ const { normalizeConfig } = require('../src/config/normalize-config');
 const { ConfigStore } = require('../src/config/config-store');
 const { setActionVisibilityContexts } = require('../src/view/action-visibility');
 
+test('remote window behavior defaults to menu and accepts exactly the three supported modes', () => {
+  assert.equal(normalizeConfig({}).servers.remoteWindowMode, 'menu');
+  for (const mode of ['new', 'recent', 'menu']) assert.equal(normalizeConfig({ servers: { remoteWindowMode: mode } }).servers.remoteWindowMode, mode);
+  for (const mode of [undefined, null, true, 'unknown']) assert.equal(normalizeConfig({ servers: { remoteWindowMode: mode } }).servers.remoteWindowMode, 'menu');
+});
+
 test('action button settings default on and drive all four native toolbar contexts', () => {
   const calls = [];
   const vscode = { commands: { executeCommand: (...args) => calls.push(args) } };

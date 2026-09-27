@@ -67,6 +67,32 @@ test('SSH collector waits for its own connection tuple before showing local SSH 
   assert.equal(calls, 1);
 });
 
+test('SSH traffic includes every pool connection, excludes other clients and resets on membership changes', async () => {
+  const first = { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 22 };
+  const second = { ...first, clientPort: 50001 };
+  let connections = [first]; let now = 0; let bytes = 100;
+  const collector = new SshTrafficCollector({ isSsh: true, connectionInfo: () => connections,
+    monotonicClock: () => now,
+    commandRunner: { async execFile() {
+      return { stdout: [50000, 50001, 60000].map((port) =>
+        'ESTAB 0 0 10.0.0.2:22 10.0.0.1:' + port + '\n cubic rtt:10/1 bytes_sent:' + bytes + ' bytes_received:' + bytes + '\n').join('') };
+    } },
+  });
+  await collector.collect();
+  now += 1000; bytes += 100;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, 100);
+  connections = [first, second];
+  now += 1000; bytes += 100;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, null);
+  now += 1000; bytes += 100;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, 200);
+  connections = [second, first];
+  now += 1000; bytes += 100;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, 200);
+  connections = [];
+  assert.equal((await collector.collect()).isSsh, false);
+});
+
 test('SSH collector requests numeric socket addresses so port 22 can be matched', async () => {
   let args;
   const collector = new SshTrafficCollector({

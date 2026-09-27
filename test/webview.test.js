@@ -9,6 +9,64 @@ const { getWebviewHtml, WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-ht
 
 const readWebviewScript = () => WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(__dirname, '..', 'src/view/assets', fileName), 'utf8')).join('\n');
 
+test('remote-window behavior belongs to action settings and follows its switch without losing the selection', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../src/view/assets/webview-settings.js'), 'utf8');
+  const helpers = script.slice(script.indexOf('  function settingRow('), script.indexOf('  var settingMenu ='));
+  const actions = script.slice(script.indexOf('    var actionControls ='), script.indexOf('    var serversSection ='));
+  const nodes = new Map(), sent = [], animations = [];
+  const body = {
+    innerHTML: '',
+    querySelector(selector) {
+      const action = selector.match(/data-act="([^"]+)"/)[1];
+      if (!this.innerHTML.includes('data-act="' + action + '"')) return null;
+      if (!nodes.has(action)) nodes.set(action, { addEventListener(_event, handler) { this.click = handler; } });
+      return nodes.get(action);
+    },
+  };
+  const context = vm.createContext({
+    zh: true, localMode: true, serversCfg: { remoteWindowMode: 'recent', actions: { remoteWindow: true } },
+    document: { getElementById: (id) => { assert.equal(id, 'sett-actions-body'); return body; } },
+    esc: String, renderServers() {}, closeRemoteMenu() {},
+    animateSwitch: (_button, enabled, rerender) => animations.push({ enabled, rerender }),
+    sendToExtension: (message) => sent.push(JSON.parse(JSON.stringify(message))),
+  });
+  vm.runInContext(helpers + '\nfunction renderActions() {\n' + actions + '\n}', context);
+  context.renderActions();
+  assert.ok(body.innerHTML.indexOf('action-remoteWindow') < body.innerHTML.indexOf('remote-window-mode'));
+  assert.equal(body.innerHTML.includes('<small>'), false);
+  assert.match(body.innerHTML, /remote-window-mode" data-value="recent"/);
+  nodes.get('action-remoteWindow').click();
+  assert.deepEqual(animations.at(-1), { enabled: false, rerender: true });
+  context.renderActions();
+  assert.equal(body.innerHTML.includes('remote-window-mode'), false);
+  assert.equal(context.serversCfg.remoteWindowMode, 'recent');
+  nodes.get('action-remoteWindow').click();
+  context.renderActions();
+  assert.match(body.innerHTML, /remote-window-mode" data-value="recent"/);
+  assert.equal(sent.at(-1).value.actions.remoteWindow, true);
+  assert.equal(sent.at(-1).value.remoteWindowMode, 'recent');
+  context.localMode = false;
+  context.renderActions();
+  assert.equal(body.innerHTML.includes('remote-window-mode'), false);
+});
+
+test('remote-window row actions delegate behavior to the extension and toggle their pending menu', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/view/assets/webview-servers.js'), 'utf8');
+  const code = source.slice(source.indexOf('  function activateRemoteWindow('), source.indexOf("  document.addEventListener('click'"));
+  const sent = [];
+  const context = { remoteMenuButton: null, remoteMenuHost: null, sendToExtension: (message) => sent.push(message) };
+  context.closeRemoteMenu = () => { context.remoteMenuButton = null; context.remoteMenuHost = null; };
+  vm.runInNewContext(code, context);
+  const button = { setAttribute() {} };
+  context.activateRemoteWindow('campus', button);
+  assert.equal(sent[0].cmd, 'activateRemoteWindow');
+  assert.equal(sent[0].host, 'campus');
+  assert.equal(context.remoteMenuHost, 'campus');
+  context.activateRemoteWindow('campus', button);
+  assert.equal(sent.length, 1);
+  assert.equal(context.remoteMenuHost, null);
+});
+
 test('an existing monitor keeps its framework and shows GPU loading until its first snapshot', () => {
   const script = readWebviewScript();
   const start = script.indexOf('  function showMonitorStatus(');
@@ -180,7 +238,7 @@ test('page navigation precedes flat device tabs and server actions use Codicons'
   assert.match(servers, /connect\.textContent = zh \? '连接主机' : 'Connect to host'/);
   assert.doesNotMatch(servers, /最近打开的文件夹|暂无记录/);
   assert.match(servers, /if \(folders\.length\) \{\s*var divider = document\.createElement\('div'\)/);
-  assert.match(servers, /sendToExtension\(\{ cmd: 'listRemoteFolders', host: host \}\)/);
+  assert.match(servers, /sendToExtension\(\{ cmd: 'activateRemoteWindow', host: host \}\)/);
   assert.doesNotMatch(servers, /renderRemoteMenu\(\[\]\)/);
   assert.match(navigation, /data\.cmd === 'remoteFolders' && remoteMenuHost === data\.host\) showRemoteMenu\(data\.folders \|\| \[\]\)/);
   assert.match(servers, /terminal\.className = 'server-action server-terminal'/);
@@ -435,12 +493,12 @@ test('GPU footer shows users with a compact info button or falls back to stats',
   assert.match(script, /statsElement\.innerHTML = gpuStatsMarkup\(g\)/);
 });
 
-test('GPU cards share the CPU and RAM wrap basis and hide footer labels only on overflow', () => {
+test('GPU cards keep the shared minimum, cap rows at four, and hide footer labels only on overflow', () => {
   const style = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.css'), 'utf8');
   const script = readWebviewScript();
   assert.match(style, /--card-min-width: 150px;/);
   assert.match(style, /\.net-ssh-row > \.card \{ flex: 1 1 var\(--card-min-width\);/);
-  assert.match(style, /\.gpu-mini \{ flex: 1 1 var\(--card-min-width\);/);
+  assert.match(style, /\.gpu-mini \{ flex: 1 1 max\(var\(--card-min-width\), calc\(\(100% - 3 \* var\(--card-gap\)\) \/ 4\)\);/);
   assert.match(style, /\.gpu-stats\.compact \.gpu-stat-label \{ display: none; \}/);
   assert.match(script, /class="gpu-stat-label"/);
   assert.doesNotMatch(script, /updateGpuCardBasis/);

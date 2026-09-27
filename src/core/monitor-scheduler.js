@@ -8,6 +8,9 @@ class MonitorScheduler {
     this.runners = [];
     this.timer = null;
     this.isPaused = false;
+    this.isCollectingOnce = false;
+    this.oneShot = null;
+    this.generation = 0;
   }
 
   addRunner(runner) { this.runners.push(runner); }
@@ -20,6 +23,7 @@ class MonitorScheduler {
   }
 
   start() {
+    this.generation++;
     this.stop();
     this.isPaused = false;
     this.tick();
@@ -31,8 +35,34 @@ class MonitorScheduler {
     this.timer = null;
   }
 
-  pause() { this.isPaused = true; this.stop(); }
+  pause() {
+    this.generation++;
+    this.isPaused = true;
+    this.stop();
+    for (const runner of this.runners) runner.invalidate({ abortRunning: false, reason: 'Monitoring paused' });
+  }
   resume() { this.start(); }
+
+  collectOnce() {
+    if (this.oneShot) return this.oneShot;
+    const generation = this.generation;
+    this.stop();
+    this.isCollectingOnce = true;
+    this.oneShot = Promise.allSettled(this.runners.map(async (runner) => {
+      await runner.whenIdle();
+      if (generation === this.generation) await runner.run(this.clock());
+    })).then((results) => {
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure) throw failure.reason;
+    }).finally(() => {
+      this.isCollectingOnce = false;
+      this.oneShot = null;
+      if (generation === this.generation && !this.isPaused) {
+        this.timer = setInterval(() => this.tick(), this.refreshIntervalMilliseconds);
+      }
+    });
+    return this.oneShot;
+  }
 
   setRefreshInterval(refreshIntervalMilliseconds) {
     this.refreshIntervalMilliseconds = refreshIntervalMilliseconds;
@@ -43,6 +73,8 @@ class MonitorScheduler {
   }
 
   dispose() {
+    this.generation++;
+    this.isPaused = true;
     this.stop();
     for (const runner of this.runners) runner.invalidate();
   }

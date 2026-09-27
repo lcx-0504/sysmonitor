@@ -342,6 +342,7 @@
     }
     else if (data.cmd === 'servers') { serverRows = data.hosts || []; serverError = data.error || ''; renderServers(); }
     else if (data.cmd === 'remoteFolders' && remoteMenuHost === data.host) showRemoteMenu(data.folders || []);
+    else if (data.cmd === 'remoteWindowActionDone' && remoteMenuHost === data.host) closeRemoteMenu();
     else if (data.cmd === 'config' && data.serversCfg) { serversCfg = data.serversCfg; renderServers(); }
     else if (data.cmd === 'sshDefaultExtensions') {
       sshDefaultInstalled = data.installed === true;
