@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1 — 2026-09-27
+
+- Run in the workspace extension host so first-time Remote-SSH, WSL, and container installations use the remote machine instead of falling back to the local machine.
+- Verify the execution location before remote collection and show installation guidance when the extension runs locally in a remote window.
+
 ## 1.5.0 — 2026-09-25
 
 - Monitor multiple Linux servers from a local macOS, Windows, or Linux window using SSH config aliases, including `Include` files. Local Linux also retains a built-in device tab for its own machine.

@@ -11,6 +11,7 @@ const readJson = (relativePath) => JSON.parse(fs.readFileSync(path.join(projectR
 
 test('extension manifest points to an existing CommonJS entry point', () => {
   const manifest = readJson('package.json');
+  assert.deepEqual(manifest.extensionKind, ['workspace']);
   const entryPath = path.resolve(projectRoot, manifest.main);
   assert.equal(fs.existsSync(entryPath), true);
   const source = fs.readFileSync(entryPath, 'utf8');

@@ -33,8 +33,10 @@ function activate(context) {
   context.subscriptions.push({ dispose: () => configStore.dispose() });
   const lang = vscode.env.language || '';
   const zh = lang.startsWith('zh');
+  const remoteWindow = !!vscode.env.remoteName;
+  const localInRemoteWindow = remoteWindow && context.extension.extensionKind !== vscode.ExtensionKind.Workspace;
 
-  if (!vscode.env.remoteName) {
+  if (!remoteWindow) {
     const localLinux = process.platform === 'linux';
     const sshConfigFile = vscode.workspace.getConfiguration('remote.SSH').get('configFile') || null;
     let provider = null;
@@ -92,7 +94,7 @@ function activate(context) {
     return;
   }
 
-  if (process.platform !== 'linux') {
+  if (localInRemoteWindow || process.platform !== 'linux') {
     vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarDeviceActive', false);
     vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarSshActive', false);
     vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarFixedActive', false);
@@ -101,8 +103,14 @@ function activate(context) {
       vscode.window.registerWebviewViewProvider('sysmonitor.panel', {
         resolveWebviewView(view) {
           const nonce = Math.random().toString(36).slice(2, 18);
-          const title = zh ? '仅支持 Linux' : 'Linux only';
-          const body = zh
+          const title = localInRemoteWindow
+            ? (zh ? '请在远程环境中运行扩展' : 'Run the extension in the remote environment')
+            : (zh ? '仅支持 Linux' : 'Linux only');
+          const body = localInRemoteWindow
+            ? (zh
+              ? 'System Monitor 当前运行在本机。请在扩展页面中将其安装或启用到当前远程环境，然后重新加载窗口。'
+              : 'System Monitor is running locally. Install or enable it in the current remote environment from the Extensions view, then reload the window.')
+            : zh
             ? '当前远程环境不是 Linux（' + process.platform + '），本扩展无法采集系统指标。请在 Linux 服务器、WSL、Linux 容器或本地 Linux 中使用。'
             : 'This remote is not Linux (' + process.platform + '). System Monitor requires Linux. Use a Linux server, WSL, Linux container, or local Linux.';
           view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8">

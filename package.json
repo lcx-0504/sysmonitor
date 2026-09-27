@@ -2,7 +2,7 @@
   "name": "sysmonitor",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "publisher": "LiChenxi",
   "license": "MIT",
   "icon": "icon.png",
@@ -39,7 +39,7 @@
     "onWebviewPanel:sysmonitor.editor"
   ],
   "main": "./extension.js",
-  "extensionKind": ["workspace", "ui"],
+  "extensionKind": ["workspace"],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
