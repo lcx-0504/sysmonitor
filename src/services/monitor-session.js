@@ -195,19 +195,26 @@ class MonitorSession {
   }
 
   async retryOnce() {
-    const since = Date.now();
     this.loadError = null;
     if (this.transport && this.state !== 'connected') await this.transport.retryNow();
     if (this.disposed) throw new Error('Monitor session disposed');
-    if (!this.ready) { this.requiredSequence = this.service.readSnapshot().sequence; this.requiredSince = since; }
     this.notify();
-    const result = this.waitForInitialSample({ since, allowPaused: true, page: 'proc', afterSequence: this.service.readSnapshot().sequence });
-    const collection = this.service.collectOnce().catch((error) => {
+    let sampleReady = Promise.resolve();
+    const collection = this.service.collectOnce({ onStart: () => {
+      const since = Date.now();
+      const afterSequence = this.service.readSnapshot().sequence;
+      this.loadError = null;
+      if (!this.ready) { this.requiredSequence = afterSequence; this.requiredSince = since; }
+      sampleReady = this.waitForInitialSample({ since, allowPaused: true, page: 'proc', afterSequence });
+      sampleReady.catch(() => {});
+      this.notify();
+    } }).catch((error) => {
       this.loadError = error.message;
       this.settleWaiters();
       throw error;
     });
-    const outcomes = await Promise.allSettled([result, collection]);
+    const outcomes = await Promise.allSettled([collection]);
+    outcomes.push(...await Promise.allSettled([sampleReady]));
     const failure = outcomes.find((outcome) => outcome.status === 'rejected');
     if (failure) throw failure.reason;
   }

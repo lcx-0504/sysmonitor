@@ -39,7 +39,7 @@ class MonitorService {
       ['sshTraffic', new SshTrafficCollector({ commandRunner: this.commandRunner, isSsh, clientIp: sshClientIp, connectionInfo: sshConnectionInfo, timeoutMilliseconds: COLLECTION_POLICY.sshTraffic.timeoutMilliseconds })],
       ['processes', new ProcessCollector({ commandRunner: this.commandRunner, ...collectorInputs, timeoutMilliseconds: COLLECTION_POLICY.processes.timeoutMilliseconds })],
       ['accelerators', new AcceleratorCollector({ providers: acceleratorProviders || [new NvidiaProvider({ commandRunner: this.commandRunner, ...collectorInputs })] })],
-      ['diskTopology', new DiskTopologyCollector({ commandRunner: this.commandRunner, getDiskConfig: () => this.runtimeConfig.disk })],
+      ['diskTopology', new DiskTopologyCollector({ commandRunner: this.commandRunner, getDiskConfig: () => this.runtimeConfig.disk, timeoutMilliseconds: COLLECTION_POLICY.diskTopology.timeoutMilliseconds })],
     ];
     this.runners = definitions.map(([key, collector]) => {
       const policy = COLLECTION_POLICY[key];
@@ -66,7 +66,7 @@ class MonitorService {
 
   start() { this.scheduler.start(); }
   pause() { this.scheduler.pause(); }
-  collectOnce() { return this.scheduler.collectOnce(); }
+  collectOnce(options) { return this.scheduler.collectOnce(options); }
   resume({ force = false } = {}) {
     if (force) for (const runner of this.runners) runner.nextDueAt = 0;
     this.scheduler.resume();

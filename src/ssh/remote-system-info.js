@@ -37,7 +37,7 @@ class RemoteSystemInfo {
 
   async userId() {
     return this.cached('uid', 60000, async () => {
-      const { stdout } = await this.commandRunner.execFile('id', ['-u'], { timeoutMilliseconds: 3000 });
+      const { stdout } = await this.commandRunner.execFile('id', ['-u'], { timeoutMilliseconds: 5000 });
       return Number.parseInt(stdout, 10);
     });
   }

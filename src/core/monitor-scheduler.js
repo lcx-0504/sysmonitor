@@ -43,15 +43,16 @@ class MonitorScheduler {
   }
   resume() { this.start(); }
 
-  collectOnce() {
+  collectOnce({ onStart = () => {} } = {}) {
     if (this.oneShot) return this.oneShot;
     const generation = this.generation;
     this.stop();
     this.isCollectingOnce = true;
-    this.oneShot = Promise.allSettled(this.runners.map(async (runner) => {
-      await runner.whenIdle();
-      if (generation === this.generation) await runner.run(this.clock());
-    })).then((results) => {
+    this.oneShot = Promise.all(this.runners.map((runner) => runner.whenIdle())).then(async () => {
+      if (generation !== this.generation) return [];
+      onStart();
+      return Promise.allSettled(this.runners.map((runner) => runner.run(this.clock())));
+    }).then((results) => {
       const failure = results.find((result) => result.status === 'rejected');
       if (failure) throw failure.reason;
     }).finally(() => {

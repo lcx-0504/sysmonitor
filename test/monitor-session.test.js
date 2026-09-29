@@ -6,6 +6,8 @@ const { createSessionFixture } = require('./session-fixture');
 const { MonitorService } = require('../src/services/monitor-service');
 const { normalizeConfig } = require('../src/config/normalize-config');
 const { MonitorSession } = require('../src/services/monitor-session');
+const { CollectorRunner } = require('../src/core/collector-runner');
+const { MonitorScheduler } = require('../src/core/monitor-scheduler');
 
 for (const remote of [false, true]) {
   test((remote ? 'SSH' : 'direct') + ' session waits for complete first data and publishes immediately', async (t) => {
@@ -82,7 +84,7 @@ test('paused retry updates once, preserves history, and deduplicates simultaneou
   session.setConnection('disconnected', new Error('lost'));
   let attempts = 0;
   fixture.transport.retryNow = async () => { attempts++; session.setConnection('connected'); };
-  session.service.collectOnce = async () => fixture.commit();
+  session.service.collectOnce = async ({ onStart }) => { onStart(); fixture.commit(); };
   const first = session.retry();
   const second = session.retry();
   assert.equal(first, second);
@@ -97,10 +99,40 @@ test('failed paused retry stops its one-shot collection', async (t) => {
   const fixture = createSessionFixture({ paused: true });
   const session = fixture.session;
   t.after(() => session.dispose());
-  session.service.collectOnce = async () => { session.loadError = 'sample failed'; session.settleWaiters(); };
+  session.service.collectOnce = async ({ onStart }) => { onStart(); session.loadError = 'sample failed'; session.settleWaiters(); };
   await assert.rejects(session.retry(), /sample failed/);
   assert.equal(session.service.scheduler.isPaused, true);
   assert.equal(session.paused, true);
+});
+
+test('manual retry excludes a previous in-flight failure and waits for the new round', async (t) => {
+  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 2000, onTick() {} });
+  scheduler.pause();
+  const fixture = createSessionFixture({ paused: true, service: { collectOnce: options => scheduler.collectOnce(options) } });
+  t.after(() => { fixture.session.dispose(); scheduler.dispose(); });
+  fixture.commit();
+  let failPrevious;
+  let attempts = 0;
+  const runner = new CollectorRunner({ key: 'processes', snapshotStore: fixture.store, cadenceMilliseconds: 2000, timeoutMilliseconds: 1000,
+    onSettled: () => fixture.publish(),
+    collector: { async collect() {
+      attempts++;
+      if (attempts === 1) await new Promise((resolve, reject) => { failPrevious = reject; });
+      fixture.commit(['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators']);
+      return fixture.values.processes;
+    } },
+  });
+  scheduler.addRunner(runner);
+  runner.run();
+  const retry = fixture.session.retry();
+  await new Promise(setImmediate);
+  assert.equal(attempts, 1, 'retry waits for the existing round');
+  failPrevious(Object.assign(new Error('previous process collection timed out'), { code: 'ETIMEDOUT' }));
+  await retry;
+  assert.equal(attempts, 2);
+  assert.deepEqual(fixture.session.viewState().failures, []);
+  assert.equal(fixture.session.loadError, null);
+  assert.equal(scheduler.isPaused, true);
 });
 
 test('each new view receives the same shared snapshot and history', (t) => {
@@ -125,7 +157,7 @@ for (const remote of [false, true]) test((remote ? 'SSH' : 'direct') + ' first-s
   await rejected;
   assert.equal(fixture.session.viewState().hasSnapshot, false);
   assert.equal(fixture.session.loadError, 'NFS unavailable');
-  fixture.session.service.collectOnce = async () => fixture.commit();
+  fixture.session.service.collectOnce = async ({ onStart }) => { onStart(); fixture.commit(); };
   await fixture.session.retry();
   assert.equal(fixture.session.ready, true);
   assert.equal(fixture.session.loadError, null);

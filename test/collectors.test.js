@@ -15,6 +15,10 @@ const { parseDfOutput, parseFindmntOutput } = require('../src/domain/disk');
 const { SnapshotStore } = require('../src/core/snapshot-store');
 const { CollectorRunner } = require('../src/core/collector-runner');
 
+function timedSshOutput(raw, seconds) {
+  return `__SYSMON_SSH_SAMPLE_START__ ${seconds}\n${raw}\n__SYSMON_SSH_SAMPLE_END__ ${seconds}\n`;
+}
+
 test('network parser selects default-route interfaces and avoids bridge/veth double counting', () => {
   const routes = 'Iface Destination Gateway Flags RefCnt Use Metric Mask\neth0 00000000 01010101 0003 0 0 0 00000000\ndocker0 0000A8C0 00000000 0001 0 0 0 00FFFFFF\n';
   const devices = 'Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\neth0: 1000 0 0 0 0 0 0 0 2000 0 0 0 0 0 0 0\ndocker0: 500 0 0 0 0 0 0 0 500 0 0 0 0 0 0 0\nveth1: 500 0 0 0 0 0 0 0 500 0 0 0 0 0 0 0\n';
@@ -58,7 +62,7 @@ test('SSH collector waits for its own connection tuple before showing local SSH 
   let available = false; let calls = 0;
   const collector = new SshTrafficCollector({
     isSsh: true, connectionInfo: () => available ? connection : null, timeoutMilliseconds: 8000,
-    commandRunner: { execFile: async (_command, _args, options) => { calls++; assert.equal(options.timeoutMilliseconds, 8000); return { stdout: 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n' }; } },
+    commandRunner: { execFile: async (_command, _args, options) => { calls++; assert.equal(options.timeoutMilliseconds, 8000); return { stdout: timedSshOutput('ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n', 1) }; } },
   });
   assert.equal((await collector.collect()).isSsh, false);
   assert.equal(calls, 0);
@@ -72,10 +76,9 @@ test('SSH traffic includes every pool connection, excludes other clients and res
   const second = { ...first, clientPort: 50001 };
   let connections = [first]; let now = 0; let bytes = 100;
   const collector = new SshTrafficCollector({ isSsh: true, connectionInfo: () => connections,
-    monotonicClock: () => now,
     commandRunner: { async execFile() {
-      return { stdout: [50000, 50001, 60000].map((port) =>
-        'ESTAB 0 0 10.0.0.2:22 10.0.0.1:' + port + '\n cubic rtt:10/1 bytes_sent:' + bytes + ' bytes_received:' + bytes + '\n').join('') };
+      return { stdout: timedSshOutput([50000, 50001, 60000].map((port) =>
+        'ESTAB 0 0 10.0.0.2:22 10.0.0.1:' + port + '\n cubic rtt:10/1 bytes_sent:' + bytes + ' bytes_received:' + bytes + '\n').join(''), now / 1000) };
     } },
   });
   await collector.collect();
@@ -98,12 +101,66 @@ test('SSH collector requests numeric socket addresses so port 22 can be matched'
   const collector = new SshTrafficCollector({
     isSsh: true,
     clientIp: '10.0.0.1',
-    commandRunner: { execFile: async (_command, commandArgs) => { args = commandArgs; return { stdout: 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n' }; } },
-    monotonicClock: () => 1000,
+    commandRunner: { execFile: async (_command, commandArgs) => { args = commandArgs; return { stdout: timedSshOutput('ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n', 1) }; } },
   });
   const result = await collector.collect();
-  assert.equal(args.includes('-n'), true);
+  assert.match(args[1], /ss -H -t -i -n state established/);
   assert.equal(result.latencyMilliseconds, 9.1);
+});
+
+test('SSH traffic discards missing and partial socket samples instead of counting lifetime bytes as a rate', async () => {
+  const first = { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 22 };
+  const second = { ...first, clientPort: 50001 };
+  let seconds = 0, missing = false, bytes = 1_800_000_000;
+  let connections = [first];
+  const collector = new SshTrafficCollector({ isSsh: true, connectionInfo: () => connections,
+    commandRunner: { async execFile() {
+      const raw = missing ? '' : `0 0 10.0.0.2:22 10.0.0.1:50000\n cubic bytes_sent:${bytes} bytes_received:1000\n`;
+      return { stdout: timedSshOutput(raw, seconds) };
+    } },
+  });
+  await collector.collect();
+  seconds = 2; missing = true;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, null);
+  seconds = 4; missing = false; bytes += 200_000;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, null);
+  seconds = 6; bytes += 200_000;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, 100_000);
+  connections = [first, second]; seconds = 8;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, null);
+  assert.equal(collector.previous, null);
+});
+
+test('SSH rates use server uptime even when delayed responses arrive almost together', async () => {
+  let remoteSeconds = 100, bytes = 1_000_000_000;
+  const collector = new SshTrafficCollector({ isSsh: true, clientIp: '10.0.0.1',
+    commandRunner: { async execFile() {
+      return { stdout: timedSshOutput(`0 0 10.0.0.2:22 10.0.0.1:50000\n cubic bytes_sent:${bytes} bytes_received:1000\n`, remoteSeconds) };
+    } },
+  });
+  await collector.collect();
+  remoteSeconds += 2; bytes += 1_000_000;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, 500_000);
+  bytes += 100;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, null, 'same uptime timestamp cannot produce an infinite or tiny-interval rate');
+  remoteSeconds = 1;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, null, 'server reboot establishes a new baseline');
+});
+
+test('SSH traffic clears its baseline on command timeout and only matches an exact client IP', async () => {
+  let timeout = false, seconds = 0, bytes = 500_000_000;
+  const collector = new SshTrafficCollector({ isSsh: true, clientIp: '10.0.0.1', commandRunner: { async execFile() {
+    if (timeout) throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' });
+    return { stdout: timedSshOutput(`0 0 10.0.0.2:22 10.0.0.1:50000\n cubic bytes_sent:${bytes} bytes_received:1000\n`
+      + '0 0 10.0.0.2:22 10.0.0.10:50001\n cubic bytes_sent:9000000000 bytes_received:9000000000\n', seconds) };
+  } } });
+  await collector.collect();
+  timeout = true;
+  await assert.rejects(collector.collect(), { code: 'ETIMEDOUT' });
+  timeout = false; seconds = 10; bytes += 100_000;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, null);
+  seconds = 12; bytes += 100_000;
+  assert.equal((await collector.collect()).clientDownloadBytesPerSecond, 50_000);
 });
 
 test('NVIDIA provider exposes cards and processes only after the complete atomic chain', async () => {

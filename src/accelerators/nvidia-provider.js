@@ -36,7 +36,7 @@ function parseNvidiaProcesses(raw, devicesById) {
 class NvidiaProvider {
   constructor({ commandRunner, fileReader = fs, userId = typeof process.getuid === 'function' ? process.getuid() : null, systemInfo = null }) { this.commandRunner = commandRunner; this.fileReader = fileReader; this.userId = userId; this.systemInfo = systemInfo; this.id = 'nvidia'; this.clockTicksPerSecondPromise = null; }
   async readProcessKeys(pids) {
-    if (!this.clockTicksPerSecondPromise) this.clockTicksPerSecondPromise = this.commandRunner.execFile('getconf', ['CLK_TCK'], { timeoutMilliseconds: 1000 }).then(({ stdout }) => Number.parseInt(stdout, 10) || 100).catch(() => {
+    if (!this.clockTicksPerSecondPromise) this.clockTicksPerSecondPromise = this.commandRunner.execFile('getconf', ['CLK_TCK'], { timeoutMilliseconds: 2000 }).then(({ stdout }) => Number.parseInt(stdout, 10) || 100).catch(() => {
       this.clockTicksPerSecondPromise = null;
       executionOptions();
       return 100;

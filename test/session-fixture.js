@@ -21,7 +21,7 @@ function createSessionFixture({ id = 'local', remote = false, paused = false, on
         scheduler: { isPaused: true },
         pause() { this.scheduler.isPaused = true; },
         resume() { this.scheduler.isPaused = false; },
-        async collectOnce() {},
+        async collectOnce({ onStart = () => {} } = {}) { onStart(); },
         updateConfig() {}, dispose() {}, readSnapshot: () => store.read(), ...service,
       };
     },

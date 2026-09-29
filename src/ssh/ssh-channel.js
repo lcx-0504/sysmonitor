@@ -24,8 +24,8 @@ class SshChannel {
   connect() {
     return new Promise((resolve, reject) => {
       this.handshake = { resolve, reject };
-      this.timer = setTimeout(() => this.close(timeoutError('SSH connection timed out')), 12000);
-      const args = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2'];
+      this.timer = setTimeout(() => this.close(timeoutError('SSH connection timed out')), 15000);
+      const args = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2'];
       if (this.configFile) args.push('-F', this.configFile);
       args.push('--', this.host, 'sh', '-s');
       try {

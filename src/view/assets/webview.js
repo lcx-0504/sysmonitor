@@ -312,7 +312,7 @@
         performance.gpus.forEach(function(g) {
           var util = parseInt(g.util) || 0;
           var memPct = g.memPct;
-          ghtml += '<div class="gpu-mini" data-mine="' + (g.isMine ? '1' : '0') + '">'
+          ghtml += '<div class="gpu-mini" id="gpu-card-' + g.idx + '" data-mine="' + (g.isMine ? '1' : '0') + '">'
             + '<svg class="spark-bg" id="gpu-spark-' + g.idx + '" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="gpu-spark-area-' + g.idx + '" /></svg>'
             + '<div class="gpu-title"><span class="gpu-name">GPU ' + g.idx + '</span><span class="gpu-sub" title="' + esc(g.name) + '"><bdo dir="ltr" id="gpu-name-text-' + g.idx + '">' + esc(g.displayName || g.name) + '</bdo></span></div>'
             + '<div class="bar-label"><span>' + T.utilLabel + '</span><span id="gpu-util-text-' + g.idx + '"><b>' + util + '%</b> <span class="gpu-link" data-gpu-link="' + g.idx + '">&nearr; ' + T.viewProcs + '</span></span></div>'
@@ -378,8 +378,8 @@
           if (statsElement) statsElement.innerHTML = gpuStatsMarkup(g);
           var ga = document.getElementById('gpu-spark-area-' + g.idx);
           if (ga && gpuHist[g.idx]) renderSpark(ga, gpuHist[g.idx], 100, sparkColor(util));
-          var card = document.getElementById('gpu-users-' + g.idx);
-          if (card) card.parentElement.dataset.mine = g.isMine ? '1' : '0';
+          var card = document.getElementById('gpu-card-' + g.idx);
+          if (card) card.dataset.mine = g.isMine ? '1' : '0';
           renderGpuUsers(g);
         });
       }

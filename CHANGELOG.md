@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.2 — 2026-09-29
+
+- Update GPU ownership borders when the current user's processes start or finish.
+- Calculate SSH traffic rates from server-side sample times and reset the baseline after missing counters or timeouts, preventing false traffic spikes.
+- Allow 10 seconds for common resource collection and 20 seconds for process collection, with more time for SSH startup and user identity queries on slow connections.
+- Start manual retries after ongoing collection settles so earlier failures do not affect the new round. Paused retries continue to preserve chart history and remain paused.
+
 ## 1.5.1 — 2026-09-27
 
 - Run in the workspace extension host so first-time Remote-SSH, WSL, and container installations use the remote machine instead of falling back to the local machine.

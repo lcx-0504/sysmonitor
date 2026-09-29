@@ -345,6 +345,69 @@ test('the tab scrollbar overlays the strip, tracks scroll position, and supports
   assert.equal(track.hidden, true);
 });
 
+test('GPU ownership borders follow each snapshot without rebuilding unchanged cards', () => {
+  const main = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview.js'), 'utf8');
+  const performanceScript = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview-performance.js'), 'utf8');
+  const updateCode = main.slice(main.indexOf("    var gpuBody = document.getElementById('gpu-body');"), main.indexOf('    refreshGpuInfoPopover();', main.indexOf('    var gpuBody =')));
+  const visibilityCode = performanceScript.slice(performanceScript.indexOf('  function applyGroupVisibility()'), performanceScript.indexOf('  function gpuStatsDescription('));
+  const ids = ['cpu-card', 'mem-card', 'system-row', 'disk-card', 'network-row', 'free-gpu-card', 'gpu-capsules', 'capsule-actions'];
+  const elements = new Map(ids.map(id => [id, { style: {} }]));
+  let cards = [];
+  let builds = 0;
+  const body = {
+    style: {}, querySelectorAll: () => [],
+    set innerHTML(html) {
+      builds++;
+      for (const key of elements.keys()) if (/^gpu-(card|users)-/.test(key)) elements.delete(key);
+      cards = html.split(/(?=<div class="gpu-mini")/).filter(block => block.startsWith('<div class="gpu-mini')).map(block => {
+        const idx = Number(block.match(/gpu-spark-(\d+)/)[1]);
+        const attributes = block.slice(0, block.indexOf('>'));
+        const classes = new Set();
+        const card = { idx, dataset: { mine: attributes.match(/data-mine="([01])"/)[1] },
+          classList: { toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); }, contains: name => classes.has(name) } };
+        const id = attributes.match(/id="([^"]+)"/);
+        if (id) elements.set(id[1], card);
+        elements.set('gpu-users-' + idx, { parentElement: { dataset: {} } });
+        return card;
+      });
+    },
+  };
+  elements.set('gpu-body', body);
+  const context = {
+    document: { getElementById: id => elements.get(id) || null, querySelector: () => ({ style: {} }), querySelectorAll: () => cards },
+    gpuCount: 0, modalOpen: false, settingMenu: null, selectedGpus: {}, gpuHist: {}, renderedAcceleratorKeys: [],
+    displayCfg: { highlightMyGpus: true }, lastGpuPayload: [], renderedDiskKeys: [], gpuInfoPopover: null,
+    generation: 1, renderGeneration: 1, instant: true, T: {}, esc: String, colorClass: () => '',
+    recordHistory() {}, renderGpuUsers() {}, applyCharts() {}, gpuStatsMarkup: () => '', updateGpuStatsFit() {},
+  };
+  vm.runInNewContext(`${visibilityCode}\nfunction update(gpus) { var performance = { gpus: gpus }; lastGpuPayload = gpus;\n${updateCode}\napplyGroupVisibility(); }`, context);
+  const gpus = [true, false, false].map((isMine, idx) => ({ idx, deviceKey: 'gpu:' + idx, isMine, users: [], util: 0, memPct: 0 }));
+  const borders = () => cards.map(card => card.classList.contains('my-gpu'));
+  context.update(gpus);
+  assert.deepEqual(borders(), [true, false, false]);
+  const originalCards = [...cards];
+  gpus[0].isMine = false;
+  gpus[1].isMine = true;
+  gpus[2].isMine = true;
+  context.update(gpus);
+  assert.deepEqual(borders(), [false, true, true], 'remove ended ownership and add newly started ownership');
+  assert.equal(builds, 1);
+  cards.forEach((card, idx) => assert.equal(card, originalCards[idx]));
+  assert.equal(elements.get('gpu-users-1').parentElement.dataset.mine, undefined, 'ownership belongs to the card, not its footer');
+  context.displayCfg.highlightMyGpus = false;
+  context.update(gpus);
+  assert.deepEqual(borders(), [false, false, false]);
+  gpus[1].isMine = false;
+  context.update(gpus);
+  context.displayCfg.highlightMyGpus = true;
+  context.applyGroupVisibility();
+  assert.deepEqual(borders(), [false, false, true], 're-enabling highlighting uses the latest ownership');
+  context.update([]);
+  assert.deepEqual(borders(), []);
+  context.update(gpus.map(gpu => ({ ...gpu, isMine: false })));
+  assert.deepEqual(borders(), [false, false, false], 'rebuilt cards do not retain old ownership');
+});
+
 test('CPU and memory cards can be hidden independently', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'src/view/webview-html.js'), 'utf8');
   const settings = fs.readFileSync(path.join(__dirname, '..', 'src/view/assets/webview-settings.js'), 'utf8');
