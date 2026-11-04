@@ -14,7 +14,7 @@ const { createSessionFixture } = require('./session-fixture');
 function createProvider({ service = {}, configStore = {}, ...options }) {
   if (!configStore.getCurrent) configStore = { ...configStore, getCurrent: () => normalizeConfig({}) };
   const { session } = createSessionFixture({ service, configStore });
-  return new MonitorViewProvider({ ...options, configStore, session });
+  return new MonitorViewProvider({ scheduleRender: (flush) => flush(), ...options, configStore, session });
 }
 
 const readWebviewScript = () => WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(__dirname, '..', 'src/view/assets', fileName), 'utf8')).join('\n');
@@ -328,4 +328,26 @@ test('a new remote view remains paused while a one-shot retry is collecting', as
   provider.view = { webview: { postMessage: (message) => messages.push(message) } };
   provider.handleMessage({ version: 1, cmd: 'ready' }, provider.view);
   assert.equal(messages.find((message) => message.cmd === 'uiState').paused, true);
+});
+
+test('a burst of snapshot pushes is coalesced into a single render', () => {
+  const messages = [];
+  const scheduled = [];
+  const provider = createProvider({
+    vscode: {}, service: {}, configStore: {},
+    scheduleRender: (flush) => { scheduled.push(flush); return 1; },
+  });
+  provider.view = { webview: { postMessage: async (message) => { messages.push(message); return true; } } };
+  provider.isReady = true;
+  provider.session.model = { performance: { cpu: { usagePercent: 7 } }, processes: [] };
+
+  for (let index = 0; index < 9; index += 1) provider.renderSession();
+  assert.equal(scheduled.length, 1, 'the whole burst shares one trailing render');
+  assert.equal(messages.length, 0, 'nothing is posted before the trailing render runs');
+  scheduled[0]();
+  assert.equal(messages.length, 1);
+
+  provider.renderSession();
+  assert.equal(scheduled.length, 2, 'the next push schedules a new render');
+  provider.dispose();
 });

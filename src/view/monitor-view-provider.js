@@ -7,8 +7,13 @@ const { CONFIGURATION_KEYS } = require('../config/config-store');
 
 const CONFIG_KEYS = new Set(CONFIGURATION_KEYS);
 
+// Snapshot pushes arrive once per settled collector, so a single refresh tick can
+// request 7-9 renders. Each one rebuilds the process table, GPU cards and disks and
+// forces layout, so coalesce them into one trailing render per window.
+const RENDER_COALESCE_MILLISECONDS = 400;
+
 class MonitorViewProvider {
-  constructor({ vscode, session, configStore, uiStateStore = null, onConfigUpdated = () => {}, logger = () => {} }) {
+  constructor({ vscode, session, configStore, uiStateStore = null, onConfigUpdated = () => {}, logger = () => {}, scheduleRender = (flush) => setTimeout(flush, RENDER_COALESCE_MILLISECONDS) }) {
     this.vscode = vscode; this.session = session; this.monitorService = session.service; this.configStore = configStore; this.onConfigUpdated = onConfigUpdated; this.logger = logger;
     this.uiStateStore = uiStateStore;
     this.processDisplayState = null;
@@ -20,6 +25,8 @@ class MonitorViewProvider {
     this.sidebarPage = 'perf';
     this.pendingSidebarPage = null;
     this.actionVisibility = null;
+    this.renderTimer = null;
+    this.scheduleRender = scheduleRender;
     this.updateActionVisibility();
   }
 
@@ -167,7 +174,16 @@ class MonitorViewProvider {
   }
 
   renderSession() {
-    this.forEachReadyView((target) => this.sendSessionState(target));
+    if (this.renderTimer) return;
+    this.renderTimer = this.scheduleRender(() => {
+      this.renderTimer = null;
+      this.forEachReadyView((target) => this.sendSessionState(target));
+    }) || null;
+  }
+
+  dispose() {
+    if (this.renderTimer) clearTimeout(this.renderTimer);
+    this.renderTimer = null;
   }
 
   sendSessionState(target, hydrate = false) {
