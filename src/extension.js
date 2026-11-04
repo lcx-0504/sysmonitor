@@ -165,11 +165,13 @@ function activate(context) {
     onConfigUpdated: () => updateBar(),
   });
   context.subscriptions.push({ dispose: () => session.dispose() });
+  // Keeping the sidebar webview alive while it is hidden leaves an iframe that VS Code
+  // may fail to repaint after hours of detachment. Recreate it on demand instead: the
+  // ready handshake re-hydrates chart history, so nothing is lost.
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('sysmonitor.panel', provider, {
-      webviewOptions: { retainContextWhenHidden: true },
-    })
+    vscode.window.registerWebviewViewProvider('sysmonitor.panel', provider)
   );
+  context.subscriptions.push({ dispose: () => provider.dispose() });
 
   statusBarController = new StatusBarController({ vscode, configStore, subscriptions: context.subscriptions });
 

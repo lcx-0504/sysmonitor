@@ -27,6 +27,7 @@ class MonitorViewProvider {
     this.actionVisibility = null;
     this.renderTimer = null;
     this.scheduleRender = scheduleRender;
+    this.sidebarDeliverable = true;
     this.updateActionVisibility();
   }
 
@@ -55,6 +56,7 @@ class MonitorViewProvider {
   async resolveWebviewView(view) {
     this.view = view;
     this.isReady = false;
+    this.sidebarDeliverable = true;
     view.webview.options = { enableScripts: true };
     view.webview.onDidReceiveMessage((message) => this.handleMessage(message, view));
     view.onDidDispose(() => { this.view = null; this.isReady = false; });
@@ -130,7 +132,7 @@ class MonitorViewProvider {
   handleMessage(message, source = this.view) {
     if (!message || typeof message !== 'object' || (message.version !== undefined && message.version !== 1) || typeof message.cmd !== 'string') return;
     if (message.cmd === 'ready') {
-      if (source === this.view) this.isReady = true;
+      if (source === this.view) { this.isReady = true; this.sidebarDeliverable = true; }
       else if (this.editorPanels.has(source)) {
         this.editorPanels.set(source, true);
         if (['perf', 'proc'].includes(message.page)) this.editorPages.set(source, message.page);
@@ -187,7 +189,18 @@ class MonitorViewProvider {
   }
 
   sendSessionState(target, hydrate = false) {
-    target.webview.postMessage(this.session.snapshotMessage(hydrate));
+    const pending = target.webview.postMessage(this.session.snapshotMessage(hydrate));
+    if (!pending || typeof pending.then !== 'function') return;
+    pending.then((delivered) => {
+      if (delivered === false) this.markUndeliverable(target);
+    }, () => this.markUndeliverable(target));
+  }
+
+  // A rejected delivery means VS Code already tore the sidebar webview down: the
+  // WebviewView object survives while its iframe is gone, so every further push would
+  // fail too. Wait for the next ready handshake instead.
+  markUndeliverable(target) {
+    if (target === this.view) this.sidebarDeliverable = false;
   }
 
   broadcast(message) {
@@ -195,7 +208,7 @@ class MonitorViewProvider {
   }
 
   forEachReadyView(callback, exceptSource = null) {
-    if (this.view && this.isReady && this.view !== exceptSource) callback(this.view);
+    if (this.view && this.isReady && this.sidebarDeliverable && this.view !== exceptSource) callback(this.view);
     for (const [panel, ready] of this.editorPanels) {
       if (ready && panel !== exceptSource) callback(panel);
     }

@@ -351,3 +351,31 @@ test('a burst of snapshot pushes is coalesced into a single render', () => {
   assert.equal(scheduled.length, 2, 'the next push schedules a new render');
   provider.dispose();
 });
+
+test('the sidebar stops receiving snapshots when VS Code rejects delivery', async () => {
+  const messages = [];
+  let delivered = false;
+  const provider = createProvider({ vscode: {}, service: {}, configStore: {} });
+  const view = { webview: { postMessage: async (message) => { messages.push(message); return delivered; } } };
+  provider.view = view;
+  provider.isReady = true;
+  provider.session.model = { performance: { cpu: { usagePercent: 3 } }, processes: [] };
+
+  provider.renderSession();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(provider.sidebarDeliverable, false);
+
+  const rejected = messages.length;
+  provider.renderSession();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(messages.length, rejected, 'no further posts while the webview is detached');
+
+  delivered = true;
+  provider.handleMessage({ version: 1, cmd: 'ready' }, view);
+  assert.equal(provider.sidebarDeliverable, true);
+  provider.renderSession();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(messages.at(-1).cmd, 'snapshot');
+  assert.ok(messages.length > rejected);
+  provider.dispose();
+});
