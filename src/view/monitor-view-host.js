@@ -224,6 +224,10 @@ class MonitorViewHost {
     }
   }
 
+  snapshotMessage(session, hydrate = false) {
+    return { cmd: TO_WEBVIEW.snapshot, ...session.snapshotState(hydrate) };
+  }
+
   configMessage() {
     return { cmd: TO_WEBVIEW.config, ...webviewConfig(this.configStore, this.vscode) };
   }

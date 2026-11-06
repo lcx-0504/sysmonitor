@@ -39,7 +39,7 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     updateConfig() {}
     isPaused() { return false; }
     viewState() { return null; }
-    snapshotMessage() { return { cmd: 'snapshot' }; }
+    snapshotState() { return {}; }
     setProcessDemand() {}
   }
   class MultiMonitorViewProvider {

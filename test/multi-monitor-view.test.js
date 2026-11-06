@@ -76,7 +76,7 @@ test('sidebar pop-out moves an SSH tab but copies the fixed local device', async
     const contexts = [];
     const provider = new MultiMonitorViewProvider({
       vscode: { env: { language: 'zh-cn' }, commands: { executeCommand: (...args) => contexts.push(args) }, workspace: { getConfiguration: () => ({ get: () => null }) } },
-      manager: { paused: false, get() { return null; }, sync(open) { syncs.push([...open]); }, setConfigFile() {}, setProcessDemand() {} },
+      manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync(open) { syncs.push([...open]); }, setConfigFile() {}, setProcessDemand() {} },
       configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
       workspaceState: { get: () => saved, update: async () => {} },
       localLinux, loadHosts: async () => [],
@@ -133,7 +133,7 @@ test('sidebar pop-out moves an SSH tab but copies the fixed local device', async
 test('server-list Editor actions create duplicate views without moving sidebar tabs', async () => {
   const provider = new MultiMonitorViewProvider({
     vscode: { env: { language: 'zh-cn' }, workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} },
+    manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'servers' }), update: async () => {} },
     localLinux: false, loadHosts: async () => ['campus'],
@@ -170,7 +170,7 @@ test('Editor title actions return the active device to the sidebar or move its w
     } },
   };
   const provider = new MultiMonitorViewProvider({
-    vscode, manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} },
+    vscode, manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}), update: async () => {} },
     localLinux: true, loadHosts: async () => [],
@@ -241,7 +241,7 @@ test('local sidebars show a one-time server guide and a status-bar scope tip', a
   const vscode = { env: { language: 'zh-cn' }, Uri: { file: (file) => file }, workspace: { getConfiguration: () => ({ get: () => null }) } };
   const provider = new MultiMonitorViewProvider({
     vscode,
-    manager: { sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}), update: async () => {} },
     uiStateStore: { get: () => dismissed, update: async (key, value) => { updates.push([key, value]); dismissed = value; } },
@@ -265,7 +265,7 @@ test('local sidebars show a one-time server guide and a status-bar scope tip', a
   assert.match(sidebar, /id="sett-bar-info"/);
   const linuxProvider = new MultiMonitorViewProvider({
     vscode,
-    manager: { sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}) },
     uiStateStore: { get: () => false },
@@ -287,7 +287,7 @@ test('device tab reorder persists per view and rejects unknown devices', async (
   const writes = [];
   const provider = new MultiMonitorViewProvider({
     vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager: { sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({ tabs: ['ssh:first', 'ssh:second'], selected: 'ssh:first', page: 'perf' }), update: async (_key, value) => { writes.push(value.tabs); } },
     localLinux: false, loadHosts: async () => [],
@@ -304,7 +304,7 @@ test('device tab reorder persists per view and rejects unknown devices', async (
 
 test('closing an Editor while its HTML loads prevents a write to the disposed panel', async () => {
   const provider = new MultiMonitorViewProvider({
-    vscode: hostVscode(), manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
+    vscode: hostVscode(), manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({}), update: async () => {} }, localLinux: false, loadHosts: async () => [],
   });
   let finishHtml;
@@ -337,7 +337,7 @@ test('native Editor tab uses the selected SSH alias', async () => {
       window: { createWebviewPanel: (_type, title) => { createdTitle = title; return {}; } },
       workspace: { getConfiguration: () => ({ get: () => null }) },
     },
-    manager: { sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}) }, localLinux: false, loadHosts: async () => [],
   });
@@ -352,7 +352,7 @@ test('floating monitor reuses the Editor view and moves it into a native window'
   const panel = { reveal: (column) => calls.push(['reveal', column]), dispose() { calls.push(['dispose']); } };
   const provider = new MultiMonitorViewProvider({
     vscode: { ViewColumn: { Active: 1 }, commands: { executeCommand: async (command) => calls.push(['command', command]) }, workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager: { sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}) }, localLinux: false, loadHosts: async () => [],
   });
@@ -367,7 +367,7 @@ test('sidebar and editor restore independent device/page state while sharing ope
   const syncs = [];
   const config = normalizeConfig({});
   const manager = {
-    paused: false,
+    paused: false, isPaused() { return this.paused; },
     sync(open, visible) { syncs.push({ open: [...open], visible: [...visible] }); },
     get() { return null; },
     setConfigFile() {},
@@ -438,7 +438,7 @@ test('Remote-SSH menu exposes recent folders and opens a new remote window witho
   };
   const provider = new MultiMonitorViewProvider({
     vscode,
-    manager: { sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}), update: async () => {} },
     localLinux: false, loadHosts: async () => ['campus'],
@@ -491,7 +491,7 @@ for (const surface of ['list', 'sidebar', 'editor']) for (const mode of ['new', 
           return true;
         } },
       },
-      manager: { sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
+      manager: { isPaused: () => false, sync() {}, setConfigFile() {}, setProcessDemand() {}, get() { return null; } },
       configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({ servers: { remoteWindowMode: mode } }) },
       workspaceState: { get: () => ({}), update: async () => {} },
       localLinux: false, loadHosts: async () => ['campus'],
@@ -553,7 +553,7 @@ test('local process display preferences are global, validated and broadcast to e
   const stored = new Map([['sysmonitor.processDisplay', { cpu: 'whole', ram: 'invalid' }]]);
   const updates = [];
   const provider = new MultiMonitorViewProvider({
-    vscode: hostVscode(), manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
+    vscode: hostVscode(), manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc', processDisplay: { cpu: 'both' } }), update: async () => {} },
     uiStateStore: { get: (key, fallback) => (stored.has(key) ? stored.get(key) : fallback), update: async (key, value) => { updates.push([key, value]); stored.set(key, value); } },
     localLinux: false, loadHosts: async () => [],
@@ -594,7 +594,7 @@ test('local views use only the webview assets as resource roots', async () => {
   const created = [];
   const vscode = { ...hostVscode(), ViewColumn: { Active: 1 }, window: { createWebviewPanel: (_type, _title, _column, options) => { created.push(options); return fakeTarget(); } } };
   const provider = new MultiMonitorViewProvider({
-    vscode, manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
+    vscode, manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
     localLinux: false, loadHosts: async () => [],
   });
@@ -612,7 +612,7 @@ test('local views use only the webview assets as resource roots', async () => {
 
 test('process collection is demanded for devices shown on a visible process page', async () => {
   const demands = [];
-  const manager = { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand: (ids) => demands.push([...ids].sort()) };
+  const manager = { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand: (ids) => demands.push([...ids].sort()) };
   const provider = new MultiMonitorViewProvider({
     vscode: hostVscode(), manager, configStore: savedConfig(),
     workspaceState: { get: () => ({ tabs: ['ssh:a', 'ssh:b'], selected: 'ssh:a', page: 'perf' }), update: async () => {} },
@@ -648,7 +648,7 @@ test('a reshown local sidebar is restored by ready with its device, page, histor
   const model = { performance: { cpu: { usagePercent: 4 } }, processes: [], sources: { cpu: { state: 'loading' }, memory: { state: 'loading' }, accelerators: { state: 'loading' } } };
   Object.assign(device, { ready: true, model, modelAt: 5, chartSamples: () => [{ t: 1 }, { t: 2 }] });
   const provider = new MultiMonitorViewProvider({
-    vscode: hostVscode(), manager: { paused: false, get: (id) => (id === 'ssh:campus' ? device : null), sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
+    vscode: hostVscode(), manager: { paused: false, isPaused() { return this.paused; }, get: (id) => (id === 'ssh:campus' ? device : null), sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc' }), update: async () => {} },
     uiStateStore: { get: (key, fallback) => (key === 'sysmonitor.localIntroDismissed' ? true : fallback), update: async () => {} },
     localLinux: false, loadHosts: async () => ['campus'],
@@ -684,7 +684,7 @@ test('a reshown local sidebar is restored by ready with its device, page, histor
 
 test('server rows are pushed only to a visible sidebar on the server page', async () => {
   const provider = new MultiMonitorViewProvider({
-    vscode: hostVscode(), manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
+    vscode: hostVscode(), manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
     localLinux: false, loadHosts: async () => ['campus'],
     scheduleErrorClear: () => ({}), cancelErrorClear() {},
@@ -715,7 +715,7 @@ test('local views that miss the ready handshake are reloaded once and failed del
   const clock = fakeTimers();
   const logs = [];
   const provider = new MultiMonitorViewProvider({
-    vscode: hostVscode(), manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
+    vscode: hostVscode(), manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
     localLinux: false, loadHosts: async () => [], logger: (message) => logs.push(message), ...clock,
   });
@@ -753,14 +753,14 @@ test('local views log ignored and failed messages and receive retry errors', asy
   const logs = [];
   const device = {
     viewState: () => null,
-    snapshotMessage: () => ({ cmd: 'snapshot', deviceId: 'ssh:campus' }),
+    snapshotState: () => ({ deviceId: 'ssh:campus' }),
     retry: async () => { throw new Error('collect failed'); },
   };
   const vscode = { ...hostVscode(), commands: { async executeCommand(command) {
     if (command === 'workbench.action.openSettings') throw new Error('settings unavailable');
   } } };
   const provider = new MultiMonitorViewProvider({
-    vscode, manager: { paused: false, get: (id) => (id === 'ssh:campus' ? device : null), sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
+    vscode, manager: { paused: false, isPaused() { return this.paused; }, get: (id) => (id === 'ssh:campus' ? device : null), sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
     localLinux: false, loadHosts: async () => [], logger: (message) => logs.push(message),
   });
@@ -790,7 +790,7 @@ test('local views log ignored and failed messages and receive retry errors', asy
 test('local pause requests go through the device manager, whose change is broadcast once', async () => {
   const changes = [];
   const manager = {
-    paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {},
+    paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {},
     setPaused(paused) { this.paused = paused; changes.push(paused); },
   };
   const provider = new MultiMonitorViewProvider({
@@ -816,7 +816,7 @@ test('local pause requests go through the device manager, whose change is broadc
 
 test('restored local editors accept both stored navigation shapes', async () => {
   const provider = new MultiMonitorViewProvider({
-    vscode: hostVscode(), manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
+    vscode: hostVscode(), manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({}), update: async () => {} }, localLinux: false, loadHosts: async () => [],
   });
   const wrapped = fakeTarget();

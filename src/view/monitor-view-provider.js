@@ -93,7 +93,7 @@ class MonitorViewProvider extends MonitorViewHost {
       this.assignPage(record, message.page);
     }
     this.postConfig(record);
-    this.readiness.post(record, this.session.snapshotMessage(true));
+    this.readiness.post(record, this.snapshotMessage(this.session, true));
     this.postUiState(record);
     if (record.sidebar) this.readiness.post(record, { cmd: TO_WEBVIEW.navigatePage, page: this.sidebarPage });
     this.updateProcessDemand();
@@ -113,7 +113,7 @@ class MonitorViewProvider extends MonitorViewHost {
   renderSession() {
     const records = this.records().filter((record) => record.ready);
     if (!records.length) return;
-    const message = this.session.snapshotMessage();
+    const message = this.snapshotMessage(this.session);
     for (const record of records) this.readiness.post(record, message);
   }
 }

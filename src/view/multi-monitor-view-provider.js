@@ -132,7 +132,7 @@ class MultiMonitorViewProvider extends MonitorViewHost {
   }
 
   isPaused() {
-    return this.manager.paused;
+    return this.manager.isPaused();
   }
 
   setPaused(paused) {
@@ -302,7 +302,7 @@ class MultiMonitorViewProvider extends MonitorViewHost {
     record.switching = true;
     this.refreshReferences();
     const device = this.manager.get(record.state.selected);
-    const snapshot = device ? device.snapshotMessage(true) : emptyDeviceSnapshot();
+    const snapshot = device ? device.snapshotState(true) : emptyDeviceSnapshot();
     this.readiness.post(record, { ...snapshot, cmd: TO_WEBVIEW.deviceState, state: record.state, deviceId: record.state.selected });
     record.switching = false;
   }
@@ -310,7 +310,7 @@ class MultiMonitorViewProvider extends MonitorViewHost {
   sendCurrent(record) {
     if (!record.state.selected) return;
     const device = this.manager.get(record.state.selected);
-    if (device) this.readiness.post(record, device.snapshotMessage(true));
+    if (device) this.readiness.post(record, this.snapshotMessage(device, true));
   }
 
   onDeviceUpdate(id, device) {
@@ -318,7 +318,7 @@ class MultiMonitorViewProvider extends MonitorViewHost {
     let message = null;
     for (const record of this.records()) {
       if (!record.ready || record.switching || record.state.selected !== id) continue;
-      message = message || device.snapshotMessage();
+      message = message || this.snapshotMessage(device);
       this.readiness.post(record, message);
     }
     this.serverDirectory.onDeviceUpdate(id, device);

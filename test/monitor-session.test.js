@@ -43,14 +43,14 @@ test('an already-open view receives one initial snapshot after network and SSH a
   t.after(() => fixture.session.dispose());
   fixture.commit(['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators']);
   assert.equal(fixture.session.ready, false);
-  assert.equal(fixture.session.snapshotMessage().viewModel, null);
+  assert.equal(fixture.session.snapshotState().viewModel, null);
   fixture.commit(['network']);
   assert.equal(fixture.session.ready, false);
   fixture.store.fail('sshTraffic', new Error('SSH metrics unavailable'));
   fixture.publish();
   assert.equal(fixture.session.ready, true);
-  assert.equal(fixture.session.snapshotMessage().viewModel.performance.cpu.usagePercent, 12);
-  assert.equal(fixture.session.snapshotMessage().viewModel.sources.sshTraffic.state, 'error');
+  assert.equal(fixture.session.snapshotState().viewModel.performance.cpu.usagePercent, 12);
+  assert.equal(fixture.session.snapshotState().viewModel.sources.sshTraffic.state, 'error');
 });
 
 test('first-screen completion publishes immediately and later results wait for a refresh tick', t => {
@@ -70,7 +70,7 @@ test('first-screen completion publishes immediately and later results wait for a
   store.commit('accelerators', values.accelerators);
   session.acceptInitialSnapshot(store.read());
   assert.equal(session.model.performance.memory.usagePercent, 20);
-  assert.equal(session.snapshotMessage(true).status.failures.length, 1);
+  assert.equal(session.snapshotState(true).status.failures.length, 1);
   fixture.publish();
   assert.equal(session.model.performance.memory.usagePercent, 70);
   assert.equal(session.viewState().failures.length, 0);
@@ -83,7 +83,7 @@ test('unpublished failures do not leak through chart frames or view hydration', 
   fixture.store.fail('diskIo', Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }));
   fixture.session.acceptInitialSnapshot(fixture.store.read());
   captureFrame(fixture.session);
-  assert.deepEqual(fixture.session.snapshotMessage(true).status.failures, []);
+  assert.deepEqual(fixture.session.snapshotState(true).status.failures, []);
   assert.equal(fixture.session.model.sources.diskIo.state, 'ready');
   fixture.publish();
   assert.equal(fixture.session.viewState().failures[0].key, 'diskIo');
@@ -118,15 +118,15 @@ test('paused one-shot collection publishes only after its active modules settle'
 for (const remote of [false, true]) {
   test((remote ? 'SSH' : 'direct') + ' session waits for complete first data and publishes immediately', async (t) => {
     const updates = [];
-    const fixture = createSessionFixture({ remote, id: remote ? 'ssh:lab' : 'local', onUpdate: (session) => updates.push(session.snapshotMessage()) });
+    const fixture = createSessionFixture({ remote, id: remote ? 'ssh:lab' : 'local', onUpdate: (session) => updates.push(session.snapshotState()) });
     t.after(() => fixture.session.dispose());
     if (remote) await fixture.transport.connect();
     fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);
     assert.equal(fixture.session.model.performance.cpu.usagePercent, 12);
     assert.equal(fixture.session.ready, false);
     assert.equal(fixture.session.viewState().loading, true);
-    assert.equal(fixture.session.snapshotMessage().viewModel, null);
-    assert.equal(fixture.session.snapshotMessage(true).viewModel, null);
+    assert.equal(fixture.session.snapshotState().viewModel, null);
+    assert.equal(fixture.session.snapshotState(true).viewModel, null);
     const ready = fixture.session.waitForInitialSample();
     fixture.commit(['accelerators']);
     captureFrame(fixture.session);
@@ -202,7 +202,7 @@ test('paused retry updates once, preserves history, and deduplicates simultaneou
   assert.equal(attempts, 1);
   assert.equal(session.service.scheduler.isPaused, true);
   assert.deepEqual(session.chartSamples(), history);
-  assert.deepEqual(session.snapshotMessage().samples, []);
+  assert.deepEqual(session.snapshotState().samples, []);
 });
 
 test('failed paused retry stops its one-shot collection', async (t) => {
@@ -249,8 +249,8 @@ test('each new view receives the same shared snapshot and history', (t) => {
   const fixture = createSessionFixture();
   t.after(() => fixture.session.dispose());
   fixture.commit();
-  const first = fixture.session.snapshotMessage(true);
-  const second = fixture.session.snapshotMessage(true);
+  const first = fixture.session.snapshotState(true);
+  const second = fixture.session.snapshotState(true);
   assert.deepEqual(first.samples, second.samples);
   assert.equal(first.viewModel, second.viewModel);
   assert.equal(first.replaceSamples, true);
@@ -359,14 +359,14 @@ test('first display follows the configured collection budget and waits for a set
   await Promise.resolve();
   assert.equal(displayed, false);
   assert.equal(fixture.session.ready, false);
-  assert.equal(fixture.session.snapshotMessage().viewModel, null);
+  assert.equal(fixture.session.snapshotState().viewModel, null);
   t.mock.timers.tick(75000);
   fixture.store.fail('accelerators', Object.assign(new Error('accelerators collection timed out'), { code: 'ETIMEDOUT' }));
   fixture.publish();
   await opened;
   assert.equal(fixture.session.ready, true);
   assert.equal(displayed, true);
-  assert.equal(fixture.session.snapshotMessage().viewModel.sources.accelerators.state, 'error');
+  assert.equal(fixture.session.snapshotState().viewModel.sources.accelerators.state, 'error');
 });
 
 test('a long pause preserves the chart history when monitoring resumes', (t) => {
@@ -401,7 +401,7 @@ test('display-only settings retain the running chart clock and only interval edi
 test('an interval edit sends the new starting frame to live views and history together', t => {
   let now=0, config=normalizeConfig({}); const messages=[];
   t.mock.method(Date,'now',()=>now);
-  const fixture=createSessionFixture({configStore:{getCurrent:()=>config},onUpdate:session=>messages.push(session.snapshotMessage())});
+  const fixture=createSessionFixture({configStore:{getCurrent:()=>config},onUpdate:session=>messages.push(session.snapshotState())});
   t.after(()=>fixture.session.dispose()); fixture.commit(); fixture.session.start(); messages.length=0;
   now=1000; config=normalizeConfig({refreshInterval:5}); fixture.session.updateConfig();
   assert.equal(messages.length,1);
@@ -415,8 +415,8 @@ test('an existing complete frame accepts early reconnect sources while a new lis
   fixture.session.setConnection('disconnected', new Error('lost')); await fixture.transport.connect();
   let opened = false; const pending = fixture.session.waitForInitialSample().then(() => { opened = true; });
   fixture.commit(['cpu']);
-  assert.equal(fixture.session.ready, false); assert.equal(fixture.session.snapshotMessage().status.canPresent, true);
-  assert.equal(fixture.session.snapshotMessage().connection.canPresent, true); assert.ok(fixture.session.snapshotMessage().viewModel);
+  assert.equal(fixture.session.ready, false); assert.equal(fixture.session.snapshotState().status.canPresent, true);
+  assert.equal(fixture.session.snapshotState().connection.canPresent, true); assert.ok(fixture.session.snapshotState().viewModel);
   await new Promise(setImmediate); assert.equal(opened, false);
   fixture.commit(); await pending; assert.equal(opened, true);
 });
@@ -452,7 +452,7 @@ test('real service completion publishes the complete first snapshot before the n
   session.start();
   await new Promise(setImmediate);
   assert.equal(session.ready, false);
-  assert.equal(session.snapshotMessage().viewModel, null);
+  assert.equal(session.snapshotState().viewModel, null);
   await session.waitForInitialSample();
   assert.equal(session.ready, true);
   assert.equal(cpuReads, 2);
@@ -471,19 +471,19 @@ test('re-enabling process demand hides earlier rows until the next process sampl
   session.setProcessDemand(true);
   values.processes = { rows: [row], totalCount: 1 };
   fixture.commit();
-  assert.equal(session.snapshotMessage().viewModel.processes.length, 1);
-  assert.equal(session.snapshotMessage().status.processesReady, true);
+  assert.equal(session.snapshotState().viewModel.processes.length, 1);
+  assert.equal(session.snapshotState().status.processesReady, true);
   session.setProcessDemand(false);
-  assert.deepEqual(session.snapshotMessage().viewModel.processes, []);
-  assert.equal(session.snapshotMessage().viewModel.sources.processes.state, 'disabled');
+  assert.deepEqual(session.snapshotState().viewModel.processes, []);
+  assert.equal(session.snapshotState().viewModel.sources.processes.state, 'disabled');
   session.setProcessDemand(true);
-  assert.deepEqual(session.snapshotMessage().viewModel.processes, []);
-  assert.equal(session.snapshotMessage().status.processesReady, false);
+  assert.deepEqual(session.snapshotState().viewModel.processes, []);
+  assert.equal(session.snapshotState().status.processesReady, false);
   store.commit('cpu', { ...values.cpu, usagePercent: 90 });
   store.commit('processes', { rows: [{ ...row, cpuUsagePercent: 9 }], totalCount: 1 });
   session.acceptInitialSnapshot(store.read());
-  assert.equal(session.snapshotMessage().viewModel.processes[0].cpu, 9);
-  assert.equal(session.snapshotMessage().status.processesReady, true);
+  assert.equal(session.snapshotState().viewModel.processes[0].cpu, 9);
+  assert.equal(session.snapshotState().status.processesReady, true);
   assert.equal(session.model.performance.cpu.usagePercent, 12);
 });
 

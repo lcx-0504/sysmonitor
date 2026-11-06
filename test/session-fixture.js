@@ -1,6 +1,7 @@
 'use strict';
 
 const { MonitorSession } = require('../src/services/monitor-session');
+const { deviceHost } = require('../src/domain/device-id');
 const { SnapshotStore } = require('../src/core/snapshot-store');
 const { normalizeConfig } = require('../src/config/normalize-config');
 
@@ -22,12 +23,13 @@ function createSessionFixture({ id = 'local', remote = false, paused = false, ch
     updateOptions() {},
     dispose() {},
   } : null;
-  const session = new MonitorSession({ id, host: remote ? id.slice(4) : null, transport, configStore, chartClock,
+  const session = new MonitorSession({ id, host: remote ? deviceHost(id) : null, transport, configStore, chartClock,
     onUpdate,
     createService(options) {
       publish = () => options.onSnapshot(store.read());
       return {
         scheduler: { isPaused: true },
+        isPaused() { return this.scheduler.isPaused; },
         processDemand: false,
         setProcessDemand(demanded) {
           this.processDemand = demanded;

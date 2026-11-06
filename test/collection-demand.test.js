@@ -131,7 +131,7 @@ test('the server list drops disabled metric summaries along with their samples',
   const service=new MonitorService({runtimeConfig:normalizeConfig({}),isSsh:true,statusBarAvailable:false});
   service.pause(); t.after(()=>service.dispose());
   service.snapshotStore.commit('cpu',{usagePercent:80,coreCount:4,loadAverage:{oneMinute:1,fiveMinutes:2,fifteenMinutes:3}});
-  const device={service,state:'connected',model:buildMonitorViewModel(service.readSnapshot())};
+  const device={service,state:'connected',displayError:()=>null,isCollectionPaused:()=>service.isPaused(),model:buildMonitorViewModel(service.readSnapshot())};
   const directory=new ServerDirectory({vscode:{},manager:{get:()=>device}});
   t.after(()=>directory.dispose()); directory.hosts=['fixture'];
   assert.deepEqual(directory.rows()[0].metrics,['CPU 80%']);

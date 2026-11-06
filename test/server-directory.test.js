@@ -23,7 +23,7 @@ function directoryFixture(t) {
 
 test('empty server summaries distinguish disabled metrics, pending samples and failures', () => {
   const sources={cpu:{state:'disabled'},memory:{state:'disabled'},accelerators:{state:'disabled'}};
-  const device={state:'connected',model:{sources,performance:{cpu:{},memory:{},gpus:[]}}};
+  const device={state:'connected',displayError:()=>null,model:{sources,performance:{cpu:{},memory:{},gpus:[]}}};
   const directory=new ServerDirectory({vscode:{},manager:{get:()=>device}});directory.hosts=['lab'];
   assert.deepEqual(directory.rows()[0].metrics,[]);assert.equal(directory.rows()[0].summaryLoading,false);
   sources.cpu={state:'loading'};assert.equal(directory.rows()[0].summaryLoading,true);
@@ -34,7 +34,7 @@ test('empty server summaries distinguish disabled metrics, pending samples and f
 
 test('server rows notify only when a row summary changes', () => {
   const ready = { state: 'ready' };
-  const device = { host: 'lab', state: 'connected', error: null, model: { sources: { cpu: ready, memory: ready, accelerators: ready }, performance: { cpu: { usagePercent: 10 }, memory: { usagePercent: 20 }, gpus: [] } } };
+  const device = { host: 'lab', state: 'connected', error: null, displayError() { return this.error; }, model: { sources: { cpu: ready, memory: ready, accelerators: ready }, performance: { cpu: { usagePercent: 10 }, memory: { usagePercent: 20 }, gpus: [] } } };
   const notifications = [];
   const directory = new ServerDirectory({ vscode: {}, manager: { get: (id) => (id === 'ssh:lab' ? device : null) }, onChange: (rows, error) => notifications.push([rows.map((row) => row.metrics.join(' ')), error]) });
   directory.hosts = ['lab'];
@@ -92,11 +92,11 @@ test('an existing complete sample opens immediately even when one collector has 
 test('opening from the server list uses the same settled initial snapshot when a module fails', async (t) => {
   const fixture = directoryFixture(t);
   let message = null;
-  const action = fixture.directory.runMonitorAction('lab', async () => { message = fixture.session.snapshotMessage(true); });
+  const action = fixture.directory.runMonitorAction('lab', async () => { message = fixture.session.snapshotState(true); });
   await new Promise(setImmediate);
   fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'accelerators']);
   assert.equal(message, null);
-  assert.equal(fixture.session.snapshotMessage().viewModel, null);
+  assert.equal(fixture.session.snapshotState().viewModel, null);
   fixture.store.fail('diskTopology', new Error('df: /nfs: Input/output error'));
   fixture.publish();
   await action;
@@ -219,7 +219,8 @@ test('terminal shortcut does not reconnect a disconnected monitor device', async
   let monitorReconnects = 0;
   const device = {
     state: 'disconnected', error: 'monitor SSH closed', model: null,
-    transport: { async connect() { monitorReconnects++; } },
+    displayError() { return this.error; },
+    async connect() { monitorReconnects++; },
     service: { readSnapshot: () => ({}) },
   };
   const phases = [];

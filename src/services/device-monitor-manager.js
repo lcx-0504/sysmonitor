@@ -4,6 +4,7 @@ const { MonitorSession } = require('./monitor-session');
 const { SshTransport } = require('../ssh/ssh-transport');
 const { RemoteSystemInfo } = require('../ssh/remote-system-info');
 const { sshTransportOptions } = require('./collection-policy');
+const { LOCAL_DEVICE_ID, isLocalDeviceId, isSshDeviceId, deviceHost } = require('../domain/device-id');
 
 class DeviceMonitorManager {
   constructor({ configStore, localLinux, configFile = null, onUpdate = () => {}, onLog = () => {},
@@ -14,13 +15,13 @@ class DeviceMonitorManager {
     this.preparingIds = new Set();
     this.processDemandIds = new Set();
     this.paused = false;
-    if (localLinux) this.open('local');
+    if (localLinux) this.open(LOCAL_DEVICE_ID);
   }
 
   open(id) {
     if (this.devices.has(id)) return this.devices.get(id);
-    const remote = id !== 'local';
-    const host = remote ? id.slice(4) : null;
+    const remote = !isLocalDeviceId(id);
+    const host = remote ? deviceHost(id) : null;
     const transport = remote ? new SshTransport({ host, configFile: this.configFile,
       ...sshTransportOptions(this.configStore.getCurrent()),
       onLog: (message) => this.onLog(id + ': ' + message),
@@ -63,8 +64,8 @@ class DeviceMonitorManager {
   sync(openIds, visibleIds = []) {
     this.visibleIds = new Set(visibleIds);
     const wanted = new Set([...openIds, ...this.preparingIds]);
-    if (this.localLinux) wanted.add('local');
-    for (const id of wanted) if (id === 'local' || id.startsWith('ssh:')) this.open(id);
+    if (this.localLinux) wanted.add(LOCAL_DEVICE_ID);
+    for (const id of wanted) if (isLocalDeviceId(id) || isSshDeviceId(id)) this.open(id);
     for (const [id, device] of this.devices) {
       if (wanted.has(id)) continue;
       device.dispose();
@@ -74,7 +75,7 @@ class DeviceMonitorManager {
   }
 
   shouldRun(id) {
-    return !this.paused && (id === 'local' || !this.configStore.getCurrent().servers.visibleOnly
+    return !this.paused && (isLocalDeviceId(id) || !this.configStore.getCurrent().servers.visibleOnly
       || this.visibleIds.has(id) || this.preparingIds.has(id));
   }
 
@@ -84,6 +85,10 @@ class DeviceMonitorManager {
       if (shouldRun && !device.running) device.resume();
       if (!shouldRun && device.running) device.pause();
     }
+  }
+
+  isPaused() {
+    return this.paused;
   }
 
   setPaused(paused) {
@@ -104,7 +109,7 @@ class DeviceMonitorManager {
   setConfigFile(configFile) {
     if (configFile === this.configFile) return;
     this.configFile = configFile;
-    const remoteIds = [...this.devices.keys()].filter((id) => id !== 'local');
+    const remoteIds = [...this.devices.keys()].filter((id) => !isLocalDeviceId(id));
     for (const id of remoteIds) {
       this.devices.get(id).dispose();
       this.devices.delete(id);

@@ -94,7 +94,7 @@ class ServerDirectory {
     return this.hosts.map((host) => {
       const device = this.manager.get(sshDeviceId(host));
       const pending = this.pendingHosts.get(host);
-      const deviceError = device && (device.error || device.loadError);
+      const deviceError = device && device.displayError();
       const currentError = (this.hostErrors.get(host) || {}).message || deviceError || null;
       const state = rowState(pending, currentError, device);
       const error = state === 'disconnected' || state === 'error' ? currentError : null;
@@ -128,7 +128,7 @@ class ServerDirectory {
   async connect(host) {
     const id = sshDeviceId(host);
     const device = this.manager.get(id) || this.manager.open(id);
-    await device.transport.connect();
+    await device.connect();
   }
 
   hasCompletedInitialSample(device) {
@@ -143,8 +143,7 @@ class ServerDirectory {
 
   needsNewSample(device) {
     if (!device || device.state !== 'connected') return true;
-    const scheduler = device.service.scheduler;
-    return !this.manager.paused && !!scheduler && scheduler.isPaused;
+    return !this.manager.isPaused() && device.isCollectionPaused();
   }
 
   async runMonitorAction(host, action) {
@@ -154,7 +153,7 @@ class ServerDirectory {
     const ready = this.hasCompletedInitialSample(previous);
     let sampleAfter = 0;
     if (!ready) {
-      const requiredSince = previous ? previous.requiredSince || 0 : 0;
+      const requiredSince = previous ? previous.sampleRequiredSince() : 0;
       sampleAfter = Math.max(this.needsNewSample(previous) ? Date.now() : 0, requiredSince);
     }
     const hadHostError = this.hostErrors.has(host);

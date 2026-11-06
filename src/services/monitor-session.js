@@ -1,5 +1,6 @@
 'use strict';
 
+const { LOCAL_DEVICE_ID } = require('../domain/device-id');
 const { MonitorService } = require('./monitor-service');
 const { buildMonitorViewModel } = require('./monitor-view-model');
 const { hasSettledSample } = require('./monitor-sample');
@@ -13,7 +14,7 @@ function processesSettled(snapshot) {
 }
 
 class MonitorSession {
-  constructor({ id = 'local', host = null, transport = null, configStore,
+  constructor({ id = LOCAL_DEVICE_ID, host = null, transport = null, configStore,
     isPaused = null, chartClock, onUpdate = () => {}, onLog = () => {}, serviceOptions = {}, createService = (options) => new MonitorService(options) }) {
     Object.assign(this, { id, host, transport, configStore, onUpdate });
     this.paused = false;
@@ -230,10 +231,10 @@ class MonitorSession {
       loading: connected && !this.ready && !this.loadError, error: this.loadError, collecting: !!this.retryTask, failures };
   }
 
-  snapshotMessage(hydrate = false) {
+  snapshotState(hydrate = false) {
     const retryAfter = this.transport && this.transport.retryAfter;
     const canPresent = this.ready || this.hasInitialFrame;
-    return { cmd: 'snapshot', deviceId: this.id, viewModel: canPresent ? this.model : null,
+    return { deviceId: this.id, viewModel: canPresent ? this.model : null,
       sampleTime: this.modelAt,
       instant: hydrate,
       samples: hydrate ? this.chartSamples() : this.sampleUpdates,
@@ -242,6 +243,22 @@ class MonitorSession {
       status: this.viewState(),
       connection: { state: this.state, error: this.error, ready: this.ready, canPresent, retryAfter: Number.isFinite(retryAfter) ? retryAfter : null },
     };
+  }
+
+  connect() {
+    return this.transport ? this.transport.connect() : Promise.resolve();
+  }
+
+  isCollectionPaused() {
+    return this.service.isPaused();
+  }
+
+  sampleRequiredSince() {
+    return this.requiredSince;
+  }
+
+  displayError() {
+    return this.error || this.loadError;
   }
 
   retry() {

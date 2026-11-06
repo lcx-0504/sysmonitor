@@ -98,6 +98,7 @@ class MonitorService {
   }
 
   start() { this.scheduler.start(); }
+  isPaused() { return this.scheduler.isPaused; }
   pause() {
     this.resetCounters();
     this.scheduler.pause();

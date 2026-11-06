@@ -19,7 +19,7 @@ test('residual-process warning copies PIDs and acknowledges without resuming mon
   const messages = [], copied = [], broadcasts = [];
   let acknowledged = 0;
   const provider = Object.create(MultiMonitorViewProvider.prototype);
-  provider.manager = { paused: true, setPaused: () => assert.fail('notification must not resume monitoring') };
+  provider.manager = { paused: true, isPaused() { return this.paused; }, setPaused: () => assert.fail('notification must not resume monitoring') };
   provider.broadcast = (message) => broadcasts.push(message);
   provider.logger = () => {};
   provider.vscode = {
@@ -63,7 +63,7 @@ test('paused one-shot metrics reach the view without adding a trend point', () =
   Object.assign(device, { ready: true, model: { performance: {} }, modelAt: 500 });
   const provider = new MultiMonitorViewProvider({
     vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager: { paused: true, get: () => device, sync() {}, setConfigFile() {} },
+    manager: { paused: true, isPaused() { return this.paused; }, get: () => device, sync() {}, setConfigFile() {} },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({ tabs: [id], selected: id, page: 'perf' }) },
     localLinux: false, loadHosts: async () => [],
@@ -92,7 +92,7 @@ test('changing action switches updates local native titles and all webviews imme
       commands: { executeCommand: (...args) => contexts.push(args) },
       workspace: { getConfiguration: () => ({ get: () => null }) },
     },
-    manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, updateConfig() {} },
+    manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, updateConfig() {} },
     configStore: {
       getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => current,
       update(key, changes) { for (const {path, value} of changes) current[key][path[0]][path[1]] = value; changed(); },
@@ -127,7 +127,7 @@ test('SSH default-install action is explicit, deduplicated, and writes the globa
   };
   const provider = new MultiMonitorViewProvider({
     vscode: { env: { language: 'zh-cn' }, Uri: { file: (file) => file }, workspace: { getConfiguration: () => configuration } },
-    manager: { sync() {}, setConfigFile() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}) },
     localLinux: false, loadHosts: async () => [],
@@ -156,7 +156,7 @@ test('joining default extensions from the first-use guide dismisses it only afte
       get: () => entries,
       update: async (_key, value) => { entries.push(...value); },
     }) } },
-    manager: { sync() {}, setConfigFile() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}) },
     uiStateStore: { get: () => updates.length > 0, update: async (...args) => updates.push(args) },
@@ -179,7 +179,7 @@ test('SSH default-install errors are returned to the inline controls without cha
   const updates = [];
   const provider = new MultiMonitorViewProvider({
     vscode: { workspace: { getConfiguration: () => configuration } },
-    manager: { sync() {}, setConfigFile() {}, get() { return null; } },
+    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}) },
     uiStateStore: { get: () => false, update: async (...args) => updates.push(args) },
@@ -227,7 +227,7 @@ test('page switches retain the current snapshot while device switches hydrate at
     return session;
   };
   const devices = new Map([['ssh:campus', device('ssh:campus')], ['ssh:lab007', device('ssh:lab007')]]);
-  const manager = { paused: false, get: (id) => devices.get(id), sync() {}, setConfigFile() {} };
+  const manager = { paused: false, isPaused() { return this.paused; }, get: (id) => devices.get(id), sync() {}, setConfigFile() {} };
   const provider = new MultiMonitorViewProvider({
     vscode: { env: { language: 'zh-cn' }, workspace: { getConfiguration: () => ({ get: () => null }) } },
     manager, configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => config },
@@ -261,7 +261,7 @@ test('monitor views wait for SSH while terminal opens without a preflight', asyn
   const devices = new Map();
   const prepared = [];
   const manager = {
-    paused: false, configFile: null,
+    paused: false, isPaused() { return this.paused; }, configFile: null,
     get(id) { return devices.get(id) || null; },
     open(id) {
       const fixture = createSessionFixture({ id, remote: true });
