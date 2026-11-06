@@ -37,7 +37,7 @@ test('backend and browser playback use the same pure implementation', async () =
 
 test('a late batch enters playback at its actual arrival time without jumping the cursor', () => {
   const {MetricHistory} = require('../src/core/metric-history');
-  const history = new MetricHistory([], 2000);
+  const history = new MetricHistory(2000);
   const model = {sources:Object.fromEntries(['cpu','memory','network','diskIo','sshTraffic','accelerators'].map(key => [key,{state:key === 'cpu' ? 'ready' : 'loading'}])),
     performance:{cpu:{usagePercent:60}}};
   let now = 0, callback;
@@ -68,7 +68,7 @@ test('a day-long sleep has a bounded capture batch and preserves sampling phase'
 
 test('an empty GPU inventory in a late batch clears the preceding device history once', () => {
   const {MetricHistory}=require('../src/core/metric-history');
-  const history=new MetricHistory([],2000);
+  const history=new MetricHistory(2000);
   const model={sources:Object.fromEntries(['cpu','memory','network','diskIo','sshTraffic','accelerators'].map(key=>[key,{state:key==='accelerators'?'ready':'loading'}])),
     performance:{gpus:[{idx:0,deviceKey:'gpu-a',util:50}]}};
   history.recordDisplayFrames(model,[0],0,60000);

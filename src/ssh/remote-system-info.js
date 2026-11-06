@@ -1,6 +1,6 @@
 'use strict';
 
-function incomplete(message) { return Object.assign(new Error(message), { code: 'EINCOMPLETE' }); }
+const { incompleteError } = require('../utils/errors');
 
 class RemoteSystemInfo {
   constructor({ fileReader, commandRunner }) {
@@ -27,7 +27,7 @@ class RemoteSystemInfo {
       const raw = await this.fileReader.readFile('/proc/meminfo', 'utf8');
       const match = raw.match(/^MemTotal:\s+(\d+)\s+kB/m);
       const bytes = match ? Number(match[1]) * 1024 : 0;
-      if (!Number.isSafeInteger(bytes) || bytes <= 0) throw incomplete('Incomplete memory total');
+      if (!Number.isSafeInteger(bytes) || bytes <= 0) throw incompleteError('Incomplete memory total');
       return bytes;
     });
   }
@@ -36,7 +36,7 @@ class RemoteSystemInfo {
     return this.cached('cores', 60000, async () => {
       const stat = await this.fileReader.readFile('/proc/stat', 'utf8');
       const count = (stat.match(/^cpu\d+\s/gm) || []).length;
-      if (count < 1) throw incomplete('Incomplete CPU core count');
+      if (count < 1) throw incompleteError('Incomplete CPU core count');
       return count;
     });
   }
@@ -45,7 +45,7 @@ class RemoteSystemInfo {
     return this.cached('uid', 60000, async () => {
       const { stdout } = await this.commandRunner.execFile('id', ['-u']);
       const value = stdout.trim();
-      if (!/^\d+$/.test(value)) throw incomplete('Incomplete user identity');
+      if (!/^\d+$/.test(value)) throw incompleteError('Incomplete user identity');
       return Number(value);
     });
   }

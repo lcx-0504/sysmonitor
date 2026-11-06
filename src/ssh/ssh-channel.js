@@ -4,13 +4,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { COLLECTION_ENV, timeoutError } = require('../core/collection-context');
+const { COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_MILLISECONDS, DEFAULT_CONNECTION_TIMEOUT_MILLISECONDS } = require('../core/execution-defaults');
 const dispatcher = fs.readFileSync(path.join(__dirname, 'dispatcher.sh'), 'utf8');
 const DIAGNOSTIC_LIMIT = 16000;
+const HEADER_LIMIT_BYTES = 512;
 
 function shellQuote(value) { return "'" + String(value).replace(/'/g, "'\\''") + "'"; }
 
 class SshChannel {
-  constructor({ host, configFile, spawnProcess, requireLinux, connectionTimeoutMilliseconds = 15000, onClose, onExit = () => {}, onInterrupted = () => {} }) {
+  constructor({ host, configFile, spawnProcess, requireLinux, connectionTimeoutMilliseconds = DEFAULT_CONNECTION_TIMEOUT_MILLISECONDS,
+    onClose, onExit = () => {}, onInterrupted = () => {} }) {
     Object.assign(this, { host, configFile, spawnProcess, requireLinux, connectionTimeoutMilliseconds, onClose, onExit, onInterrupted });
     this.prefix = '__SYSMON_' + crypto.randomBytes(12).toString('hex') + '_';
     this.ready = false;
@@ -27,49 +30,40 @@ class SshChannel {
     return new Promise((resolve, reject) => {
       this.handshake = { resolve, reject };
       this.timer = setTimeout(() => this.close(timeoutError('SSH connection timed out')), this.connectionTimeoutMilliseconds);
-      const args = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=' + Math.ceil(this.connectionTimeoutMilliseconds / 1000), '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2'];
+      const connectTimeout = Math.ceil(this.connectionTimeoutMilliseconds / 1000);
+      const args = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=' + connectTimeout, '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2'];
       if (this.configFile) args.push('-F', this.configFile);
       args.push('--', this.host, 'sh', '-s');
       try {
         this.child = this.spawnProcess('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-      } catch (error) { this.close(error); return; }
+      } catch (error) {
+        this.close(error);
+        return;
+      }
       const child = this.child;
       for (const stream of ['stdout', 'stderr']) {
         child[stream].setEncoding('utf8');
         child[stream].on('data', (chunk) => this.receive(stream, chunk));
       }
-      child.on('error', (error) => { this.close(error); if (!child.pid) this.markExited(); });
+      child.on('error', (error) => {
+        this.close(error);
+        if (!child.pid) this.markExited();
+      });
       child.once('close', (code) => {
         const stderr = this.ready ? this.stderrTail : this.startup.stderr;
         this.close(new Error(stderr.trim() || 'SSH exited (' + code + ')'));
         this.markExited();
       });
       child.stdin.on('error', (error) => this.close(error));
-      child.stdin.write('SYSMON_PREFIX=' + shellQuote(this.prefix) + '; SYSMON_REQUIRE_LINUX=' + (this.requireLinux ? '1' : '0') + '; eval ' + shellQuote(dispatcher) + '\n');
+      const settings = 'SYSMON_PREFIX=' + shellQuote(this.prefix) + '; SYSMON_REQUIRE_LINUX=' + (this.requireLinux ? '1' : '0');
+      child.stdin.write(settings + '; eval ' + shellQuote(dispatcher) + '\n');
     });
   }
 
   receive(stream, chunk) {
     if (this.closed) return;
     if (!this.ready) {
-      this.startup[stream] = (this.startup[stream] + chunk).slice(-DIAGNOSTIC_LIMIT);
-      if (stream !== 'stdout') return;
-      if (this.startup.stdout.includes(this.prefix + 'NONLINUX\n')) {
-        this.close(Object.assign(new Error('Remote host is not Linux'), { code: 'EPLATFORM' }));
-        return;
-      }
-      const match = this.startup.stdout.match(new RegExp(this.prefix + 'READY ([^\n]*)\n'));
-      if (!match) return;
-      const fields = match[1].trim().split(/\s+/);
-      this.timeoutAvailable = fields.shift() === '1';
-      if (fields.length === 4 && Number(fields[1]) > 0 && Number(fields[3]) > 0) {
-        this.connection = { clientIp: fields[0], clientPort: Number(fields[1]), serverIp: fields[2], serverPort: Number(fields[3]) };
-      }
-      this.ready = true;
-      clearTimeout(this.timer);
-      const handshake = this.handshake;
-      this.handshake = null;
-      handshake.resolve();
+      this.receiveStartup(stream, chunk);
       return;
     }
     if (stream === 'stderr') this.stderrTail = (this.stderrTail + chunk).slice(-DIAGNOSTIC_LIMIT);
@@ -78,72 +72,129 @@ class SshChannel {
     const output = request[stream];
     output.text += chunk;
     output.bytes += Buffer.byteLength(chunk);
-    if (stream === 'stdout' && !request.started) {
-      const completion = '\n' + this.prefix + 'END ' + request.id + ' ';
-      if (output.text.startsWith('\n') && (completion.startsWith(output.text) || output.text.startsWith(completion))) {
-        const end = output.text.indexOf('\n', completion.length);
-        if (end < 0) {
-          if (output.bytes > 512) this.close(new Error('Invalid SSH process header'));
-          return;
-        }
-        const code = output.text.slice(completion.length, end);
-        if (!/^[1-9]\d*$/.test(code)) { this.close(new Error('Invalid SSH process header')); return; }
-        request.started = true;
-      } else {
-        const newline = output.text.indexOf('\n');
-        if (newline < 0) {
-          if (output.bytes > 512) this.close(new Error('Invalid SSH process header'));
-          return;
-        }
-        const start = this.prefix + 'START ' + request.id + ' ';
-        const header = output.text.slice(0, newline);
-        if (!header.startsWith(start)) { this.close(new Error('Invalid SSH process header')); return; }
-        const [pid, startTime, bootId] = header.slice(start.length).split(' ');
-        if (/^[1-9]\d*$/.test(pid) && /^\d+$/.test(startTime) && /^[a-f\d-]+$/.test(bootId)) {
-          request.remoteProcess = { pid: Number(pid), startTime, bootId };
-        }
-        request.started = true;
-        output.text = output.text.slice(newline + 1);
-        output.bytes = Buffer.byteLength(output.text);
-      }
+    if (stream === 'stdout' && !request.started && !this.readRequestHeader(request, output)) return;
+    if (!this.readRequestTrailer(request, output)) return;
+    if (request.stdout.code === null || request.stderr.code === null) return;
+    this.settleRequest(request);
+  }
+
+  receiveStartup(stream, chunk) {
+    this.startup[stream] = (this.startup[stream] + chunk).slice(-DIAGNOSTIC_LIMIT);
+    if (stream !== 'stdout') return;
+    if (this.startup.stdout.includes(this.prefix + 'NONLINUX\n')) {
+      this.close(Object.assign(new Error('Remote host is not Linux'), { code: 'EPLATFORM' }));
+      return;
     }
+    const match = this.startup.stdout.match(new RegExp(this.prefix + 'READY ([^\n]*)\n'));
+    if (!match) return;
+    const fields = match[1].trim().split(/\s+/);
+    this.timeoutAvailable = fields.shift() === '1';
+    if (fields.length === 4 && Number(fields[1]) > 0 && Number(fields[3]) > 0) {
+      this.connection = { clientIp: fields[0], clientPort: Number(fields[1]), serverIp: fields[2], serverPort: Number(fields[3]) };
+    }
+    this.ready = true;
+    clearTimeout(this.timer);
+    const handshake = this.handshake;
+    this.handshake = null;
+    handshake.resolve();
+  }
+
+  // Reads the START header that precedes a command's stdout. Returns false while the header is incomplete or invalid.
+  readRequestHeader(request, output) {
+    const completion = '\n' + this.prefix + 'END ' + request.id + ' ';
+    if (output.text.startsWith('\n') && (completion.startsWith(output.text) || output.text.startsWith(completion))) {
+      // A request the dispatcher rejects before starting it ends with a non-zero END frame and no START header.
+      const end = output.text.indexOf('\n', completion.length);
+      if (end < 0) return this.awaitHeader(output);
+      const code = output.text.slice(completion.length, end);
+      if (!/^[1-9]\d*$/.test(code)) return this.rejectHeader();
+      request.started = true;
+      return true;
+    }
+    const newline = output.text.indexOf('\n');
+    if (newline < 0) return this.awaitHeader(output);
+    const start = this.prefix + 'START ' + request.id + ' ';
+    const header = output.text.slice(0, newline);
+    if (!header.startsWith(start)) return this.rejectHeader();
+    const [pid, startTime, bootId] = header.slice(start.length).split(' ');
+    if (/^[1-9]\d*$/.test(pid) && /^\d+$/.test(startTime) && /^[a-f\d-]+$/.test(bootId)) {
+      request.remoteProcess = { pid: Number(pid), startTime, bootId };
+    }
+    request.started = true;
+    output.text = output.text.slice(newline + 1);
+    output.bytes = Buffer.byteLength(output.text);
+    return true;
+  }
+
+  awaitHeader(output) {
+    if (output.bytes > HEADER_LIMIT_BYTES) this.close(new Error('Invalid SSH process header'));
+    return false;
+  }
+
+  rejectHeader() {
+    this.close(new Error('Invalid SSH process header'));
+    return false;
+  }
+
+  // Strips the END trailer and records the exit code. Returns false when the channel had to be closed.
+  readRequestTrailer(request, output) {
     const marker = '\n' + this.prefix + 'END ' + request.id + ' ';
     const at = output.text.indexOf(marker);
     const end = at < 0 ? -1 : output.text.indexOf('\n', at + marker.length);
     if (end >= 0) {
       const code = output.text.slice(at + marker.length, end);
-      if (!/^\d+$/.test(code)) { this.close(new Error('Invalid SSH response')); return; }
+      if (!/^\d+$/.test(code)) {
+        this.close(new Error('Invalid SSH response'));
+        return false;
+      }
       output.code = Number(code);
       output.text = output.text.slice(0, at);
       output.bytes = Buffer.byteLength(output.text);
     }
     if (output.bytes > request.limit + (end < 0 ? marker.length + 20 : 0)) {
       this.close(Object.assign(new Error('Command output exceeds limit'), { code: 'EMAXBUFFER' }), true);
+      return false;
+    }
+    return true;
+  }
+
+  settleRequest(request) {
+    if (request.stdout.code !== request.stderr.code) {
+      this.close(new Error('Invalid SSH exit status'));
       return;
     }
-    if (request.stdout.code === null || request.stderr.code === null) return;
-    if (request.stdout.code !== request.stderr.code) { this.close(new Error('Invalid SSH exit status')); return; }
     this.request = null;
     this.stderrTail = '';
-    const stdout = request.stdout.text, stderr = request.stderr.text, code = request.stdout.code;
-    if (code === 0) request.resolve({ stdout, stderr });
-    else if (this.timeoutAvailable && [124, 137].includes(code)) {
+    const stdout = request.stdout.text;
+    const stderr = request.stderr.text;
+    const code = request.stdout.code;
+    if (code === 0) {
+      request.resolve({ stdout, stderr });
+      return;
+    }
+    if (this.timeoutAvailable && [124, 137].includes(code)) {
       request.reject(Object.assign(timeoutError('Command timed out: ' + request.command), { exitCode: code, stderr }));
       if (request.trackProcess && request.remoteProcess) this.onInterrupted(request.remoteProcess);
-    } else request.reject(Object.assign(new Error(stderr.trim() || stdout.trim() || 'Remote command exited (' + code + ')'), {
+      return;
+    }
+    request.reject(Object.assign(new Error(stderr.trim() || stdout.trim() || 'Remote command exited (' + code + ')'), {
       code: code === 127 ? 'ENOENT' : 'EREMOTE', exitCode: code, stderr,
     }));
   }
 
-  execFile(id, command, args, limit, trackProcess = true, input, timeoutMilliseconds = 10000) {
+  execFile({ id, command, args = [], limit = COMMAND_OUTPUT_LIMIT_BYTES, trackProcess = true, input, timeoutMilliseconds = DEFAULT_COMMAND_TIMEOUT_MILLISECONDS }) {
     return new Promise((resolve, reject) => {
-      if (!this.ready || this.closed || this.request) { reject(new Error('SSH channel unavailable')); return; }
+      if (!this.ready || this.closed || this.request) {
+        reject(new Error('SSH channel unavailable'));
+        return;
+      }
       this.request = { id, command, limit, resolve, reject, trackProcess, started: false,
         stdout: { text: '', bytes: 0, code: null }, stderr: { text: '', bytes: 0, code: null } };
       const environment = Object.entries(COLLECTION_ENV).map(([key, value]) => key + '=' + shellQuote(value)).join(' ');
       const invocation = 'exec env ' + environment + ' ' + [command, ...args].map(shellQuote).join(' ');
       const data = input === undefined ? '' : Buffer.from(input).toString('base64');
-      this.child.stdin.write('RUN ' + id + ' ' + Buffer.from(invocation).toString('base64') + ' ' + (Math.max(1, timeoutMilliseconds) / 1000).toFixed(3) + ' ' + data + '\n');
+      const seconds = (Math.max(1, timeoutMilliseconds) / 1000).toFixed(3);
+      this.child.stdin.write('RUN ' + id + ' ' + Buffer.from(invocation).toString('base64') + ' ' + seconds + ' ' + data + '\n');
     });
   }
 
@@ -154,8 +205,14 @@ class SshChannel {
     this.ready = false;
     clearTimeout(this.timer);
     const interrupted = this.request && this.request.trackProcess && this.request.remoteProcess;
-    if (this.handshake) { this.handshake.reject(error); this.handshake = null; }
-    if (this.request) { this.request.reject(error); this.request = null; }
+    if (this.handshake) {
+      this.handshake.reject(error);
+      this.handshake = null;
+    }
+    if (this.request) {
+      this.request.reject(error);
+      this.request = null;
+    }
     const child = this.child;
     if (interrupted && child) {
       const report = () => this.onInterrupted(interrupted);

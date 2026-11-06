@@ -15,7 +15,8 @@ async function collectReadyValue(collector, signal, onPartial) {
 }
 
 class CollectorRunner {
-  constructor({ key, resultKeys = [key], grouped = resultKeys.length > 1, collector, snapshotStore, minimumIntervalMilliseconds = 0, timeoutMilliseconds, clock = () => Date.now(), onStatusChange = () => {}, onSettled = () => {} }) {
+  constructor({ key, resultKeys = [key], grouped = resultKeys.length > 1, collector, snapshotStore, minimumIntervalMilliseconds = 0,
+    timeoutMilliseconds, clock = () => Date.now(), onStatusChange = () => {}, onSettled = () => {} }) {
     this.key = key;
     this.collector = collector;
     this.resultKeys = resultKeys;
@@ -32,11 +33,21 @@ class CollectorRunner {
     this.onSettled = onSettled;
     this.controller = null;
     this.dispatchController = null;
-    this.idle = Promise.resolve();
-    this.isRunning = false;
     this.generation = 0;
+    // A run lasts until both its result handling (execution) and the collector call itself (pendingCollection)
+    // have settled; a timed-out collector can keep running after execution has reported the timeout.
+    this.isRunning = false;
+    this.execution = Promise.resolve();
+    this.pendingCollection = Promise.resolve();
+    this.collectionSettled = true;
+    this.idle = Promise.resolve();
   }
 
+  configure({ timeoutMilliseconds = this.timeoutMilliseconds } = {}) {
+    this.timeoutMilliseconds = timeoutMilliseconds;
+  }
+
+  requestReset() { this.resetOnNextRun = true; }
   markDue() { this.elapsedCycles = Infinity; }
   advanceCycle() { this.elapsedCycles += 1; }
   setDemand(resultKeys) {
@@ -49,7 +60,7 @@ class CollectorRunner {
     this.resultKeys = resultKeys;
     this.enabled = resultKeys.length > 0;
     this.collector.setKeys?.(resultKeys);
-    this.resetOnNextRun = true;
+    this.requestReset();
     this.markDue();
     return true;
   }
@@ -84,12 +95,17 @@ class CollectorRunner {
   run(attemptedAt = this.clock()) {
     if (!this.enabled) return Promise.resolve();
     if (this.isRunning) return this.execution;
-    if (this.resetOnNextRun) { this.collector.reset?.(); this.resetOnNextRun = false; }
+    if (this.resetOnNextRun) {
+      this.collector.reset?.();
+      this.resetOnNextRun = false;
+    }
     this.isRunning = true;
     this.collectionSettled = true;
     this.pendingCollection = Promise.resolve();
     this.execution = this.collect(attemptedAt);
-    this.idle = Promise.allSettled([this.execution, this.pendingCollection]).then(() => { this.isRunning = false; });
+    this.idle = Promise.allSettled([this.execution, this.pendingCollection]).then(() => {
+      this.isRunning = false;
+    });
     return this.execution;
   }
 
@@ -124,7 +140,8 @@ class CollectorRunner {
       if (generation !== this.generation) return;
       if (controller.signal.aborted && controller.signal.reason) error = controller.signal.reason;
       if (partial?.failureCode) {
-        this.commit({ ...partial.value, collectionErrors: [...partial.value.collectionErrors || [], { code: partial.failureCode, message: error.message }] }, error);
+        const collectionErrors = [...partial.value.collectionErrors || [], { code: partial.failureCode, message: error.message }];
+        this.commit({ ...partial.value, collectionErrors }, error);
         return;
       }
       if (partial) this.commit(partial.value);

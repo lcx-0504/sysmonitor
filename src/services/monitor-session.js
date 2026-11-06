@@ -23,14 +23,17 @@ class MonitorSession {
     this.model = null;
     this.presentedSnapshot = null;
     this.modelAt = null;
-    this.history = [];
-    this.metricHistory = new MetricHistory(this.history, configStore.getCurrent().refreshInterval * 1000);
+    this.metricHistory = new MetricHistory(configStore.getCurrent().refreshInterval * 1000);
     this.sampleUpdates = [];
     this.ready = false;
     this.hasInitialFrame = false;
     this.frameClock = new FrameClock({ periodMilliseconds:configStore.getCurrent().refreshInterval * 1000, now:chartClock,
       historyWindowMilliseconds:() => configStore.getCurrent().display.sparkMinutes * 60000,
-      capture:(times, readyAt) => this.captureChartFrames(times, readyAt), publish:(frames, emit) => { this.sampleUpdates = frames; if (emit) this.notify(); } });
+      capture:(times, readyAt) => this.captureChartFrames(times, readyAt),
+      publish:(frames, emit) => {
+        this.sampleUpdates = frames;
+        if (emit) this.notify();
+      } });
     this.processesPending = false;
     this.requiredSince = 0;
     this.requiredSequence = -1;
@@ -43,10 +46,14 @@ class MonitorSession {
       onLog, onSnapshot: (snapshot) => this.acceptSnapshot(snapshot),
       onCollectionSettled: (snapshot) => this.acceptInitialSnapshot(snapshot) });
     this.service.pause();
-    if (transport) transport.onState = (state, error) => this.setConnection(state, error);
+    this.transportSubscription = transport ? transport.onDidChangeState((state, error) => this.setConnection(state, error)) : null;
   }
 
-  notify() { if (!this.disposed) this.onUpdate(this); }
+  notify() {
+    if (!this.disposed) this.onUpdate(this);
+  }
+
+  chartSamples() { return this.metricHistory.retainedSamples(); }
 
   setConnection(state, error) {
     this.stopChartClock();
@@ -90,7 +97,11 @@ class MonitorSession {
     if (this.isPaused()) for (const waiter of this.waiters) waiter.finish(new Error('Monitoring paused'));
     this.notify();
   }
-  setPaused(paused) { this.paused = paused; paused ? this.pause() : this.resume(); }
+  setPaused(paused) {
+    this.paused = paused;
+    if (paused) this.pause();
+    else this.resume();
+  }
   setProcessDemand(demanded) {
     if (this.service.processDemand === demanded) return;
     this.service.setProcessDemand(demanded);
@@ -102,16 +113,12 @@ class MonitorSession {
   updateConfig() {
     const config = this.configStore.getCurrent();
     this.frameClock.flush();
-    this.metricHistory.setInterval(config.refreshInterval * 1000, this.frameClock.now());
+    this.metricHistory.setSampleInterval(config.refreshInterval * 1000, this.frameClock.now());
     if (this.frameClock.periodMilliseconds !== config.refreshInterval * 1000) {
       this.stopChartClock();
       this.frameClock.setPeriod(config.refreshInterval * 1000);
     }
-    if (this.transport) {
-      const options = sshTransportOptions(config);
-      this.transport.connectionTimeoutMilliseconds = options.connectionTimeoutMilliseconds;
-      this.transport.setMaxConnections(options.maxConnections);
-    }
+    if (this.transport) this.transport.updateOptions(sshTransportOptions(config));
     this.service.updateConfig(config);
     this.sampleUpdates = [];
     if (this.state === 'connected') this.acceptSnapshot(this.service.readSnapshot(), { emit:false });
@@ -184,7 +191,8 @@ class MonitorSession {
       const waiter = { since, page, afterSequence, finish: (error) => {
         this.waiters.delete(waiter);
         if (signal) signal.removeEventListener('abort', onAbort);
-        if (error) reject(error); else resolve();
+        if (error) reject(error);
+        else resolve();
       } };
       const onAbort = () => waiter.finish(signal.reason || new Error('Monitor wait cancelled'));
       if (signal) signal.addEventListener('abort', onAbort, { once: true });
@@ -193,8 +201,14 @@ class MonitorSession {
     });
   }
 
+  waiterError() {
+    if (this.disposed) return 'Monitor session disposed';
+    if (this.state === 'disconnected') return this.error || 'SSH disconnected while loading';
+    return this.loadError;
+  }
+
   settleWaiters() {
-    const error = this.disposed ? 'Monitor session disposed' : this.state === 'disconnected' ? this.error || 'SSH disconnected while loading' : this.loadError;
+    const error = this.waiterError();
     for (const waiter of this.waiters) {
       if (!error && !this.initialSampleReady(waiter.since, waiter.page, waiter.afterSequence)) continue;
       waiter.finish(error ? new Error(error) : null);
@@ -203,26 +217,30 @@ class MonitorSession {
 
   viewState() {
     const snapshot = this.presentedSnapshot || this.service.readSnapshot();
-    const failures = Object.entries(snapshot).filter(([, part]) => part && part.status !== 'disabled' && part.lastError).map(([key, part]) => ({ key, code: part.lastError.code, message: part.lastError.message }));
+    const failures = Object.entries(snapshot)
+      .filter(([, part]) => part && part.status !== 'disabled' && part.lastError)
+      .map(([key, part]) => ({ key, code: part.lastError.code, message: part.lastError.message }));
     if (!snapshot.accelerators.lastError) {
       for (const error of snapshot.accelerators.value?.collectionErrors || []) failures.push({ key: 'accelerators', code: error.code, message: error.message });
     }
     const processes = snapshot.processes;
     const processesReady = !!processes && processes.value !== null;
-    return { ready: this.ready, canPresent: this.ready || this.hasInitialFrame, hasSnapshot: !!this.model, processesReady, connected: this.state === 'connected', loading: this.state === 'connected' && !this.ready && !this.loadError,
-      error: this.loadError, collecting: !!this.retryTask, failures };
+    const connected = this.state === 'connected';
+    return { ready: this.ready, canPresent: this.ready || this.hasInitialFrame, hasSnapshot: !!this.model, processesReady, connected,
+      loading: connected && !this.ready && !this.loadError, error: this.loadError, collecting: !!this.retryTask, failures };
   }
 
   snapshotMessage(hydrate = false) {
     const retryAfter = this.transport && this.transport.retryAfter;
-    return { cmd: 'snapshot', deviceId: this.id, viewModel: this.ready || this.hasInitialFrame ? this.model : null,
+    const canPresent = this.ready || this.hasInitialFrame;
+    return { cmd: 'snapshot', deviceId: this.id, viewModel: canPresent ? this.model : null,
       sampleTime: this.modelAt,
       instant: hydrate,
-      samples: hydrate ? this.history : this.sampleUpdates,
+      samples: hydrate ? this.chartSamples() : this.sampleUpdates,
       replaceSamples: hydrate,
       timeline: this.metricHistory.timeline(this.frameClock.now()),
       status: this.viewState(),
-      connection: { state: this.state, error: this.error, ready: this.ready, canPresent: this.ready || this.hasInitialFrame, retryAfter: Number.isFinite(retryAfter) ? retryAfter : null },
+      connection: { state: this.state, error: this.error, ready: this.ready, canPresent, retryAfter: Number.isFinite(retryAfter) ? retryAfter : null },
     };
   }
 
@@ -249,7 +267,10 @@ class MonitorSession {
       const since = Date.now();
       const afterSequence = this.service.readSnapshot().sequence;
       this.loadError = null;
-      if (!this.ready) { this.requiredSequence = afterSequence; this.requiredSince = since; }
+      if (!this.ready) {
+        this.requiredSequence = afterSequence;
+        this.requiredSince = since;
+      }
       sampleReady = this.waitForInitialSample({ since, allowPaused: true, page: 'proc', afterSequence });
       sampleReady.catch(() => {});
       this.notify();
@@ -258,14 +279,16 @@ class MonitorSession {
       this.settleWaiters();
       throw error;
     });
-    const outcomes = await Promise.allSettled([collection]);
-    outcomes.push(...await Promise.allSettled([sampleReady]));
-    const failure = outcomes.find((outcome) => outcome.status === 'rejected');
-    if (failure) throw failure.reason;
+    // The sample wait only exists once onStart has run, so it is awaited after the collection settles.
+    const [collected] = await Promise.allSettled([collection]);
+    const [sampled] = await Promise.allSettled([sampleReady]);
+    if (collected.status === 'rejected') throw collected.reason;
+    if (sampled.status === 'rejected') throw sampled.reason;
   }
 
   dispose() {
     this.disposed = true;
+    this.transportSubscription?.dispose();
     this.pause();
     this.settleWaiters();
     this.service.dispose();

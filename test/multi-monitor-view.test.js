@@ -635,7 +635,7 @@ test('process collection is demanded for devices shown on a visible process page
 test('a reshown local sidebar is restored by ready with its device, page, history and dismissed guide', async () => {
   const { session: device } = createSessionFixture({ id: 'ssh:campus' });
   const model = { performance: { cpu: { usagePercent: 4 } }, processes: [], sources: { cpu: { state: 'loading' }, memory: { state: 'loading' }, accelerators: { state: 'loading' } } };
-  Object.assign(device, { ready: true, model, modelAt: 5, history: [{ t: 1 }, { t: 2 }] });
+  Object.assign(device, { ready: true, model, modelAt: 5, chartSamples: () => [{ t: 1 }, { t: 2 }] });
   const provider = new MultiMonitorViewProvider({
     vscode: hostVscode(), manager: { paused: false, get: (id) => (id === 'ssh:campus' ? device : null), sync() {}, setConfigFile() {}, setProcessDemand() {} }, configStore: savedConfig(),
     workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc' }), update: async () => {} },

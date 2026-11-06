@@ -2,6 +2,7 @@
 
 const { spawn } = require('node:child_process');
 const { COLLECTION_ENV, executionOptions, timeoutError } = require('./collection-context');
+const { COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_MILLISECONDS } = require('./execution-defaults');
 
 const PROCESS_GROUPS = process.platform !== 'win32';
 const activeChildren = new Set();
@@ -27,7 +28,7 @@ function trackChild(child) {
 }
 
 class CommandRunner {
-  constructor({ defaultTimeoutMilliseconds = 5000, maxBufferBytes = 4 * 1024 * 1024 } = {}) {
+  constructor({ defaultTimeoutMilliseconds = DEFAULT_COMMAND_TIMEOUT_MILLISECONDS, maxBufferBytes = COMMAND_OUTPUT_LIMIT_BYTES } = {}) {
     this.defaultTimeoutMilliseconds = defaultTimeoutMilliseconds;
     this.maxBufferBytes = maxBufferBytes;
     this.children = new Set();

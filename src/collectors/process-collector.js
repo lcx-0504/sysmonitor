@@ -3,6 +3,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseProcessOutput, parseProcessSessions } = require('../domain/linux-parsers');
+const { incompleteError } = require('../utils/errors');
 const { REFRESH_SETTING } = require('../config/default-config');
 const PROCESS_SNAPSHOT_COMMAND = fs.readFileSync(path.join(__dirname, 'process-snapshot.sh'), 'utf8');
 const UNSUPPORTED_PS_STATUS = 65;
@@ -36,14 +37,14 @@ class ProcessCollector {
     const header = stdout.match(/^__SYSMON_PROCESSES__ (\d+) (\d+)\n/);
     const body = header ? stdout.slice(header[0].length) : '';
     const marker = body.match(SESSIONS_MARKER);
-    if (!header || !marker) throw Object.assign(new Error('Incomplete process snapshot'), { code: 'EINCOMPLETE' });
+    if (!header || !marker) throw incompleteError('Incomplete process snapshot');
     const { totalMemory, coreCount } = await this.systemTotals();
     const sessions = parseProcessSessions(body.slice(marker.index + marker[0].length));
     const rows = parseProcessOutput(body.slice(0, marker.index), totalMemory).map(row => ({ ...row,
       cpuWhole: row.cpuUsagePercent / Math.max(1, coreCount), session: sessions.get(row.pid) || null }));
     const totalCount = Number(header[1]);
     if (!Number.isSafeInteger(totalCount) || rows.length > 300 || rows.length > totalCount || totalCount > 0 && !rows.length || new Set(rows.map(row => row.pid)).size !== rows.length) {
-      throw Object.assign(new Error('Invalid process candidate list'), { code: 'EINCOMPLETE' });
+      throw incompleteError('Invalid process candidate list');
     }
     const sample = { rows, totalCount };
     if (Number(header[2]) !== 0) {

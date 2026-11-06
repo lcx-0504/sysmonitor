@@ -1,10 +1,11 @@
 'use strict';
 
 const { parseProcessName } = require('./process');
+const { incompleteError } = require('../utils/errors');
 
 function parseCpuStat(raw) {
   const values = raw.split('\n')[0].trim().split(/\s+/).slice(1).map(Number);
-  if (!/^cpu\s/.test(raw) || values.length < 4 || !values.every(Number.isFinite)) throw Object.assign(new Error('Incomplete /proc/stat'), { code: 'EINCOMPLETE' });
+  if (!/^cpu\s/.test(raw) || values.length < 4 || !values.every(Number.isFinite)) throw incompleteError('Incomplete /proc/stat');
   // Guest time is already included in the user and nice counters.
   return { idle: values[3] + (values[4] || 0), total: values.slice(0, 8).reduce((sum, value) => sum + value, 0) };
 }
@@ -17,7 +18,7 @@ function parseMemoryInfo(raw) {
   const totalBytes = readKilobytes('MemTotal');
   const reclaimable = ['MemFree', 'Buffers', 'Cached'].map(readKilobytes);
   const availableBytes = readKilobytes('MemAvailable') ?? (reclaimable.includes(null) ? null : reclaimable.reduce((sum, value) => sum + value, 0));
-  if (totalBytes === null || availableBytes === null || totalBytes <= 0 || availableBytes > totalBytes) throw Object.assign(new Error('Incomplete /proc/meminfo'), { code: 'EINCOMPLETE' });
+  if (totalBytes === null || availableBytes === null || totalBytes <= 0 || availableBytes > totalBytes) throw incompleteError('Incomplete /proc/meminfo');
   const usedBytes = totalBytes - availableBytes;
   return { totalBytes, availableBytes, usedBytes, usagePercent: Math.round(usedBytes / totalBytes * 100) };
 }
@@ -34,7 +35,7 @@ function parseDefaultRouteInterfaces(raw) {
 }
 
 function parseNetworkCounters(raw, selectedInterfaces) {
-  if (raw.trim() && raw.split('\n').length < 3) throw Object.assign(new Error('Incomplete /proc/net/dev'), { code: 'EINCOMPLETE' });
+  if (raw.trim() && raw.split('\n').length < 3) throw incompleteError('Incomplete /proc/net/dev');
   let receiveBytes = 0;
   let transmitBytes = 0;
   const availableInterfaces = [];
@@ -47,7 +48,7 @@ function parseNetworkCounters(raw, selectedInterfaces) {
     if (selectedInterfaces && selectedInterfaces.size > 0 && !selectedInterfaces.has(interfaceName)) continue;
     const counters = countersPart.trim().split(/\s+/);
     const received = Number(counters[0]); const transmitted = Number(counters[8]);
-    if (counters.length < 9 || !Number.isFinite(received) || !Number.isFinite(transmitted) || received < 0 || transmitted < 0) throw Object.assign(new Error('Incomplete /proc/net/dev'), { code: 'EINCOMPLETE' });
+    if (counters.length < 9 || !Number.isFinite(received) || !Number.isFinite(transmitted) || received < 0 || transmitted < 0) throw incompleteError('Incomplete /proc/net/dev');
     receiveBytes += received;
     transmitBytes += transmitted;
   }
@@ -67,12 +68,12 @@ function parseDiskIoCounters(raw) {
     if (/\d$/.test(deviceName) && !/^(?:nvme\d+n\d+|mmcblk\d+)$/.test(deviceName)) continue;
     if (/^(loop|ram|dm-)/.test(deviceName)) continue;
     const read = Number(fields[5]); const written = Number(fields[9]);
-    if (!Number.isFinite(read) || !Number.isFinite(written) || read < 0 || written < 0) throw Object.assign(new Error('Incomplete /proc/diskstats'), { code: 'EINCOMPLETE' });
+    if (!Number.isFinite(read) || !Number.isFinite(written) || read < 0 || written < 0) throw incompleteError('Incomplete /proc/diskstats');
     devices.push(`${fields[0]}:${fields[1]}:${deviceName}`);
     readSectors += read;
     writeSectors += written;
   }
-  if (raw.trim() && !parsedRows) throw Object.assign(new Error('Incomplete /proc/diskstats'), { code: 'EINCOMPLETE' });
+  if (raw.trim() && !parsedRows) throw incompleteError('Incomplete /proc/diskstats');
   return { readBytes: readSectors * 512, writeBytes: writeSectors * 512, devices };
 }
 
@@ -105,7 +106,7 @@ function parseProcessOutput(raw, totalMemoryBytes) {
       acceleratorUsages: [],
     });
   }
-  if (raw.trim() && !parsedRows) throw Object.assign(new Error('Incomplete process query output'), { code: 'EINCOMPLETE' });
+  if (raw.trim() && !parsedRows) throw incompleteError('Incomplete process query output');
   return processes;
 }
 

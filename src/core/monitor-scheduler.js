@@ -11,6 +11,7 @@ class MonitorScheduler {
     this.isCollectingOnce = false;
     this.oneShot = null;
     this.oneShotStarted = false;
+    this.oneShotGeneration = null;
     this.refreshes = new Map();
     this.generation = 0;
     this.runnerChanges = new AbortController();

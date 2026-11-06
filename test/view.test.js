@@ -520,7 +520,7 @@ test('a hidden remote view stops receiving updates and is fully restored by its 
   provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, view);
   provider.session.ready = true;
   provider.session.model = { performance: { cpu: { usagePercent: 3 } }, processes: [] };
-  provider.session.history = [{ t: 1 }, { t: 2 }];
+  provider.session.chartSamples = () => [{ t: 1 }, { t: 2 }];
   view.visible = false;
   view.fireVisibility();
   messages.length = 0;

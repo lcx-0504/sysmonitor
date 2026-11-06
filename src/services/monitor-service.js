@@ -17,8 +17,14 @@ const { diskSelectionSignature } = require('../domain/disk');
 const { collectionDemand } = require('./collection-demand');
 const COLLECTION_RESOURCE_KEYS = COLLECTION_POLICY.resources.resultKeys;
 
+function demandedKeys(runnerKey, demand) {
+  if (runnerKey === 'resources') return COLLECTION_RESOURCE_KEYS.filter(key => demand[key]);
+  return demand[runnerKey] ? [runnerKey] : [];
+}
+
 class MonitorService {
-  constructor({ runtimeConfig, isSsh, sshClientIp, sshConnectionInfo = null, acceleratorProviders = null, commandRunner = null, fileReader = null, systemInfo = null, statusBarAvailable = true, onSnapshot = () => {}, onCollectionSettled = () => {}, onLog = () => {} }) {
+  constructor({ runtimeConfig, isSsh, sshClientIp, sshConnectionInfo = null, acceleratorProviders = null, commandRunner = null,
+    fileReader = null, systemInfo = null, statusBarAvailable = true, onSnapshot = () => {}, onCollectionSettled = () => {}, onLog = () => {} }) {
     this.runtimeConfig = runtimeConfig;
     this.onSnapshot = onSnapshot;
     this.onLog = onLog;
@@ -37,12 +43,13 @@ class MonitorService {
       const snapshot = this.snapshotStore.read();
       return { totalMemoryBytes: snapshot.memory.value?.totalBytes, coreCount: snapshot.cpu.value?.coreCount };
     };
+    const providers = acceleratorProviders || [new NvidiaProvider({ commandRunner: this.commandRunner, systemInfo })];
     const definitions = [
       ['resources', new ResourceCollector({ commandRunner: this.commandRunner })],
       ['sshTraffic', new SshTrafficCollector({ commandRunner: this.commandRunner, isSsh, clientIp: sshClientIp, connectionInfo: sshConnectionInfo, onLog })],
       ['processes', new ProcessCollector({ commandRunner: this.commandRunner, systemInfo, knownTotals,
         gpuEnabled: () => this.demand.accelerators, refreshInterval: () => this.runtimeConfig.refreshInterval })],
-      ['accelerators', new AcceleratorCollector({ providers: acceleratorProviders || [new NvidiaProvider({ commandRunner: this.commandRunner, systemInfo })] })],
+      ['accelerators', new AcceleratorCollector({ providers })],
       ['diskTopology', new DiskTopologyCollector({ commandRunner: this.commandRunner, fileReader: reader, getDiskConfig: () => this.runtimeConfig.disk })],
     ];
     this.runners = definitions.map(([key, collector]) => {
@@ -52,7 +59,9 @@ class MonitorService {
         minimumIntervalMilliseconds: policy.minimumIntervalMilliseconds,
         timeoutMilliseconds: policy.timeoutMilliseconds,
         onStatusChange: (name, status, error) => this.logStatus(name, status, error),
-        onSettled: () => { if (!this.scheduler.isPaused && !this.scheduler.isCollectingOnce) onCollectionSettled(this.snapshotStore.read()); },
+        onSettled: () => {
+          if (!this.scheduler.isPaused && !this.scheduler.isCollectingOnce) onCollectionSettled(this.snapshotStore.read());
+        },
       });
       this.scheduler.addRunner(runner);
       return runner;
@@ -64,10 +73,7 @@ class MonitorService {
   updateDemand(config, refresh = true) {
     const demand = collectionDemand(config, { statusBarAvailable:this.statusBarAvailable, processes:this.processDemand });
     this.demand = demand;
-    for (const runner of this.runners) {
-      const keys = runner.key === 'resources' ? COLLECTION_RESOURCE_KEYS.filter(key => demand[key]) : demand[runner.key] ? [runner.key] : [];
-      this.scheduler.setRunnerDemand(runner, keys, { refresh });
-    }
+    for (const runner of this.runners) this.scheduler.setRunnerDemand(runner, demandedKeys(runner.key, demand), { refresh });
   }
 
   setProcessDemand(demanded) {
@@ -88,7 +94,7 @@ class MonitorService {
   }
 
   resetCounters() {
-    for (const runner of this.runners) if (COLLECTION_POLICY[runner.key].counters) runner.resetOnNextRun = true;
+    for (const runner of this.runners) if (COLLECTION_POLICY[runner.key].counters) runner.requestReset();
   }
 
   start() { this.scheduler.start(); }
@@ -113,12 +119,15 @@ class MonitorService {
     this.runtimeConfig = runtimeConfig;
     this.updateDemand(runtimeConfig);
     const policies = collectionPolicy(runtimeConfig);
-    for (const runner of this.runners) runner.timeoutMilliseconds = policies[runner.key].timeoutMilliseconds;
+    for (const runner of this.runners) runner.configure({ timeoutMilliseconds: policies[runner.key].timeoutMilliseconds });
     if (diskChanged) this.scheduler.refreshRunner(this.runners.find((runner) => runner.key === 'diskTopology'));
     if (intervalChanged) this.scheduler.setRefreshInterval(runtimeConfig.refreshInterval * 1000);
   }
   readSnapshot() { return this.snapshotStore.read(); }
-  dispose() { this.scheduler.dispose(); this.commandRunner.dispose(); }
+  dispose() {
+    this.scheduler.dispose();
+    this.commandRunner.dispose();
+  }
 }
 
 module.exports = { MonitorService };
