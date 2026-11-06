@@ -7,6 +7,12 @@ const ACTION_CONTEXTS = Object.freeze({
   remoteWindow: 'sysmonitor.actionRemoteWindowVisible',
 });
 
+const TITLE_CONTEXTS = Object.freeze({
+  sidebarSsh: 'sysmonitor.sidebarSshActive',
+  sidebarFixed: 'sysmonitor.sidebarFixedActive',
+  editorSsh: 'sysmonitor.editorSshActive',
+});
+
 function setActionVisibilityContexts(vscode, serverConfig, previous = null) {
   const actions = serverConfig && serverConfig.actions || {};
   const next = {};
@@ -19,4 +25,10 @@ function setActionVisibilityContexts(vscode, serverConfig, previous = null) {
   return next;
 }
 
-module.exports = { ACTION_CONTEXTS, setActionVisibilityContexts };
+function setTitleContexts(vscode, active = {}) {
+  for (const [key, context] of Object.entries(TITLE_CONTEXTS)) {
+    vscode.commands.executeCommand('setContext', context, active[key] === true);
+  }
+}
+
+module.exports = { ACTION_CONTEXTS, TITLE_CONTEXTS, setActionVisibilityContexts, setTitleContexts };

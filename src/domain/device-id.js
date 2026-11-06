@@ -1,0 +1,22 @@
+'use strict';
+
+const LOCAL_DEVICE_ID = 'local';
+const SSH_DEVICE_PREFIX = 'ssh:';
+
+function sshDeviceId(host) {
+  return SSH_DEVICE_PREFIX + host;
+}
+
+function isLocalDeviceId(id) {
+  return id === LOCAL_DEVICE_ID;
+}
+
+function isSshDeviceId(id) {
+  return typeof id === 'string' && id.startsWith(SSH_DEVICE_PREFIX);
+}
+
+function deviceHost(id) {
+  return isSshDeviceId(id) ? id.slice(SSH_DEVICE_PREFIX.length) : null;
+}
+
+module.exports = { LOCAL_DEVICE_ID, sshDeviceId, isLocalDeviceId, isSshDeviceId, deviceHost };

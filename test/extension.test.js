@@ -14,6 +14,7 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
   const serializers = new Map();
   const commands = new Map();
   const contexts = new Map();
+  const executed = [];
   const managers = [];
   const sessions = [];
   const statusBars = [];
@@ -36,6 +37,10 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     constructor(options) { assert.equal(configurationUpgraded || realConfig, true); this.options = options; this.started = false; this.service={readSnapshot:()=>({accelerators:{value:null}})}; sessions.push(this); }
     start() { this.started = true; }
     updateConfig() {}
+    isPaused() { return false; }
+    viewState() { return null; }
+    snapshotMessage() { return { cmd: 'snapshot' }; }
+    setProcessDemand() {}
   }
   class MultiMonitorViewProvider {
     constructor(options) { this.options = options; }
@@ -48,6 +53,7 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
   }
   const vscode = {
     ExtensionKind: { UI: 1, Workspace: 2 },
+    Uri: { file: (file) => file },
     env: { remoteName, language },
     workspace: {
       getConfiguration: () => ({ get: () => undefined, inspect:key=>({globalValue:savedConfig[key]}),update:async(key,value)=>{savedConfig[key]=value;} }),
@@ -63,8 +69,9 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
       },
     },
     commands: {
-      executeCommand(command, key, value) {
-        if (command === 'setContext') contexts.set(key, value);
+      executeCommand(command, ...args) {
+        if (command === 'setContext') contexts.set(args[0], args[1]);
+        else executed.push([command, ...args]);
         return Promise.resolve();
       },
       registerCommand(id, callback) { commands.set(id, callback); return disposable; },
@@ -80,6 +87,8 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     './view/multi-monitor-view-provider': { MultiMonitorViewProvider },
     './services/device-monitor-manager': { DeviceMonitorManager },
     './view/status-bar-controller': realConfig ? require('../src/view/status-bar-controller') : { StatusBarController },
+    './view/action-visibility': require('../src/view/action-visibility'),
+    './view/editor-panel': require('../src/view/editor-panel'),
   };
   const sandbox = {
     module: { exports: {} },
@@ -88,7 +97,8 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
   };
   vm.runInNewContext(source, sandbox, { filename: 'src/extension.js' });
   const subscriptions = [];
-  await sandbox.module.exports.activate({ subscriptions, extension: { extensionKind }, workspaceState: {}, globalState: {} });
+  const memento = () => ({ get: (_key, fallback) => fallback, update: async () => {} });
+  await sandbox.module.exports.activate({ subscriptions, extension: { extensionKind }, workspaceState: memento(), globalState: memento() });
   const provider = providers.get('sysmonitor.panel');
   let html = '';
   if (provider.resolveWebviewView && !realConfig) {
@@ -96,7 +106,22 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     provider.resolveWebviewView(view);
     html = view.webview.html;
   }
-  return { managers, sessions, statusBars, flushes, contexts, commands, serializers, subscriptions, provider, providerOptions, html, MultiMonitorViewProvider, MonitorViewProvider, deactivate: sandbox.module.exports.deactivate };
+  return { managers, sessions, statusBars, flushes, contexts, executed, commands, serializers, subscriptions, provider, providerOptions, html, MultiMonitorViewProvider, MonitorViewProvider, deactivate: sandbox.module.exports.deactivate };
+}
+
+function webviewTarget(post) {
+  const target = {
+    visible: true,
+    webview: {
+      html: '',
+      postMessage: (message) => { post(message); return Promise.resolve(true); },
+      onDidReceiveMessage(handler) { target.receive = handler; },
+    },
+    onDidDispose() {},
+    onDidChangeVisibility() {},
+    onDidChangeViewState() {},
+  };
+  return target;
 }
 
 test('native SSH monitoring retains client-only metadata when full endpoints are unavailable', async () => {
@@ -110,10 +135,15 @@ test('panel settings update the native status bar through the shared config subs
   t.after(() => provider.configStore.dispose());
   const original = statusBars[0];
   const sidebarMessages = [], editorMessages = [];
-  provider.sidebar = {target:{visible:true,webview:{postMessage:message=>sidebarMessages.push(message)}},ready:true};
-  const panel = {visible:true,webview:{postMessage:message=>editorMessages.push(message)}};
-  provider.editorPanels.set(panel,{target:panel,ready:true});
-  provider.handleMessage({version:1,cmd:'setConfig',key:'statusBar',changes:[{path:['alignment'],value:'right'},{path:['priority'],value:50}]});
+  const view = webviewTarget(message => sidebarMessages.push(message));
+  await provider.resolveWebviewView(view);
+  await view.receive({version:1,cmd:'ready'});
+  const panel = webviewTarget(message => editorMessages.push(message));
+  await provider.attachEditor(panel, { page: 'perf' });
+  await panel.receive({version:1,cmd:'ready'});
+  sidebarMessages.length = 0;
+  editorMessages.length = 0;
+  view.receive({version:1,cmd:'setConfig',key:'statusBar',changes:[{path:['alignment'],value:'right'},{path:['priority'],value:50}]});
   assert.equal(statusBars.length,2);
   assert.equal(original.disposed,true);
   assert.equal(statusBars[1].alignment,2);
@@ -194,6 +224,61 @@ test('every mode registers all contributed commands and leaves hidden views unre
     assert.equal(result.contexts.has('sysmonitor.sidebarDeviceActive'), false, JSON.stringify(mode));
     assert.equal(typeof result.serializers.get('sysmonitor.editor').deserializeWebviewPanel, 'function', JSON.stringify(mode));
   }
+});
+
+test('each mode routes its commands to its provider and leaves the remaining commands inert', async () => {
+  const sidebarActions = {
+    'sysmonitor.openEditor': ['moveSidebarDeviceToEditor'],
+    'sysmonitor.openWindow': ['moveSidebarDeviceToEditor', true],
+    'sysmonitor.openTerminal': ['openTerminalForSidebar'],
+    'sysmonitor.openRemoteWindow': ['openRemoteWindowForSidebar'],
+    'sysmonitor.editorTerminal': ['openTerminalForEditor'],
+    'sysmonitor.editorRemoteWindow': ['openRemoteWindowForEditor'],
+  };
+  const editorActions = {
+    'sysmonitor.copyToEditor': ['openEditorPanel'],
+    'sysmonitor.copyToWindow': ['openFloatingPanel'],
+    'sysmonitor.editorReturnSidebar': ['returnActiveEditorToSidebar'],
+    'sysmonitor.editorMoveWindow': ['moveActiveEditorToNewWindow'],
+  };
+  const routes = [
+    [{ platform: 'darwin' }, { ...sidebarActions, ...editorActions }, null],
+    [{ platform: 'linux', remoteName: 'ssh-remote' }, editorActions, { sidebarSshActive: false, sidebarFixedActive: true, editorSshActive: false }],
+    [{ platform: 'darwin', remoteName: 'ssh-remote' }, {}, { sidebarSshActive: false, sidebarFixedActive: false, editorSshActive: false }],
+  ];
+  const methods = [...new Set(Object.values({ ...sidebarActions, ...editorActions }).map(([name]) => name))];
+  for (const [mode, expected, contexts] of routes) {
+    const result = await activate(mode);
+    const calls = [];
+    for (const name of methods) result.provider[name] = (...args) => { calls.push([name, ...args]); };
+    for (const [id, handler] of result.commands) {
+      calls.length = 0;
+      result.executed.length = 0;
+      await handler();
+      if (id === 'sysmonitor.openPanel') {
+        assert.deepEqual(result.executed, [['workbench.view.extension.sysmonitor-container']], JSON.stringify(mode));
+        assert.deepEqual(calls, []);
+      } else {
+        assert.deepEqual(calls, expected[id] ? [expected[id]] : [], JSON.stringify(mode) + ' ' + id);
+      }
+    }
+    if (contexts) {
+      for (const [key, value] of Object.entries(contexts)) assert.equal(result.contexts.get('sysmonitor.' + key), value, JSON.stringify(mode) + ' ' + key);
+    }
+  }
+});
+
+test('device manager callbacks reach the multi-device views', async () => {
+  const result = await activate({ platform: 'darwin' });
+  const calls = [];
+  result.provider.pauseChanged = (paused) => calls.push(['pause', paused]);
+  result.provider.onDeviceUpdate = (id) => calls.push(['update', id]);
+  result.provider.notifyResidualProcesses = (host, pids) => calls.push(['residual', host, pids]);
+  const { onPauseChange, onUpdate, onResidualProcesses } = result.managers[0].options;
+  onPauseChange(true);
+  onUpdate('ssh:campus', {});
+  onResidualProcesses('campus', [7], () => {});
+  assert.deepEqual(calls, [['pause', true], ['update', 'ssh:campus'], ['residual', 'campus', [7]]]);
 });
 
 test('unsupported environments close restored monitor editors', async () => {

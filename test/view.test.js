@@ -70,7 +70,7 @@ function fakePanel({ post = () => {}, visible = true, active = false } = {}) {
 
 async function readySidebar(provider, view) {
   await provider.resolveWebviewView(view);
-  provider.handleMessage({ version: 1, cmd: 'ready' }, view);
+  await view.receive({ version: 1, cmd: 'ready' });
 }
 
 const readWebviewScript = () => WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(__dirname, '..', 'src/view/assets', fileName), 'utf8')).join('\n');
@@ -127,7 +127,7 @@ test('Webview waits for its ready handshake before receiving the latest snapshot
   provider.session.model = { performance: { cpu: { usagePercent: 5 } }, processes: [] };
   provider.renderSession();
   assert.equal(messages.length, 0);
-  provider.handleMessage({ version: 1, cmd: 'ready' }, view);
+  view.receive({ version: 1, cmd: 'ready' });
   assert.equal(messages.some((message) => message.cmd === 'snapshot'), true);
 });
 
@@ -136,14 +136,22 @@ test('ready delivers current configuration, save failure, UI and snapshot after 
   const vscode={env:{language:'en'},workspace:{getConfiguration:section=>section==='sysmonitor'?{inspect:()=>({globalValue:undefined}),update:async()=>{throw new Error('read only');}}:{get:()=>[]}}};
   const store=new ConfigStore({vscode});
   const provider=createProvider({vscode,configStore:store});
-  await provider.buildHtml();
-  store.update('display',[{path:['charts'],value:false}]);await assert.rejects(store.flush(),/read only/);
   const messages=[];
-  await readySidebar(provider,fakeView({post:message=>messages.push(message)}));
+  const view=fakeView({post:message=>messages.push(message)});
+  await provider.resolveWebviewView(view);
+  assert.equal(readInitialConfig(view.webview.html).displayCfg.charts,true);
+  store.update('display',[{path:['charts'],value:false}]);
+  await assert.rejects(store.flush(),/read only/);
+  await view.receive({version:1,cmd:'ready'});
   const config=messages.find(message=>message.cmd==='config');
-  assert.equal(config.displayCfg.charts,false);assert.equal(config.saveState.status,'error');
-  assert.ok(messages.some(message=>message.cmd==='uiState'));assert.ok(messages.some(message=>message.cmd==='snapshot'));
-  let retry=0;store.flush=async()=>{retry++;};provider.handleMessage({version:1,cmd:'retryConfigSave'});assert.equal(retry,1);
+  assert.equal(config.displayCfg.charts,false);
+  assert.equal(config.saveState.status,'error');
+  assert.ok(messages.some(message=>message.cmd==='uiState'));
+  assert.ok(messages.some(message=>message.cmd==='snapshot'));
+  let retry=0;
+  store.flush=async()=>{retry++;};
+  view.receive({version:1,cmd:'retryConfigSave'});
+  assert.equal(retry,1);
 });
 
 test('editor panel preserves the original icon shape with light and dark variants', async () => {
@@ -176,25 +184,27 @@ test('remote Editor actions move the active panel or return to its sidebar', asy
   const vscode = {
     ViewColumn: { Active: 1 }, Uri: { file: (file) => file },
     window: { createWebviewPanel: () => {
-      const panel = { active: true, webview: { onDidReceiveMessage() {} }, onDidDispose() {}, reveal() { commands.push('reveal'); }, dispose() { commands.push('dispose'); } };
+      const panel = fakePanel({ active: true });
+      panel.reveal = () => commands.push('reveal');
+      panel.dispose = () => {
+        commands.push('dispose');
+        panel.fireDispose();
+      };
       panels.push(panel);
       return panel;
     } },
     commands: { async executeCommand(command) { commands.push(command); } },
   };
   const provider = createProvider({ vscode, service: {}, configStore: {} });
-  provider.buildHtml = async () => '<html></html>';
   await readySidebar(provider, fakeView({ show() { commands.push('show-sidebar'); }, post: (message) => commands.push(message) }));
   const first = await provider.openEditorPanel('proc');
-  assert.equal(provider.editorPages.get(first), 'proc');
-  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'perf' }, first);
-  assert.equal(provider.editorPages.get(first), 'perf');
+  assert.equal(readInitialConfig(first.webview.html).page, 'proc');
+  first.receive({ version: 1, cmd: 'switchPage', page: 'perf' });
   first.active = false;
   await provider.moveActiveEditorToNewWindow();
   assert.deepEqual(commands.slice(-3), ['reveal', 'workbench.action.moveEditorToNewWindow', 'reveal']);
   assert.equal(commands.includes('dispose'), false);
   await provider.returnActiveEditorToSidebar();
-  assert.equal(provider.sidebarPage, 'perf');
   assert.deepEqual(commands.slice(-3), [{ cmd: 'navigatePage', page: 'perf' }, 'show-sidebar', 'dispose']);
   assert.equal(panels.length, 1);
 });
@@ -212,14 +222,17 @@ test('remote Linux settings expose window action switches and update native titl
     },
   });
   changed = () => { provider.session.updateConfig(); provider.updateActionVisibility(); provider.pushConfig(); };
+  const view = fakeView();
+  await provider.resolveWebviewView(view);
   contexts.length = 0;
-  provider.handleMessage({ version: 1, cmd: 'setConfig', key: 'servers', changes: ['editor','window'].map(key => ({ path:['actions',key], value:false })) });
+  view.receive({ version: 1, cmd: 'setConfig', key: 'servers', changes: ['editor','window'].map(key => ({ path:['actions',key], value:false })) });
   assert.deepEqual(contexts.filter(([command, key]) => command === 'setContext' && key.startsWith('sysmonitor.action')), [
     ['setContext', 'sysmonitor.actionEditorVisible', false],
     ['setContext', 'sysmonitor.actionWindowVisible', false],
   ]);
-  const html = await provider.buildHtml();
-  const init = JSON.parse(Buffer.from(html.match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
+  const reopened = fakeView();
+  await provider.resolveWebviewView(reopened);
+  const init = readInitialConfig(reopened.webview.html);
   assert.equal(init.serversCfg.actions.editor, false);
   assert.equal(init.serversCfg.actions.window, false);
 });
@@ -263,14 +276,27 @@ test('a failed Editor move does not block a later move', async () => {
 
 test('returning to an unready remote sidebar preserves the Editor page', async () => {
   const messages = [];
-  const provider = createProvider({ vscode: {}, service: { scheduler: { isPaused: false } }, configStore: {} });
+  const commands = [];
+  const provider = createProvider({
+    vscode: {
+      ViewColumn: { Active: 1 },
+      window: { createWebviewPanel: () => fakePanel({ active: true }) },
+      commands: { executeCommand: async (command) => commands.push(command) },
+    },
+    service: { scheduler: { isPaused: false } }, configStore: {},
+  });
   const view = fakeView({ post: (message) => messages.push(message) });
   await provider.resolveWebviewView(view);
-  provider.sidebarPage = 'proc';
-  provider.pendingSidebarPage = 'proc';
-  provider.handleMessage({ version: 1, cmd: 'ready', page: 'perf' }, view);
-  assert.equal(provider.sidebarPage, 'proc');
+  await provider.openEditorPanel('proc');
+  await provider.returnActiveEditorToSidebar();
+  assert.deepEqual(commands.filter((command) => command !== 'setContext'), ['workbench.view.extension.sysmonitor-container']);
+  assert.equal(provider.editors.size, 0);
+  assert.deepEqual(messages, []);
+  await view.receive({ version: 1, cmd: 'ready', page: 'perf' });
   assert.deepEqual(messages.at(-1), { cmd: 'navigatePage', page: 'proc' });
+  const reopened = fakeView();
+  await provider.resolveWebviewView(reopened);
+  assert.equal(readInitialConfig(reopened.webview.html).page, 'proc');
 });
 
 test('remote monitor opens its current page in a native floating window', async () => {
@@ -290,11 +316,11 @@ test('remote monitor opens its current page in a native floating window', async 
   });
   const view = fakeView();
   await provider.resolveWebviewView(view);
-  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, view);
-  provider.buildHtml = async (page) => `<html>${page}</html>`;
+  view.receive({ version: 1, cmd: 'switchPage', page: 'proc' });
   calls.length = 0;
   await provider.openFloatingPanel();
-  assert.equal(panel.webview.html, '<html>proc</html>');
+  assert.equal(readInitialConfig(panel.webview.html).page, 'proc');
+  assert.equal(readInitialConfig(panel.webview.html).surface, 'editor');
   assert.deepEqual(calls, [['reveal', undefined], ['command', 'workbench.action.moveEditorToNewWindow'], ['reveal', undefined]]);
 });
 
@@ -336,7 +362,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   await provider.openEditorPanel();
   await provider.openEditorPanel();
   assert.equal(panels.length, 2);
-  assert.equal(provider.editorPanels.size, 2);
+  assert.equal(provider.editors.size, 2);
   assert.equal(panels[0].webview.html, '<html></html>');
   assert.equal(panels[1].webview.html, '<html></html>');
   panels[0].webview.receive({ version: 1, cmd: 'ready' });
@@ -367,7 +393,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
 
   messages.length = 0;
   panels[0].dispose();
-  assert.equal(provider.editorPanels.size, 1);
+  assert.equal(provider.editors.size, 1);
   provider.renderSession();
   assert.equal(messages.some(([recipient]) => recipient === panels[0]), false);
   assert.equal(messages.some(([recipient, message]) => recipient === panels[1] && message.cmd === 'snapshot'), true);
@@ -380,22 +406,21 @@ test('process display preferences are shared across sidebar and editor clients',
     vscode: {}, service: {}, configStore: {},
     uiStateStore: { get: () => ({}), update: async (key, value) => { updates.push([key, value]); } },
   });
-  provider.buildHtml = async () => '<html></html>';
   const view = fakeView({ post: (message) => messages.push(['side', message]) });
   await readySidebar(provider, view);
   const panel = fakePanel({ post: (message) => messages.push(['editor', message]) });
-  await provider.attachEditorPanel(panel);
+  await provider.attachEditor(panel);
   panel.receive({ version: 1, cmd: 'ready' });
   assert.deepEqual(messages.filter(([, message]) => message.cmd === 'uiState').map(([, message]) => message.processDisplay), [
     { cpu: 'core', ram: 'size', expandName: false, expandCmd: false },
     { cpu: 'core', ram: 'size', expandName: false, expandCmd: false },
   ]);
   messages.length = 0;
-  provider.handleMessage({ version:1, cmd: 'setProcessDisplay', key: 'cpu', value: 'both' }, view);
-  provider.handleMessage({ version:1, cmd: 'setProcessDisplay', key: 'ram', value: 'percent' }, panel);
-  provider.handleMessage({ version:1, cmd: 'setProcessDisplay', key: 'expandName', value: true }, panel);
+  view.receive({ version:1, cmd: 'setProcessDisplay', key: 'cpu', value: 'both' });
+  panel.receive({ version:1, cmd: 'setProcessDisplay', key: 'ram', value: 'percent' });
+  panel.receive({ version:1, cmd: 'setProcessDisplay', key: 'expandName', value: true });
   for (const [key, value] of [['cpu', 'bogus'], ['expandCmd', 'yes'], ['other', true], ['ram', true]]) {
-    provider.handleMessage({ version:1, cmd: 'setProcessDisplay', key, value }, view);
+    view.receive({ version:1, cmd: 'setProcessDisplay', key, value });
   }
   await new Promise((resolve) => setImmediate(resolve));
   const expected = { cpu: 'both', ram: 'percent', expandName: true, expandCmd: false };
@@ -405,8 +430,9 @@ test('process display preferences are shared across sidebar and editor clients',
   const broadcasts = messages.filter(([, message]) => message.cmd === 'uiState');
   assert.equal(broadcasts.length, 6);
   assert.deepEqual(broadcasts.slice(-2).map(([target, message]) => [target, message.processDisplay]), [['side', expected], ['editor', expected]]);
-  const html = await MonitorViewProvider.prototype.buildHtml.call(provider);
-  assert.deepEqual(JSON.parse(Buffer.from(html.match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8')).processDisplay, expected);
+  const reopened = fakeView();
+  await provider.resolveWebviewView(reopened);
+  assert.deepEqual(readInitialConfig(reopened.webview.html).processDisplay, expected);
 });
 
 test('stored process display preferences are validated before use', () => {
@@ -420,11 +446,10 @@ test('a new remote view remains paused while a one-shot retry is collecting', as
   const provider = createProvider({ vscode: {} });
   provider.session.paused = true;
   provider.session.service.scheduler.isPaused = false;
-  const html = await provider.buildHtml();
-  const config = JSON.parse(Buffer.from(html.match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
-  assert.equal(config.paused, true);
   const messages = [];
-  await readySidebar(provider, fakeView({ post: (message) => messages.push(message) }));
+  const view = fakeView({ post: (message) => messages.push(message) });
+  await readySidebar(provider, view);
+  assert.equal(readInitialConfig(view.webview.html).paused, true);
   assert.equal(messages.find((message) => message.cmd === 'uiState').paused, true);
 });
 
@@ -450,12 +475,12 @@ test('remote views load only the webview assets and no longer carry GPU counts o
   provider.pushConfig();
   assert.equal('gpuCount' in messages[0], false);
   messages.length = 0;
-  provider.handleMessage({ version: 1, cmd: 'getConfig' }, view);
+  view.receive({ version: 1, cmd: 'getConfig' });
   assert.deepEqual(messages, []);
   assert.equal(logs.at(-1), 'ignored invalid webview message: getConfig');
 });
 
-test('remote session terminals use the session of the current process row', () => {
+test('remote session terminals use the session of the current process row', async () => {
   const created = [];
   const warnings = [];
   const provider = createProvider({ vscode: {
@@ -465,20 +490,22 @@ test('remote session terminals use the session of the current process row', () =
       showWarningMessage: (message) => warnings.push(message),
     },
   } });
+  const view = fakeView();
+  await provider.resolveWebviewView(view);
   provider.session.model = { processes: [
     { pid: 7, session: { type: 'tmux', name: "it's", id: "it's" } },
     { pid: 8, session: null },
   ] };
-  provider.handleMessage({ version: 1, cmd: 'openSessionTerminal', deviceId: 'ssh:other', pid: 7, session: { type: 'tmux', name: 'forged', id: 'forged' } });
+  view.receive({ version: 1, cmd: 'openSessionTerminal', deviceId: 'ssh:other', pid: 7, session: { type: 'tmux', name: 'forged', id: 'forged' } });
   assert.equal(created.length, 1);
   assert.equal(created[0].name, "tmux: it's");
   assert.equal(created[0].shellPath, '/bin/sh');
   assert.deepEqual(created[0].env, { TMUX: null, TMUX_PANE: null });
   assert.match(created[0].shellArgs[1], /tmux attach-session -t '=it'\\''s' \|\| printf '%s\\n' '无法连接会话 it'\\''s，它可能已经结束。'/);
   assert.doesNotMatch(created[0].shellArgs[1], /forged/);
-  provider.handleMessage({ version: 1, cmd: 'openSessionTerminal', pid: 8 });
-  provider.handleMessage({ version: 1, cmd: 'openSessionTerminal', pid: 99 });
-  provider.handleMessage({ version: 1, cmd: 'openSessionTerminal', pid: '7' });
+  view.receive({ version: 1, cmd: 'openSessionTerminal', pid: 8 });
+  view.receive({ version: 1, cmd: 'openSessionTerminal', pid: 99 });
+  view.receive({ version: 1, cmd: 'openSessionTerminal', pid: '7' });
   assert.equal(created.length, 1);
   assert.deepEqual(warnings, Array(3).fill('找不到该进程所在的终端会话，它可能已经结束。'));
 });
@@ -491,20 +518,20 @@ test('remote process collection follows visible views that show the process page
   const view = fakeView();
   await readySidebar(provider, view);
   assert.deepEqual(demands, []);
-  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, view);
+  view.receive({ version: 1, cmd: 'switchPage', page: 'proc' });
   view.visible = false;
   view.fireVisibility();
   view.visible = true;
   view.fireVisibility();
-  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'perf' }, view);
+  view.receive({ version: 1, cmd: 'switchPage', page: 'perf' });
   assert.deepEqual(demands, [true, false, true, false]);
   const panel = fakePanel();
-  await provider.attachEditorPanel(panel, { page: 'proc' });
+  await provider.attachEditor(panel, { page: 'proc' });
   panel.visible = false;
   panel.fireViewState();
   panel.visible = true;
   panel.fireViewState();
-  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, view);
+  view.receive({ version: 1, cmd: 'switchPage', page: 'proc' });
   panel.dispose();
   assert.deepEqual(demands, [true, false, true, false, true, false, true]);
   view.fireDispose();
@@ -517,7 +544,7 @@ test('a hidden remote view stops receiving updates and is fully restored by its 
   provider.buildHtml = async () => '<html></html>';
   const view = fakeView({ post: (message) => messages.push(message) });
   await readySidebar(provider, view);
-  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, view);
+  view.receive({ version: 1, cmd: 'switchPage', page: 'proc' });
   provider.session.ready = true;
   provider.session.model = { performance: { cpu: { usagePercent: 3 } }, processes: [] };
   provider.session.chartSamples = () => [{ t: 1 }, { t: 2 }];
@@ -572,14 +599,25 @@ test('a remote view that stays silent for ten seconds is reloaded once per visib
   const logs = [];
   const provider = createProvider({ vscode: {}, logger: (message) => logs.push(message), ...clock });
   let builds = 0;
-  provider.buildHtml = async (page, surface) => `<html>${surface} ${page} ${++builds}</html>`;
+  let lastBuild = null;
+  const buildHtml = provider.buildHtml.bind(provider);
+  provider.buildHtml = (record) => {
+    builds++;
+    lastBuild = buildHtml(record);
+    return lastBuild;
+  };
   const view = fakeView();
   await provider.resolveWebviewView(view);
-  assert.equal(view.webview.html, '<html>sidebar perf 1</html>');
+  const firstHtml = view.webview.html;
+  assert.equal(builds, 1);
   assert.deepEqual(clock.timers.map((timer) => timer.milliseconds), [10000]);
   clock.timers[0].callback();
+  await lastBuild;
   await settle();
-  assert.equal(view.webview.html, '<html>sidebar perf 2</html>');
+  assert.equal(builds, 2);
+  assert.notEqual(view.webview.html, firstHtml);
+  assert.equal(readInitialConfig(view.webview.html).surface, 'sidebar');
+  assert.equal(readInitialConfig(view.webview.html).page, 'perf');
   assert.match(logs.at(-1), /Webview sidebar did not report ready within 10 s/);
   assert.equal(clock.timers.length, 1);
   view.visible = false;
@@ -590,12 +628,16 @@ test('a remote view that stays silent for ten seconds is reloaded once per visib
   view.receive({ version: 1, cmd: 'ready' });
   assert.equal(clock.timers[1].cancelled, true);
   const panel = fakePanel();
-  await provider.attachEditorPanel(panel, { page: 'proc' });
+  await provider.attachEditor(panel, { page: 'proc' });
+  const editorHtml = panel.webview.html;
   clock.timers[2].callback();
+  await lastBuild;
   await settle();
-  assert.match(panel.webview.html, /^<html>editor proc \d+<\/html>$/);
+  assert.notEqual(panel.webview.html, editorHtml);
+  assert.equal(readInitialConfig(panel.webview.html).surface, 'editor');
+  assert.equal(readInitialConfig(panel.webview.html).page, 'proc');
   const background = fakePanel({ visible: false });
-  await provider.attachEditorPanel(background);
+  await provider.attachEditor(background);
   assert.equal(clock.timers.length, 3);
   background.visible = true;
   background.fireViewState();
@@ -615,6 +657,26 @@ test('disposing a replaced remote sidebar keeps the current view registered', as
   assert.equal(provider.sidebar.target, second);
   second.fireDispose();
   assert.equal(provider.sidebar, null);
+});
+
+test('remote views log failed messages and receive retry errors', async () => {
+  const logs = [];
+  const provider = createProvider({
+    vscode: { commands: { async executeCommand(command) {
+      if (command === 'workbench.action.openSettings') throw new Error('settings unavailable');
+    } } },
+    service: { async collectOnce() { throw new Error('collect failed'); } },
+    logger: (message) => logs.push(message),
+  });
+  const messages = [];
+  const view = fakeView({ post: (message) => messages.push(message) });
+  await readySidebar(provider, view);
+  messages.length = 0;
+  await view.receive({ version: 1, cmd: 'openSettings' });
+  assert.equal(logs.at(-1), 'Webview message openSettings failed: settings unavailable');
+  await view.receive({ version: 1, cmd: 'retrySampling', deviceId: 'local' });
+  assert.deepEqual(messages, [{ cmd: 'retryConnectionResult', deviceId: 'local', error: 'collect failed' }]);
+  assert.equal(logs.at(-1), 'Monitor retry local: collect failed');
 });
 
 test('status bar formatting leaves configured and current-user GPU lists unchanged', () => {

@@ -2,9 +2,33 @@
 
 const path = require('node:path');
 const { listSshHosts } = require('../ssh/ssh-config');
+const { sshDeviceId } = require('../domain/device-id');
+
+const SUMMARY_SOURCES = ['cpu', 'memory', 'accelerators'];
+
+function rowState(pending, currentError, device) {
+  if (pending) return pending;
+  if (!currentError) return device ? device.state : 'idle';
+  return device && device.state === 'connected' ? 'error' : 'disconnected';
+}
+
+function summaryMetrics({ performance, sources }) {
+  const metrics = [];
+  if (sources.cpu.state === 'ready' && Number.isFinite(performance.cpu.usagePercent)) metrics.push(`CPU ${performance.cpu.usagePercent}%`);
+  if (sources.memory.state === 'ready' && Number.isFinite(performance.memory.usagePercent)) metrics.push(`RAM ${performance.memory.usagePercent}%`);
+  if (sources.accelerators.state === 'ready' && performance.gpus.length) {
+    const gpus = performance.gpus;
+    const idleCount = gpus.some((gpu) => gpu.availability === 'unknown') ? '--' : gpus.filter((gpu) => gpu.isIdle).length;
+    metrics.push(`GPU ${idleCount}/${gpus.length}`);
+  }
+  return metrics;
+}
 
 class ServerDirectory {
-  constructor({ vscode, manager, loadHosts = listSshHosts, scheduleErrorClear = setTimeout, cancelErrorClear = clearTimeout, onChange = () => {}, onActionError = () => {}, logger = () => {} }) {
+  constructor({
+    vscode, manager, loadHosts = listSshHosts, scheduleErrorClear = setTimeout, cancelErrorClear = clearTimeout,
+    onChange = () => {}, onActionError = () => {}, logger = () => {},
+  }) {
     this.vscode = vscode;
     this.manager = manager;
     this.loadHosts = loadHosts;
@@ -68,24 +92,16 @@ class ServerDirectory {
 
   rows() {
     return this.hosts.map((host) => {
-      const device = this.manager.get('ssh:' + host);
+      const device = this.manager.get(sshDeviceId(host));
       const pending = this.pendingHosts.get(host);
-      const currentError = (this.hostErrors.get(host) || {}).message || (device && (device.error || device.loadError)) || null;
-      const state = pending || (currentError ? device && device.state === 'connected' ? 'error' : 'disconnected' : device ? device.state : 'idle');
+      const deviceError = device && (device.error || device.loadError);
+      const currentError = (this.hostErrors.get(host) || {}).message || deviceError || null;
+      const state = rowState(pending, currentError, device);
       const error = state === 'disconnected' || state === 'error' ? currentError : null;
       const model = device && device.model;
       const sources = model && model.sources;
-      const metrics = [];
-      const summaryLoading = state === 'connected' && (!sources || ['cpu', 'memory', 'accelerators'].some(key => sources[key].state === 'loading'));
-      if (state === 'connected' && model) {
-        const performance = model.performance;
-        if (sources.cpu.state === 'ready' && Number.isFinite(performance.cpu.usagePercent)) metrics.push(`CPU ${performance.cpu.usagePercent}%`);
-        if (sources.memory.state === 'ready' && Number.isFinite(performance.memory.usagePercent)) metrics.push(`RAM ${performance.memory.usagePercent}%`);
-        if (sources.accelerators.state === 'ready' && performance.gpus.length) {
-          const idleCount = performance.gpus.some(gpu => gpu.availability === 'unknown') ? '--' : performance.gpus.filter(gpu => gpu.isIdle).length;
-          metrics.push(`GPU ${idleCount}/${performance.gpus.length}`);
-        }
-      }
+      const metrics = state === 'connected' && model ? summaryMetrics(model) : [];
+      const summaryLoading = state === 'connected' && (!sources || SUMMARY_SOURCES.some((key) => sources[key].state === 'loading'));
       return { host, state, error, busy: !!pending, metrics, summaryLoading };
     });
   }
@@ -110,7 +126,7 @@ class ServerDirectory {
   }
 
   async connect(host) {
-    const id = 'ssh:' + host;
+    const id = sshDeviceId(host);
     const device = this.manager.get(id) || this.manager.open(id);
     await device.transport.connect();
   }
@@ -120,18 +136,27 @@ class ServerDirectory {
   }
 
   waitForInitialSample(host, since, options = {}) {
-    const device = this.manager.get('ssh:' + host);
+    const device = this.manager.get(sshDeviceId(host));
     if (!device) return Promise.reject(new Error('Monitor session closed'));
     return device.waitForInitialSample({ ...options, since, signal: this.abortController.signal });
   }
 
+  needsNewSample(device) {
+    if (!device || device.state !== 'connected') return true;
+    const scheduler = device.service.scheduler;
+    return !this.manager.paused && !!scheduler && scheduler.isPaused;
+  }
+
   async runMonitorAction(host, action) {
     if (this.disposed || this.pendingHosts.has(host)) return;
-    const id = 'ssh:' + host;
+    const id = sshDeviceId(host);
     const previous = this.manager.get(id);
     const ready = this.hasCompletedInitialSample(previous);
-    const needsNewSample = !previous || previous.state !== 'connected' || (!this.manager.paused && previous.service.scheduler && previous.service.scheduler.isPaused);
-    const sampleAfter = !ready ? Math.max(needsNewSample ? Date.now() : 0, previous ? previous.requiredSince || 0 : 0) : 0;
+    let sampleAfter = 0;
+    if (!ready) {
+      const requiredSince = previous ? previous.requiredSince || 0 : 0;
+      sampleAfter = Math.max(this.needsNewSample(previous) ? Date.now() : 0, requiredSince);
+    }
     const hadHostError = this.hostErrors.has(host);
     if (!ready) {
       this.pendingHosts.set(host, previous && previous.state === 'connected' ? 'loading' : 'connecting');

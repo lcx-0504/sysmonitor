@@ -8,6 +8,12 @@ const { normalizeConfig } = require('../src/config/normalize-config');
 const { DeviceMonitorManager } = require('../src/services/device-monitor-manager');
 const { createSessionFixture } = require('./session-fixture');
 
+async function sidebarHtml(provider) {
+  const view = { visible: true, webview: { html: '', onDidReceiveMessage() {}, postMessage: async () => true }, onDidDispose() {} };
+  await provider.resolveWebviewView(view);
+  return view.webview.html;
+}
+
 test('residual-process warning copies PIDs and acknowledges without resuming monitoring', async () => {
   const choices = ['复制 PID', '我知道了'];
   const messages = [], copied = [], broadcasts = [];
@@ -120,7 +126,7 @@ test('SSH default-install action is explicit, deduplicated, and writes the globa
     },
   };
   const provider = new MultiMonitorViewProvider({
-    vscode: { env: { language: 'zh-cn' }, workspace: { getConfiguration: () => configuration } },
+    vscode: { env: { language: 'zh-cn' }, Uri: { file: (file) => file }, workspace: { getConfiguration: () => configuration } },
     manager: { sync() {}, setConfigFile() {}, get() { return null; } },
     configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
     workspaceState: { get: () => ({}) },
@@ -138,7 +144,7 @@ test('SSH default-install action is explicit, deduplicated, and writes the globa
   assert.equal(messages.at(-1).installed, true);
   await provider.handleMessage({ version: 1, cmd: 'addSshDefaultExtension' }, source);
   assert.equal(writes.length, 1);
-  assert.match(await provider.buildHtml(provider.sidebarState, { sidebar: true }), /id="server-intro-ssh-default"/);
+  assert.match(await sidebarHtml(provider), /id="server-intro-ssh-default"/);
 });
 
 
@@ -146,7 +152,7 @@ test('joining default extensions from the first-use guide dismisses it only afte
   const updates = [];
   const entries = [];
   const provider = new MultiMonitorViewProvider({
-    vscode: { env: { language: 'zh-cn' }, workspace: { getConfiguration: () => ({
+    vscode: { env: { language: 'zh-cn' }, Uri: { file: (file) => file }, workspace: { getConfiguration: () => ({
       get: () => entries,
       update: async (_key, value) => { entries.push(...value); },
     }) } },
@@ -163,7 +169,7 @@ test('joining default extensions from the first-use guide dismisses it only afte
   assert.deepEqual(updates, [['sysmonitor.localIntroDismissed', true]]);
   assert.equal(messages.some((message) => message.cmd === 'localIntroDismissed'), true);
   assert.equal(messages.some((message) => message.cmd === 'sshDefaultExtensions' && message.installed), true);
-  const initial = JSON.parse(Buffer.from((await provider.buildHtml(provider.sidebarState, { sidebar: true })).match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
+  const initial = JSON.parse(Buffer.from((await sidebarHtml(provider)).match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
   assert.equal(initial.showLocalIntro, false);
 });
 

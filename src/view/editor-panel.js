@@ -3,6 +3,7 @@
 const path = require('node:path');
 const os = require('node:os');
 const ASSET_ROOT = path.join(__dirname, 'assets');
+const MONITOR_CONTAINER_COMMAND = 'workbench.view.extension.sysmonitor-container';
 let moveQueue = Promise.resolve();
 
 async function getMonitorEditorTitle(vscode) {
@@ -41,13 +42,21 @@ function createMonitorEditorPanel(vscode, title = 'System Monitor') {
   return vscode.window.createWebviewPanel('sysmonitor.editor', title, vscode.ViewColumn.Active, monitorWebviewOptions(vscode));
 }
 
+function revealMonitorContainer(vscode) {
+  return vscode.commands.executeCommand(MONITOR_CONTAINER_COMMAND);
+}
+
 function moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError = true } = {}) {
   const operation = moveQueue.then(async () => {
     try {
       panel.reveal();
       await vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow');
       await new Promise((resolve) => setTimeout(resolve, 0));
-      try { panel.reveal(); } catch (_) { /* VS Code may recreate the panel during the move. */ }
+      try {
+        panel.reveal();
+      } catch (_) {
+        /* VS Code may recreate the panel during the move. */
+      }
     } catch (error) {
       if (disposeOnError) panel.dispose();
       throw error;
@@ -57,4 +66,6 @@ function moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError = true } = 
   return operation;
 }
 
-module.exports = { monitorWebviewOptions, setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow, getMonitorEditorTitle };
+module.exports = {
+  monitorWebviewOptions, setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow, revealMonitorContainer, getMonitorEditorTitle,
+};
