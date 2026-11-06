@@ -29,7 +29,6 @@ class MonitorService {
     this.onSnapshot = onSnapshot;
     this.onLog = onLog;
     this.statusBarAvailable = statusBarAvailable;
-    this.processDemand = false;
     this.snapshotStore = new SnapshotStore();
     this.commandRunner = commandRunner || new CommandRunner();
     const reader = fileReader || { readFile(file, encoding) {
@@ -71,15 +70,9 @@ class MonitorService {
   }
 
   updateDemand(config, refresh = true) {
-    const demand = collectionDemand(config, { statusBarAvailable:this.statusBarAvailable, processes:this.processDemand });
+    const demand = collectionDemand(config, { statusBarAvailable:this.statusBarAvailable });
     this.demand = demand;
     for (const runner of this.runners) this.scheduler.setRunnerDemand(runner, demandedKeys(runner.key, demand), { refresh });
-  }
-
-  setProcessDemand(demanded) {
-    if (this.processDemand === demanded) return;
-    this.processDemand = demanded;
-    this.updateDemand(this.runtimeConfig);
   }
 
   requiredKeys(page = 'perf') {

@@ -1,6 +1,6 @@
 'use strict';
 
-function collectionDemand(config, { statusBarAvailable = true, processes = false } = {}) {
+function collectionDemand(config, { statusBarAvailable = true } = {}) {
   const hidden = config.display.hiddenGroups;
   const bar = config.statusBar;
   const useBar = statusBarAvailable && bar.barEnabled;
@@ -13,7 +13,7 @@ function collectionDemand(config, { statusBarAvailable = true, processes = false
     diskTopology: !hidden.disk || !!(useBar && bar.disk),
     sshTraffic: !hidden.network || !!(useBar && bar.ssh),
     accelerators: !hidden.gpuCards || !hidden.gpuSummary || !!gpuBar,
-    processes,
+    processes: true,
   };
 }
 

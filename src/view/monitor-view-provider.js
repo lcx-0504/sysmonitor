@@ -21,7 +21,6 @@ class MonitorViewProvider extends MonitorViewHost {
     this.session = session;
     this.sidebarPage = 'perf';
     this.pendingSidebarPage = null;
-    this.processDemand = false;
     this.editorTitlePromise = null;
   }
 
@@ -61,7 +60,6 @@ class MonitorViewProvider extends MonitorViewHost {
     this.sidebarPage = page;
     if (this.sidebar && this.sidebar.ready) this.readiness.post(this.sidebar, { cmd: TO_WEBVIEW.navigatePage, page });
     else this.pendingSidebarPage = page;
-    this.updateProcessDemand();
     await this.revealSidebar();
     record.target.dispose();
   }
@@ -81,7 +79,6 @@ class MonitorViewProvider extends MonitorViewHost {
 
   showPage(record, page) {
     this.assignPage(record, page);
-    this.updateProcessDemand();
   }
 
   handleReady(record, message) {
@@ -96,19 +93,9 @@ class MonitorViewProvider extends MonitorViewHost {
     this.readiness.post(record, this.snapshotMessage(this.session, true));
     this.postUiState(record);
     if (record.sidebar) this.readiness.post(record, { cmd: TO_WEBVIEW.navigatePage, page: this.sidebarPage });
-    this.updateProcessDemand();
   }
 
-  viewsChanged() {
-    this.updateProcessDemand();
-  }
-
-  updateProcessDemand() {
-    const demanded = this.records().some((record) => record.target.visible && this.pageOf(record) === 'proc');
-    if (demanded === this.processDemand) return;
-    this.processDemand = demanded;
-    this.session.setProcessDemand(demanded);
-  }
+  viewsChanged() {}
 
   renderSession() {
     const records = this.records().filter((record) => record.ready);

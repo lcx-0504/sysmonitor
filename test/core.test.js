@@ -112,7 +112,6 @@ test('regular publication uses the current snapshot at fixed ticks without await
       return new Promise(resolve => pending.set(runner.key, resolve));
     } };
   }
-  service.setProcessDemand(true);
   const flush = () => new Promise(setImmediate);
   function finish(key, value) {
     const runner = service.runners.find(item => item.key === key);

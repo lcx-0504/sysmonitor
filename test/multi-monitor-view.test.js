@@ -408,24 +408,6 @@ test('local views use only the webview assets as resource roots', async (t) => {
   assert.deepEqual(panel.webview.options, options);
 });
 
-test('process collection is demanded for devices shown on a visible process page', async (t) => {
-  const vscode = createFakeVscode();
-  const { provider, manager } = monitor(t, { vscode, sidebarState: { tabs: ['ssh:a', 'ssh:b'], selected: 'ssh:a', page: 'perf' } });
-  const view = await openSidebar(provider, vscode);
-  assert.deepEqual(manager.demands, []);
-  await view.receive({ version: 1, cmd: 'switchPage', page: 'proc' });
-  await view.receive({ version: 1, cmd: 'switchDevice', id: 'ssh:b' });
-  view.setVisible(false);
-  view.setVisible(true);
-  assert.deepEqual(manager.demands, [['ssh:a'], ['ssh:b'], [], ['ssh:b']]);
-  const panel = await openEditor(provider, vscode, { tabs: ['ssh:a'], selected: 'ssh:a', page: 'proc' }, { active: true });
-  assert.deepEqual(manager.demands.slice(4), [['ssh:a', 'ssh:b']]);
-  panel.setState({ visible: false });
-  panel.dispose();
-  await view.receive({ version: 1, cmd: 'switchPage', page: 'servers' });
-  assert.deepEqual(manager.demands.slice(5), [['ssh:b'], []]);
-});
-
 test('a reshown local sidebar is restored by ready with its device, page, history and dismissed guide', async (t) => {
   const fixture = createSessionFixture({ id: 'ssh:campus', remote: true });
   const device = fixture.session;

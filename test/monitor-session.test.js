@@ -97,7 +97,6 @@ test('paused one-shot collection publishes only after its active modules settle'
   const session = new MonitorSession({ configStore: { getCurrent: () => config }, serviceOptions: { isSsh: false } });
   t.after(() => session.dispose());
   session.paused = true;
-  session.setProcessDemand(true);
   let finishMemory, finishProcesses;
   session.service.runners.find(runner => runner.key === 'resources').collector = {
     collect: () => new Promise(resolve => { finishMemory = resolve; }),
@@ -463,44 +462,6 @@ test('real service completion publishes the complete first snapshot before the n
   assert.ok(session.chartSamples().length > 0);
 });
 
-test('re-enabling process demand hides earlier rows until the next process sample publishes', t => {
-  const fixture = createSessionFixture();
-  t.after(() => fixture.session.dispose());
-  const { session, store, values } = fixture;
-  const row = { pid: 7, processKey: '7:1', userName: 'alice', processName: 'python', commandLine: 'python train.py', cpuUsagePercent: 5, cpuWhole: 1.25, memoryUsedBytes: 2048, memoryUsagePercent: 1, session: null };
-  session.setProcessDemand(true);
-  values.processes = { rows: [row], totalCount: 1 };
-  fixture.commit();
-  assert.equal(session.snapshotState().viewModel.processes.length, 1);
-  assert.equal(session.snapshotState().status.processesReady, true);
-  session.setProcessDemand(false);
-  assert.deepEqual(session.snapshotState().viewModel.processes, []);
-  assert.equal(session.snapshotState().viewModel.sources.processes.state, 'disabled');
-  session.setProcessDemand(true);
-  assert.deepEqual(session.snapshotState().viewModel.processes, []);
-  assert.equal(session.snapshotState().status.processesReady, false);
-  store.commit('cpu', { ...values.cpu, usagePercent: 90 });
-  store.commit('processes', { rows: [{ ...row, cpuUsagePercent: 9 }], totalCount: 1 });
-  session.acceptInitialSnapshot(store.read());
-  assert.equal(session.snapshotState().viewModel.processes[0].cpu, 9);
-  assert.equal(session.snapshotState().status.processesReady, true);
-  assert.equal(session.model.performance.cpu.usagePercent, 12);
-});
-
-test('process demand changes are idempotent and wait for an initial model before publishing', t => {
-  const updates = [];
-  const fixture = createSessionFixture({ onUpdate: () => updates.push('update') });
-  t.after(() => fixture.session.dispose());
-  fixture.session.setProcessDemand(false);
-  fixture.session.setProcessDemand(true);
-  assert.deepEqual(updates, []);
-  assert.equal(fixture.session.service.processDemand, true);
-  fixture.commit();
-  updates.length = 0;
-  fixture.session.setProcessDemand(true);
-  assert.deepEqual(updates, []);
-});
-
 test('pausing an SSH device keeps one idle channel and resuming restores the pool', async t => {
   const fixture = createSessionFixture({ remote: true, id: 'ssh:lab' });
   t.after(() => fixture.session.dispose());
@@ -511,50 +472,6 @@ test('pausing an SSH device keeps one idle channel and resuming restores the poo
   assert.equal(fixture.transport.idle, true);
   fixture.session.resume();
   assert.equal(fixture.transport.idle, false);
-});
-
-test('enabling process demand on a running service collects immediately', async t => {
-  const hiddenGroups = { cpu: true, memory: true, disk: true, network: true, gpuCards: true, gpuSummary: true };
-  const service = new MonitorService({ runtimeConfig: normalizeConfig({ display: { hiddenGroups }, statusBar: { barEnabled: false } }), isSsh: false });
-  t.after(() => service.dispose());
-  const runner = service.runners.find(item => item.key === 'processes');
-  let calls = 0;
-  runner.collector = { async collect() { calls++; return { rows: [], totalCount: 0 }; } };
-  service.start();
-  await new Promise(setImmediate);
-  assert.equal(runner.enabled, false);
-  assert.equal(calls, 0);
-  service.setProcessDemand(true);
-  await new Promise(setImmediate); await runner.idle;
-  assert.equal(calls, 1);
-  assert.equal(service.readSnapshot().processes.status, 'fresh');
-  service.setProcessDemand(false);
-  assert.equal(service.readSnapshot().processes.status, 'disabled');
-  assert.equal(service.readSnapshot().processes.value, null);
-  service.pause();
-  service.setProcessDemand(true);
-  await new Promise(setImmediate);
-  assert.equal(calls, 1);
-  service.resume({ force: true });
-  await new Promise(setImmediate); await runner.idle;
-  assert.equal(calls, 2);
-});
-
-test('the device manager applies process demand to existing and later devices', t => {
-  const { DeviceMonitorManager } = require('../src/services/device-monitor-manager');
-  const manager = new DeviceMonitorManager({ localLinux: false,
-    configStore: { getSaveState: () => ({ status: 'saved', error: null }), getCurrent: () => normalizeConfig({}) } });
-  t.after(() => manager.dispose());
-  const demands = (...ids) => ids.map(id => manager.get(id).service.processDemand);
-  manager.setPaused(true);
-  manager.sync(['ssh:a', 'ssh:b']);
-  assert.deepEqual(demands('ssh:a', 'ssh:b'), [false, false]);
-  manager.setProcessDemand(['ssh:b', 'ssh:c']);
-  assert.deepEqual(demands('ssh:a', 'ssh:b'), [false, true]);
-  manager.sync(['ssh:a', 'ssh:b', 'ssh:c', 'ssh:d']);
-  assert.deepEqual(demands('ssh:a', 'ssh:b', 'ssh:c', 'ssh:d'), [false, true, true, false]);
-  manager.setProcessDemand([]);
-  assert.deepEqual(demands('ssh:a', 'ssh:b', 'ssh:c', 'ssh:d'), [false, false, false, false]);
 });
 
 test('starting, resuming and reconnecting a session force a resume that resets counter baselines', async t => {

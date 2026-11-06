@@ -72,7 +72,7 @@ The Processes page supports sorting by CPU, memory, or GPU memory usage and sear
 
 The count at the top of the page shows the total number of processes after this exclusion, including during a search; it can vary slightly as kernel threads become active or idle. When there are more than 100 processes, a note below the table reads “Showing the top 100 processes”. During a search, the note instead reports how many results were found among the candidates. When the candidates do not cover every process, an ⓘ icon beside the note explains that search covers only the top 100 processes by CPU, memory, and GPU memory usage, and during a search the note also states that results may be incomplete.
 
-Process CPU usage reflects current activity. Each collection reads `/proc/PID/stat` twice, half a refresh interval apart and at most 1 second apart, and calculates usage from the difference instead of using the average since process start reported by `ps`. The process list is collected only while a visible view shows the Processes page for that machine; after the page is opened, the list appears when the first collection completes.
+Process CPU usage reflects current activity. Each collection reads `/proc/PID/stat` twice, half a refresh interval apart and at most 1 second apart, and calculates usage from the difference instead of using the average since process start reported by `ps`.
 
 Process names and commands support expanded and collapsed views. The context menu copies a PID, cell, or row. CPU usage supports per-core, whole-machine, or combined display; memory supports capacity, percentage, or both. These display choices are global preferences: a change in one view applies to all monitor views.
 

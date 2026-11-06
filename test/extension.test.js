@@ -34,7 +34,6 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     isPaused() { return false; }
     viewState() { return null; }
     snapshotState() { return {}; }
-    setProcessDemand() {}
   }
   class MultiMonitorViewProvider {
     constructor(options) { this.options = options; }

@@ -13,7 +13,6 @@ class DeviceMonitorManager {
     this.devices = new Map();
     this.visibleIds = new Set();
     this.preparingIds = new Set();
-    this.processDemandIds = new Set();
     this.paused = false;
     if (localLinux) this.open(LOCAL_DEVICE_ID);
   }
@@ -51,14 +50,8 @@ class DeviceMonitorManager {
       },
     });
     this.devices.set(id, device);
-    device.setProcessDemand(this.processDemandIds.has(id));
     if (this.shouldRun(id)) device.start();
     return device;
-  }
-
-  setProcessDemand(ids) {
-    this.processDemandIds = new Set(ids);
-    for (const [id, device] of this.devices) device.setProcessDemand(this.processDemandIds.has(id));
   }
 
   sync(openIds, visibleIds = []) {

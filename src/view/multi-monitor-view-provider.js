@@ -113,7 +113,6 @@ class MultiMonitorViewProvider extends MonitorViewHost {
     this.localLinux = localLinux;
     this.onLocalUpdate = onLocalUpdate;
     this.editorSshContext = null;
-    this.processDemandKey = '';
     this.serverDirectory = new ServerDirectory({
       vscode: this.vscode, manager, loadHosts, scheduleErrorClear, cancelErrorClear, logger: this.logger,
       onChange: (hosts, error) => this.postServers({ hosts, error }),
@@ -262,26 +261,15 @@ class MultiMonitorViewProvider extends MonitorViewHost {
   refreshReferences() {
     const open = new Set(this.sidebarState.tabs);
     const visible = new Set();
-    const processViews = new Set();
     for (const record of this.records()) {
       for (const id of record.state.tabs) open.add(id);
-      if (!record.target.visible || !record.state.selected) continue;
-      if (record.state.page !== 'servers') visible.add(record.state.selected);
-      if (record.state.page === 'proc') processViews.add(record.state.selected);
+      if (record.target.visible && record.state.selected && record.state.page !== 'servers') visible.add(record.state.selected);
     }
     const hosts = this.serverDirectory.hosts;
     const isOpen = (host) => !!this.manager.get(sshDeviceId(host));
     const previous = hosts.map(isOpen);
     this.manager.sync(open, visible);
-    this.updateProcessDemand(processViews);
     if (hosts.some((host, index) => previous[index] !== isOpen(host))) this.serverDirectory.notify();
-  }
-
-  updateProcessDemand(ids) {
-    const key = [...ids].sort().join('\n');
-    if (key === this.processDemandKey) return;
-    this.processDemandKey = key;
-    this.manager.setProcessDemand(ids);
   }
 
   persist(record, { hydrate = false } = {}) {

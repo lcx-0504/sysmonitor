@@ -41,7 +41,6 @@ function createDeviceManager({ devices = new Map(), paused = false, ...overrides
     paused,
     devices,
     syncs: [],
-    demands: [],
     pauseRequests: [],
     preparing: [],
     configFiles: [],
@@ -57,9 +56,6 @@ function createDeviceManager({ devices = new Map(), paused = false, ...overrides
     },
     sync(open, visible) {
       this.syncs.push({ open: [...open].sort(), visible: [...visible].sort() });
-    },
-    setProcessDemand(ids) {
-      this.demands.push([...ids].sort());
     },
     setPreparing(id, value) {
       this.preparing.push([id, value]);

@@ -369,29 +369,6 @@ test('remote session terminals use the session of the current process row', asyn
   assert.deepEqual(vscode.fake.warnings, Array(3).fill(['找不到该进程所在的终端会话，它可能已经结束。']));
 });
 
-test('remote process collection follows visible views that show the process page', async (t) => {
-  const demands = [];
-  const monitor = createRemoteMonitor(t, { service: { setProcessDemand(demanded) {
-    demands.push(demanded);
-    this.processDemand = demanded;
-  } } });
-  const view = await openSidebar(monitor);
-  assert.deepEqual(demands, []);
-  await view.receive({ version: 1, cmd: 'switchPage', page: 'proc' });
-  view.setVisible(false);
-  view.setVisible(true);
-  await view.receive({ version: 1, cmd: 'switchPage', page: 'perf' });
-  assert.deepEqual(demands, [true, false, true, false]);
-  const panel = await openPanel(monitor, { page: 'proc' }, { ready: false });
-  panel.setState({ visible: false });
-  panel.setState({ visible: true });
-  await view.receive({ version: 1, cmd: 'switchPage', page: 'proc' });
-  panel.dispose();
-  assert.deepEqual(demands, [true, false, true, false, true, false, true]);
-  view.dispose();
-  assert.deepEqual(demands.slice(-1), [false]);
-});
-
 test('a hidden remote view stops receiving updates and is fully restored by its next ready handshake', async (t) => {
   const monitor = createRemoteMonitor(t);
   const { provider, fixture, session } = monitor;

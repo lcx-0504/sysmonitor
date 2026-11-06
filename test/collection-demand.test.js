@@ -17,9 +17,8 @@ const disabledConfig = () => normalizeConfig({ display:{hiddenGroups}, statusBar
 test('panel and the applicable status bar share one metric demand calculation', () => {
   const config = disabledConfig();
   assert.deepEqual(collectionDemand(config), {
-    cpu:false, memory:false, network:false, diskIo:false, diskTopology:false, sshTraffic:false, accelerators:false, processes:false,
+    cpu:false, memory:false, network:false, diskIo:false, diskTopology:false, sshTraffic:false, accelerators:false, processes:true,
   });
-  assert.equal(collectionDemand(config, { processes:true }).processes, true);
   config.statusBar.barEnabled = true;
   config.statusBar.diskIO = 'read';
   config.statusBar.gpu.summary = false;
@@ -35,7 +34,6 @@ test('disabled modules leave scheduling, failures and initial readiness together
   service.pause(); t.after(() => service.dispose());
   for (const key of ['cpu','memory','diskIo','diskTopology','accelerators']) service.snapshotStore.fail(key, new Error('failed'));
   service.updateConfig(disabledConfig());
-  service.setProcessDemand(true);
   assert.deepEqual(service.requiredKeys(), []);
   assert.deepEqual(service.requiredKeys('proc'), ['processes']);
   for (const runner of service.runners) assert.equal(runner.enabled, runner.key === 'processes');

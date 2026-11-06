@@ -30,17 +30,12 @@ function createSessionFixture({ id = 'local', remote = false, paused = false, ch
       return {
         scheduler: { isPaused: true },
         isPaused() { return this.scheduler.isPaused; },
-        processDemand: false,
-        setProcessDemand(demanded) {
-          this.processDemand = demanded;
-          store.reset('processes', demanded ? 'loading' : 'disabled');
-        },
         pause() { this.scheduler.isPaused = true; },
         resume() { this.scheduler.isPaused = false; },
         async collectOnce({ onStart = () => {} } = {}) { onStart(); },
         updateConfig() {}, dispose() {}, readSnapshot: () => store.read(), ...service,
         requiredKeys(page) {
-          return Object.entries(require('../src/services/collection-demand').collectionDemand(configStore.getCurrent(), { statusBarAvailable:!remote, processes:this.processDemand }))
+          return Object.entries(require('../src/services/collection-demand').collectionDemand(configStore.getCurrent(), { statusBarAvailable:!remote }))
             .filter(([key, enabled]) => enabled && (key !== 'processes' || page === 'proc')).map(([key]) => key);
         },
       };

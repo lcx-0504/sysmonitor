@@ -8,11 +8,6 @@ const { sshTransportOptions } = require('./collection-policy');
 const { MetricHistory } = require('../core/metric-history');
 const { FrameClock } = require('../core/frame-clock');
 
-function processesSettled(snapshot) {
-  const partition = snapshot.processes;
-  return !!partition && (partition.value != null || !!partition.lastError);
-}
-
 class MonitorSession {
   constructor({ id = LOCAL_DEVICE_ID, host = null, transport = null, configStore,
     isPaused = null, chartClock, onUpdate = () => {}, onLog = () => {}, serviceOptions = {}, createService = (options) => new MonitorService(options) }) {
@@ -35,7 +30,6 @@ class MonitorSession {
         this.sampleUpdates = frames;
         if (emit) this.notify();
       } });
-    this.processesPending = false;
     this.requiredSince = 0;
     this.requiredSequence = -1;
     this.loadError = null;
@@ -103,14 +97,6 @@ class MonitorSession {
     if (paused) this.pause();
     else this.resume();
   }
-  setProcessDemand(demanded) {
-    if (this.service.processDemand === demanded) return;
-    this.service.setProcessDemand(demanded);
-    this.processesPending = demanded;
-    if (!this.presentedSnapshot) return;
-    this.projectSnapshot({ ...this.presentedSnapshot, processes: this.service.readSnapshot().processes });
-    this.notify();
-  }
   updateConfig() {
     const config = this.configStore.getCurrent();
     this.frameClock.flush();
@@ -134,9 +120,6 @@ class MonitorSession {
   acceptInitialSnapshot(snapshot) {
     if ((!this.ready && this.hasInitialSample(snapshot)) || [...this.waiters].some(waiter => this.hasInitialSample(snapshot, waiter))) {
       this.acceptSnapshot(snapshot);
-    } else if (this.processesPending && this.model && this.state === 'connected' && processesSettled(snapshot)) {
-      this.projectSnapshot({ ...this.presentedSnapshot, processes: snapshot.processes });
-      this.notify();
     }
   }
 
@@ -156,7 +139,6 @@ class MonitorSession {
   }
 
   projectSnapshot(snapshot) {
-    if (processesSettled(snapshot)) this.processesPending = false;
     this.presentedSnapshot = snapshot;
     this.model = buildMonitorViewModel(snapshot, this.configStore.getCurrent().disk);
     this.metricHistory.syncSources(this.model, this.frameClock.now());
