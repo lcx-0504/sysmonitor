@@ -26,15 +26,9 @@ function normalizeValue(value, definition, fallback) {
   return value;
 }
 
-const normalizeStatusBarConfig = value => normalizeValue(value, CONFIGURATION_SCHEMA.statusBar, DEFAULT_CONFIG.statusBar);
-const normalizeGpuConfig = value => normalizeValue(value, CONFIGURATION_SCHEMA.statusBar.properties.gpu, DEFAULT_CONFIG.statusBar.gpu);
-const normalizeDiskConfig = value => normalizeValue(value, CONFIGURATION_SCHEMA.disk, DEFAULT_CONFIG.disk);
-const normalizeDisplayConfig = value => normalizeValue(value, CONFIGURATION_SCHEMA.display, DEFAULT_CONFIG.display);
-const normalizeServerConfig = value => normalizeValue(value, CONFIGURATION_SCHEMA.servers, DEFAULT_CONFIG.servers);
-
 function normalizeConfig(value = {}) {
   const raw = isObject(value) ? value : {};
   return { ...raw, ...Object.fromEntries(Object.entries(CONFIGURATION_SCHEMA).map(([key, definition]) => [key, normalizeValue(raw[key], definition, DEFAULT_CONFIG[key])])) };
 }
 
-module.exports = { normalizeConfig, normalizeDiskConfig, normalizeDisplayConfig, normalizeGpuConfig, normalizeStatusBarConfig, normalizeServerConfig };
+module.exports = { normalizeConfig };

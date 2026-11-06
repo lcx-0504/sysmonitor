@@ -36,17 +36,14 @@ function formatDuration(milliseconds) {
 }
 
 const formatBytesPerSecond = (value) => formatRate(value);
-const formatBytesPerSecondShort = (value) => formatRate(value, { compact: true });
 const formatMemoryBytes = (value) => formatSize(value);
 const formatDiskBytes = (value) => formatSize(value, { compact: true });
 
 module.exports = {
   formatSize,
   formatSizePair,
-  formatRate,
   formatDuration,
   formatBytesPerSecond,
-  formatBytesPerSecondShort,
   formatDiskBytes,
   formatMemoryBytes,
 };

@@ -7,6 +7,11 @@ const { effectiveTimeouts } = require('./collection-policy');
 const { MetricHistory } = require('../core/metric-history');
 const { FrameClock } = require('../core/frame-clock');
 
+function processesSettled(snapshot) {
+  const partition = snapshot.processes;
+  return !!partition && (partition.value != null || !!partition.lastError);
+}
+
 class MonitorSession {
   constructor({ id = 'local', host = null, transport = null, configStore, language,
     isPaused = null, chartClock, onUpdate = () => {}, onLog = () => {}, serviceOptions = {}, createService = (options) => new MonitorService(options) }) {
@@ -26,6 +31,7 @@ class MonitorSession {
     this.frameClock = new FrameClock({ periodMilliseconds:configStore.getCurrent().refreshInterval * 1000, now:chartClock,
       historyWindowMilliseconds:() => configStore.getCurrent().display.sparkMinutes * 60000,
       capture:(times, readyAt) => this.captureChartFrames(times, readyAt), publish:(frames, emit) => { this.sampleUpdates = frames; if (emit) this.notify(); } });
+    this.processesPending = false;
     this.requiredSince = 0;
     this.requiredSequence = -1;
     this.loadError = null;
@@ -52,37 +58,47 @@ class MonitorSession {
     this.loadError = null;
     if (state === 'connected' && !this.isPaused()) this.metricHistory.resume();
     else this.metricHistory.stop(this.frameClock.now(), { gap: false });
-    if (state === 'connected' && this.running && !this.retryTask) this.resume({ force: true });
+    if (state === 'connected' && this.running && !this.retryTask) this.resume();
     else if (state !== 'connected') this.service.pause();
     this.settleWaiters();
     this.notify();
   }
 
-  resume({ force = false } = {}) {
+  resume() {
     if (this.disposed) return;
     this.running = true;
     this.metricHistory.resume();
+    if (this.transport) this.transport.setIdle(false);
     if (this.transport && this.state !== 'connected') {
       this.transport.connect().catch(() => {});
       this.notify();
       return;
     }
-    this.service.resume({ force });
+    this.service.resume({ force: true });
     if (!this.ready && !this.requiredKeys().length) this.acceptSnapshot(this.service.readSnapshot());
     if (this.hasInitialFrame && !this.frameClock.running) this.startChartClock();
     this.notify();
   }
 
-  start() { this.resume({ force: true }); }
+  start() { this.resume(); }
   pause() {
     this.stopChartClock();
     this.running = false;
     this.metricHistory.stop(this.frameClock.now());
     this.service.pause();
+    if (this.transport) this.transport.setIdle(true);
     if (this.isPaused()) for (const waiter of this.waiters) waiter.finish(new Error('Monitoring paused'));
     this.notify();
   }
   setPaused(paused) { this.paused = paused; paused ? this.pause() : this.resume(); }
+  setProcessDemand(demanded) {
+    if (this.service.processDemand === demanded) return;
+    this.service.setProcessDemand(demanded);
+    this.processesPending = demanded;
+    if (!this.model) return;
+    this.projectSnapshot({ ...this.presentedSnapshot, processes: this.service.readSnapshot().processes });
+    this.notify();
+  }
   updateConfig() {
     const config = this.configStore.getCurrent();
     this.frameClock.flush();
@@ -112,6 +128,9 @@ class MonitorSession {
   acceptInitialSnapshot(snapshot) {
     if ((!this.ready && this.hasInitialSample(snapshot)) || [...this.waiters].some(waiter => this.hasInitialSample(snapshot, waiter))) {
       this.acceptSnapshot(snapshot);
+    } else if (this.processesPending && this.model && this.state === 'connected' && processesSettled(snapshot)) {
+      this.projectSnapshot({ ...this.presentedSnapshot, processes: snapshot.processes });
+      this.notify();
     }
   }
 
@@ -131,13 +150,10 @@ class MonitorSession {
   }
 
   projectSnapshot(snapshot) {
+    if (processesSettled(snapshot)) this.processesPending = false;
     this.presentedSnapshot = snapshot;
     this.model = buildMonitorViewModel(snapshot, this.language, this.configStore.getCurrent().disk);
     this.metricHistory.syncSources(this.model, this.frameClock.now());
-  }
-
-  captureChartFrame(at) {
-    return this.captureChartFrames([at], at);
   }
 
   captureChartFrames(times, readyAt) {

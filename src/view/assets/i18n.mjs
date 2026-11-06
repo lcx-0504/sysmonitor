@@ -5,6 +5,12 @@ const catalogData = ((module) => {
 var catalogs = {
   en: {
   "configUpgradeFailed": "The settings upgrade could not be saved. Monitoring will continue with the converted settings. Check that your user settings are writable, then reload the window to retry.",
+  "collectionIncomplete": "Collected data is incomplete",
+  "remoteCommandFailed": ({ message }) => (message ? 'Remote command failed: ' + message : 'Remote command failed'),
+  "remoteNotLinux": "The server is not running Linux",
+  "commandOutputTooLarge": "Command output exceeds the size limit",
+  "commandNotFound": ({ message }) => (message ? 'Required command or file not found: ' + message : 'Required command or file not found'),
+  "psUnsupported": "The ps command on this system does not support the required output format (for example, BusyBox ps). Install procps to show processes.",
   "remoteTimeoutUnavailable": ({ host }) => ('Server "'+host+'" has no usable timeout command. Monitoring will continue with local timeouts; remote commands may remain running after a timeout.'),
   "connectionAndCollection": "Connection and collection",
   "refreshIntervalLabel": "Refresh interval",
@@ -219,6 +225,12 @@ var catalogs = {
 },
   'zh-CN': {
   "configUpgradeFailed": "设置升级未能保存，监控将继续使用转换后的设置。请检查用户设置是否可写，并在修复后重载窗口重试。",
+  "collectionIncomplete": "采集结果不完整",
+  "remoteCommandFailed": ({ message }) => (message ? '远程命令执行失败：' + message : '远程命令执行失败'),
+  "remoteNotLinux": "服务器不是 Linux 系统",
+  "commandOutputTooLarge": "命令输出超过大小上限",
+  "commandNotFound": ({ message }) => (message ? '缺少所需的命令或文件：' + message : '缺少所需的命令或文件'),
+  "psUnsupported": "此系统的 ps 命令不支持所需的输出格式（例如 BusyBox 版本），无法显示进程。请安装 procps。",
   "connectionAndCollection": "连接与采集",
   "remoteTimeoutUnavailable": ({ host }) => ('服务器「'+host+'」没有可用的 timeout 命令。监控将继续使用本地超时，超时后远端采集命令可能仍在运行。'),
   "refreshIntervalLabel": "刷新间隔",
@@ -433,6 +445,12 @@ var catalogs = {
 },
   'zh-TW': {
   "configUpgradeFailed": "設定升級未能儲存，監控將繼續使用轉換後的設定。請檢查使用者設定是否可寫入，並在修復後重新載入視窗重試。",
+  "collectionIncomplete": "採集結果不完整",
+  "remoteCommandFailed": ({ message }) => (message ? '遠端命令執行失敗：' + message : '遠端命令執行失敗'),
+  "remoteNotLinux": "伺服器不是 Linux 系統",
+  "commandOutputTooLarge": "命令輸出超過大小上限",
+  "commandNotFound": ({ message }) => (message ? '缺少所需的命令或檔案：' + message : '缺少所需的命令或檔案'),
+  "psUnsupported": "此系統的 ps 命令不支援所需的輸出格式（例如 BusyBox 版本），無法顯示程序。請安裝 procps。",
   "connectionAndCollection": "連線與採集",
   "remoteTimeoutUnavailable": ({ host }) => ('伺服器「'+host+'」沒有可用的 timeout 命令。監控將繼續使用本機逾時，逾時後遠端採集命令可能仍在執行。'),
   "refreshIntervalLabel": "重新整理間隔",
@@ -673,10 +691,11 @@ function createTranslator(language) {
 
 function localizeError(error, language) {
   if (!error) return '';
-  const keys = { ETIMEDOUT:'collectionTimeout', EBUSY:'collectionBusy',
+  const keys = { ETIMEDOUT:'collectionTimeout', EBUSY:'collectionBusy', EINCOMPLETE:'collectionIncomplete',
+    EREMOTE:'remoteCommandFailed', EPLATFORM:'remoteNotLinux', EMAXBUFFER:'commandOutputTooLarge', ENOENT:'commandNotFound', PS_UNSUPPORTED:'psUnsupported',
     GPU_OCCUPANCY_UNAVAILABLE:'gpuOccupancyUnavailable', GPU_IDENTITY_UNAVAILABLE:'gpuIdentityUnavailable' };
   const key = typeof error === 'object' && keys[error.code];
-  return key ? createTranslator(language)(key) : String(typeof error === 'object' ? error.message || '' : error);
+  return key ? createTranslator(language)(key, { message: String(error.message || '').trim() }) : String(typeof error === 'object' ? error.message || '' : error);
 }
 
 if (typeof module !== 'undefined') var catalogs = require('./catalogs');

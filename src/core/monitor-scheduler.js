@@ -51,7 +51,14 @@ class MonitorScheduler {
     this.timer = setInterval(() => this.tick(), this.refreshIntervalMilliseconds);
   }
 
-  addRunner(runner) { this.runners.push(runner); }
+  addRunner(runner) {
+    runner.cadenceCycles = this.cadenceCycles(runner);
+    this.runners.push(runner);
+  }
+
+  cadenceCycles(runner) {
+    return Math.max(1, Math.ceil((runner.minimumIntervalMilliseconds || 0) / this.refreshIntervalMilliseconds));
+  }
 
   setRunnerDemand(runner, resultKeys, { refresh = true } = {}) {
     if (!runner.setDemand(resultKeys)) return;
@@ -60,7 +67,7 @@ class MonitorScheduler {
 
   refreshRunner(runner) {
     runner.invalidate({ reason: 'Collection configuration changed' });
-    runner.nextDueAt = 0;
+    runner.markDue();
     return this.queueRefresh(runner);
   }
 
@@ -84,10 +91,13 @@ class MonitorScheduler {
     return request.promise;
   }
 
-  tick() {
+  tick({ advance = true } = {}) {
     if (this.isPaused || this.isCollectingOnce) return;
     const now = this.clock();
-    for (const runner of this.activeRunners) runner.startIfDue(now);
+    for (const runner of this.activeRunners) {
+      if (advance) runner.advanceCycle();
+      runner.startIfDue();
+    }
     this.onTick(now);
   }
 
@@ -96,7 +106,7 @@ class MonitorScheduler {
     this.signalRunnerChange();
     this.stop();
     this.isPaused = false;
-    this.tick();
+    this.tick({ advance: false });
     this.startTimer();
   }
 
@@ -146,9 +156,7 @@ class MonitorScheduler {
 
   setRefreshInterval(refreshIntervalMilliseconds) {
     this.refreshIntervalMilliseconds = refreshIntervalMilliseconds;
-    for (const runner of this.runners) {
-      runner.setCadence(Math.max(runner.minimumCadenceMilliseconds || 0, refreshIntervalMilliseconds));
-    }
+    for (const runner of this.runners) runner.cadenceCycles = this.cadenceCycles(runner);
     if (!this.isPaused) this.start();
   }
 

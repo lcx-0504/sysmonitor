@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { COLLECTION_ENV, timeoutError } = require('../core/collection-context');
 const dispatcher = fs.readFileSync(path.join(__dirname, 'dispatcher.sh'), 'utf8');
+const DIAGNOSTIC_LIMIT = 16000;
 
 function shellQuote(value) { return "'" + String(value).replace(/'/g, "'\\''") + "'"; }
 
@@ -19,6 +20,7 @@ class SshChannel {
     this.request = null;
     this.connection = null;
     this.startup = { stdout: '', stderr: '' };
+    this.stderrTail = '';
   }
 
   connect() {
@@ -37,11 +39,11 @@ class SshChannel {
         child[stream].on('data', (chunk) => this.receive(stream, chunk));
       }
       child.on('error', (error) => { this.close(error); if (!child.pid) this.markExited(); });
-      child.on('exit', (code) => {
-        this.close(new Error(this.startup.stderr.trim() || 'SSH exited (' + code + ')'));
+      child.once('close', (code) => {
+        const stderr = this.ready ? this.stderrTail : this.startup.stderr;
+        this.close(new Error(stderr.trim() || 'SSH exited (' + code + ')'));
         this.markExited();
       });
-      child.once('close', () => this.markExited());
       child.stdin.on('error', (error) => this.close(error));
       child.stdin.write('SYSMON_PREFIX=' + shellQuote(this.prefix) + '; SYSMON_REQUIRE_LINUX=' + (this.requireLinux ? '1' : '0') + '; eval ' + shellQuote(dispatcher) + '\n');
     });
@@ -50,7 +52,7 @@ class SshChannel {
   receive(stream, chunk) {
     if (this.closed) return;
     if (!this.ready) {
-      this.startup[stream] = (this.startup[stream] + chunk).slice(-16000);
+      this.startup[stream] = (this.startup[stream] + chunk).slice(-DIAGNOSTIC_LIMIT);
       if (stream !== 'stdout') return;
       if (this.startup.stdout.includes(this.prefix + 'NONLINUX\n')) {
         this.close(Object.assign(new Error('Remote host is not Linux'), { code: 'EPLATFORM' }));
@@ -70,6 +72,7 @@ class SshChannel {
       handshake.resolve();
       return;
     }
+    if (stream === 'stderr') this.stderrTail = (this.stderrTail + chunk).slice(-DIAGNOSTIC_LIMIT);
     const request = this.request;
     if (!request) return;
     const output = request[stream];
@@ -121,6 +124,7 @@ class SshChannel {
     if (request.stdout.code === null || request.stderr.code === null) return;
     if (request.stdout.code !== request.stderr.code) { this.close(new Error('Invalid SSH exit status')); return; }
     this.request = null;
+    this.stderrTail = '';
     const stdout = request.stdout.text, stderr = request.stderr.text, code = request.stdout.code;
     if (code === 0) request.resolve({ stdout, stderr });
     else if (this.timeoutAvailable && [124, 137].includes(code)) {

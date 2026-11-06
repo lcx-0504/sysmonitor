@@ -37,7 +37,7 @@ test('disabling a module removes a pending configuration refresh from one-shot w
   const scheduler=new MonitorScheduler({refreshIntervalMilliseconds:2000,onTick() {}});
   scheduler.pause(); t.after(()=>scheduler.dispose());
   let release;
-  const runner={enabled:true,idle:new Promise(resolve=>{release=resolve;}),invalidate() {},run() {assert.fail('disabled refresh');}};
+  const runner={enabled:true,idle:new Promise(resolve=>{release=resolve;}),invalidate() {},markDue() {},run() {assert.fail('disabled refresh');}};
   const oldRefresh=scheduler.refreshRunner(runner);
   runner.enabled=false;
   await scheduler.refreshRunner(runner);
@@ -51,7 +51,7 @@ test('disabling a module while a retry waits for it immediately releases the hea
   scheduler.pause(); t.after(()=>scheduler.dispose());
   let rejectIdle;
   const oldIdle=new Promise((_,reject)=>{rejectIdle=reject;});
-  const gpu={enabled:true,idle:oldIdle,invalidate() {},whenIdle:()=>oldIdle,run() {assert.fail('disabled GPU run');}};
+  const gpu={enabled:true,idle:oldIdle,invalidate() {},markDue() {},whenIdle:()=>oldIdle,run() {assert.fail('disabled GPU run');}};
   let processRuns=0;
   scheduler.addRunner(gpu);
   scheduler.addRunner({enabled:true,invalidate() {},whenIdle:async()=>{},run:async()=>{processRuns++;}});
@@ -63,80 +63,95 @@ test('disabling a module while a retry waits for it immediately releases the hea
 });
 
 test('MonitorScheduler uses one tick for due runners and pauses all collection', () => {
-  let now = 0; let starts = 0; let renders = 0;
-  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 2000, clock: () => now, onTick: () => { renders += 1; } });
-  scheduler.addRunner({ cadenceSource: 'refreshInterval', cadenceMilliseconds: 2000, startIfDue: () => { starts += 1; }, setCadence(value) { this.cadenceMilliseconds = value; }, invalidate() {} });
+  let starts = 0; let renders = 0;
+  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 2000, onTick: () => { renders += 1; } });
+  scheduler.addRunner({ minimumIntervalMilliseconds: 10000, advanceCycle() {}, startIfDue: () => { starts += 1; }, invalidate() {} });
+  assert.equal(scheduler.runners[0].cadenceCycles, 5);
   scheduler.tick(); scheduler.pause(); scheduler.tick();
   assert.equal(starts, 1); assert.equal(renders, 1);
-  scheduler.setRefreshInterval(5000);
-  assert.equal(scheduler.runners[0].cadenceMilliseconds, 5000);
+  scheduler.setRefreshInterval(4000);
+  assert.equal(scheduler.runners[0].cadenceCycles, 3);
   scheduler.dispose();
 });
 
+const flush = () => new Promise(setImmediate);
 
-test('running regular collectors keep their next due time while disk collection is idle', (t) => {
+async function advanceTimers(t, milliseconds) {
+  for (let elapsed = 0; elapsed < milliseconds; elapsed += 100) {
+    t.mock.timers.tick(100);
+    await flush();
+  }
+}
+
+function timedRunner(key, starts, { minimumIntervalMilliseconds = 0, duration = () => 300 } = {}) {
+  return new CollectorRunner({ key, minimumIntervalMilliseconds, snapshotStore: new SnapshotStore(), timeoutMilliseconds: 60000,
+    collector: { collect() {
+      starts.push(Date.now());
+      return new Promise(resolve => setTimeout(() => resolve(key === 'diskTopology' ? [] : {}), duration(starts.length)));
+    } } });
+}
+
+test('due collectors follow scheduler cycles rather than timer timestamps', async t => {
+  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 2000, clock: () => 0, onTick() {} });
+  t.after(() => scheduler.dispose());
+  const starts = { cpu: 0, diskTopology: 0 };
+  for (const [key, minimum] of [['cpu', 0], ['diskTopology', 10000]]) {
+    scheduler.addRunner(new CollectorRunner({ key, minimumIntervalMilliseconds: minimum, snapshotStore: new SnapshotStore(), timeoutMilliseconds: 1000, clock: () => 0,
+      collector: { async collect() { starts[key]++; return key === 'cpu' ? {} : []; } } }));
+  }
+  scheduler.start(); await flush();
+  for (let cycle = 1; cycle <= 10; cycle++) { scheduler.tick(); await flush(); }
+  assert.deepEqual(starts, { cpu: 11, diskTopology: 3 });
+});
+
+test('running regular collectors keep their cadence while disk collection is idle', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 0 });
   const starts = { cpu: [], disk: [] };
   const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 2000, onTick() {} });
-  for (const [key, cadenceMilliseconds] of [['cpu', 2000], ['disk', 10000]]) {
-    scheduler.addRunner({ nextDueAt: 0, isRunning: false,
-      startIfDue(now) {
-        if (this.isRunning || now < this.nextDueAt) return;
-        starts[key].push(now); this.isRunning = true; this.nextDueAt = now + cadenceMilliseconds;
-        setTimeout(() => { this.isRunning = false; }, 300);
-      }, invalidate() {},
-    });
-  }
-  scheduler.start();
-  for (let second = 0; second < 10; second++) t.mock.timers.tick(1000);
+  t.after(() => scheduler.dispose());
+  scheduler.addRunner(timedRunner('cpu', starts.cpu));
+  scheduler.addRunner(timedRunner('diskTopology', starts.disk, { minimumIntervalMilliseconds: 10000 }));
+  scheduler.start(); await flush();
+  await advanceTimers(t, 10000);
   assert.deepEqual(starts.cpu, [0, 2000, 4000, 6000, 8000, 10000]);
   assert.deepEqual(starts.disk, [0, 10000]);
-  scheduler.dispose();
 });
 
-
-test('disk collection waits for a global tick after its minimum interval', (t) => {
-  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 0 });
+test('disk collection waits for a global tick after its minimum interval', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 0 });
   const starts = { cpu: [], disk: [] };
   const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 8000, onTick() {} });
-  for (const [key, minimum] of [['cpu', 0], ['disk', 10000]]) {
-    scheduler.addRunner({ nextDueAt: 0, minimumCadenceMilliseconds: minimum, cadenceMilliseconds: Math.max(8000, minimum),
-      setCadence(value) { this.nextDueAt += value - this.cadenceMilliseconds; this.cadenceMilliseconds = value; },
-      startIfDue(now) { if (now < this.nextDueAt) return; starts[key].push(now); this.nextDueAt = now + this.cadenceMilliseconds; }, invalidate() {} });
-  }
-  scheduler.start();
-  t.mock.timers.tick(8000);
+  t.after(() => scheduler.dispose());
+  scheduler.addRunner(timedRunner('cpu', starts.cpu));
+  scheduler.addRunner(timedRunner('diskTopology', starts.disk, { minimumIntervalMilliseconds: 10000 }));
+  scheduler.start(); await flush();
+  await advanceTimers(t, 8000);
   assert.deepEqual(starts.cpu, [0, 8000]);
   assert.deepEqual(starts.disk, [0]);
-  t.mock.timers.tick(2000);
+  await advanceTimers(t, 2000);
   assert.deepEqual(starts.disk, [0]);
-  t.mock.timers.tick(6000);
+  await advanceTimers(t, 6000);
   assert.deepEqual(starts.disk, [0, 16000]);
   scheduler.setRefreshInterval(15000);
-  assert.equal(scheduler.runners[1].cadenceMilliseconds, 15000);
-  t.mock.timers.tick(15000);
+  assert.equal(scheduler.runners[1].cadenceCycles, 1);
+  await flush();
+  assert.deepEqual(starts.disk, [0, 16000]);
+  await advanceTimers(t, 15000);
   assert.deepEqual(starts.disk, [0, 16000, 31000]);
-  scheduler.pause(); t.mock.timers.tick(30000);
+  scheduler.pause(); await advanceTimers(t, 30000);
   assert.equal(starts.disk.length, 3);
-  scheduler.dispose();
 });
 
-test('a slow collector skips occupied ticks and rejoins the common cadence', t => {
+test('a slow collector skips occupied ticks and rejoins the common cadence', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 0 });
   const starts = { resources: [], gpu: [], disk: [] }, published = [];
   const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 8000, onTick: now => published.push(now) });
   t.after(() => scheduler.dispose());
-  for (const [key, cadence] of [['resources', 8000], ['gpu', 8000], ['disk', 10000]]) {
-    scheduler.addRunner({ nextDueAt: 0, isRunning: false, invalidate() {},
-      startIfDue(now) {
-        if (this.isRunning || now < this.nextDueAt) return;
-        starts[key].push(now); this.nextDueAt = now + cadence; this.isRunning = true;
-        setTimeout(() => { this.isRunning = false; }, key === 'resources' && starts[key].length === 1 ? 9000 : 300);
-      },
-    });
-  }
-  scheduler.start();
-  for (let second = 0; second < 24; second++) t.mock.timers.tick(1000);
+  scheduler.addRunner(timedRunner('cpu', starts.resources, { duration: count => count === 1 ? 9000 : 300 }));
+  scheduler.addRunner(timedRunner('accelerators', starts.gpu));
+  scheduler.addRunner(timedRunner('diskTopology', starts.disk, { minimumIntervalMilliseconds: 10000 }));
+  scheduler.start(); await flush();
+  await advanceTimers(t, 24000);
   assert.deepEqual(starts.resources, [0, 16000, 24000]);
   assert.deepEqual(starts.gpu, [0, 8000, 16000, 24000]);
   assert.deepEqual(starts.disk, [0, 16000]);

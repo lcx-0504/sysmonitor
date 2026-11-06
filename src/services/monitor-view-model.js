@@ -43,13 +43,13 @@ function buildGpuModels(acceleratorData, processes, current = true) {
   return acceleratorData.devices.map((device) => {
     const availability = getAcceleratorAvailability(occupiedDevices.has(device.deviceKey), occupancyComplete);
     return {
-    idx: device.nativeIndex, name: device.name, uuid: device.providerDeviceId,
+    idx: device.nativeIndex, name: device.name,
     displayName: displayDeviceName(device.name), isMine: currentUserDeviceKeys.has(device.deviceKey),
-    util: optionalNumber(device.utilizationPercent), memUsed: Number.isFinite(device.memory.usedBytes) ? Math.round(device.memory.usedBytes / 1048576) : null, memTotal: Number.isFinite(device.memory.totalBytes) ? Math.round(device.memory.totalBytes / 1048576) : null,
-    memUsedStr: formatSize(device.memory.usedBytes), memTotalStr: formatSize(device.memory.totalBytes),
+    util: optionalNumber(device.utilizationPercent),
     memPairStr: formatSizePair(device.memory.usedBytes, device.memory.totalBytes),
     memPct: Number.isFinite(device.memory.usedBytes) && Number.isFinite(device.memory.totalBytes) ? roundedPercent(device.memory.usedBytes, device.memory.totalBytes) : null,
-    users: [...(gpuUsers.get(device.deviceKey) || new Map())].map(([name, usedBytes]) => ({ name, usedBytes, usedStr: formatSize(usedBytes, { compact: true }), percent: Number.isFinite(usedBytes) ? roundedPercent(usedBytes, device.memory.totalBytes) : null })).sort((left, right) => numeric(right.usedBytes) - numeric(left.usedBytes) || left.name.localeCompare(right.name)),
+    users: [...(gpuUsers.get(device.deviceKey) || new Map())].sort(([leftName, leftBytes], [rightName, rightBytes]) => numeric(rightBytes) - numeric(leftBytes) || leftName.localeCompare(rightName))
+      .map(([name, usedBytes]) => ({ name, usedStr: formatSize(usedBytes, { compact: true }), percent: Number.isFinite(usedBytes) ? roundedPercent(usedBytes, device.memory.totalBytes) : null })),
     temp: optionalNumber(device.temperatureCelsius), power: device.power ? { draw: Number.isFinite(device.power.drawWatts) ? device.power.drawWatts.toFixed(0) : '--', limit: Number.isFinite(device.power.limitWatts) ? device.power.limitWatts.toFixed(0) : '--' } : null,
     deviceKey: device.deviceKey, availability, isIdle: availability === 'idle',
   }; });
@@ -58,8 +58,8 @@ function buildGpuModels(acceleratorData, processes, current = true) {
 function buildProcessRows(processes, acceleratorData) {
   const allProcessRows = processes.map((processInfo) => {
     const usages = (acceleratorData.usagesByPid.get(processInfo.pid) || []).filter((usage) => usage.identityKnown !== false && (!usage.processKey || usage.processKey === processInfo.processKey));
-    const gpus = usages.map((usage) => ({ idx: usage.nativeIndex, vram: Number.isFinite(usage.memoryUsedBytes) ? Math.round(usage.memoryUsedBytes / 1048576) : null, memTotal: Number.isFinite(usage.memoryTotalBytes) ? Math.round(usage.memoryTotalBytes / 1048576) : null, vramStr: formatSize(usage.memoryUsedBytes, { compact: true }), memTotalStr: formatSize(usage.memoryTotalBytes, { compact: true }), pct: Number.isFinite(usage.memoryUsedBytes) && Number.isFinite(usage.memoryTotalBytes) ? roundedPercent(usage.memoryUsedBytes, usage.memoryTotalBytes) : null, mappingStatus: usage.mappingStatus }));
-    return { pid: processInfo.pid, processKey: processInfo.processKey, user: processInfo.userName, cpu: processInfo.cpuUsagePercent, cpuWhole: processInfo.cpuWhole, mem: processInfo.memoryUsedBytes, memStr: formatSize(processInfo.memoryUsedBytes), memPct: processInfo.memoryUsagePercent, name: processInfo.processName, cmd: processInfo.commandLine, gpus, vram: gpus.reduce((sum, usage) => sum + usage.vram, 0) };
+    const gpus = usages.map((usage) => ({ idx: usage.nativeIndex, vram: Number.isFinite(usage.memoryUsedBytes) ? Math.round(usage.memoryUsedBytes / 1048576) : null, vramStr: formatSize(usage.memoryUsedBytes, { compact: true }), memTotalStr: formatSize(usage.memoryTotalBytes, { compact: true }), pct: Number.isFinite(usage.memoryUsedBytes) && Number.isFinite(usage.memoryTotalBytes) ? roundedPercent(usage.memoryUsedBytes, usage.memoryTotalBytes) : null, mappingStatus: usage.mappingStatus }));
+    return { pid: processInfo.pid, processKey: processInfo.processKey, user: processInfo.userName, cpu: processInfo.cpuUsagePercent, cpuWhole: processInfo.cpuWhole, mem: processInfo.memoryUsedBytes, memStr: formatSize(processInfo.memoryUsedBytes), memPct: processInfo.memoryUsagePercent, name: processInfo.processName, cmd: processInfo.commandLine, gpus, vram: gpus.reduce((sum, usage) => sum + usage.vram, 0), session: processInfo.session || null };
   });
   return allProcessRows;
 }
@@ -110,9 +110,6 @@ function buildMonitorViewModel(snapshot, language, diskConfig = {}) {
       const hasValue = partition?.value != null;
       return [key, {
         state: partition?.status === 'disabled' ? 'disabled' : partition?.lastError ? hasValue ? 'stale' : partition.status === 'unavailable' ? 'unavailable' : 'error' : hasValue ? 'ready' : 'loading',
-        available: hasValue, sequence: partition?.collectedSequence || 0,
-        sampledAt: partition?.collectedAt ?? null,
-        error: partition?.lastError || null,
         revision: [partition?.status, partition?.collectedSequence || 0, partition?.failureSequence || 0].join(':'),
       }];
     })),
@@ -123,13 +120,12 @@ function buildMonitorViewModel(snapshot, language, diskConfig = {}) {
       } },
       memory: { available: available('memory'), usagePercent: available('memory') ? optionalNumber(memory.usagePercent) : null, usedText: available('memory') ? formatMemoryBytes(memory.usedBytes) : '--', availableText: available('memory') ? formatMemoryBytes(memory.availableBytes) : '--', totalText: available('memory') ? formatMemoryBytes(memory.totalBytes) : '--' },
       gpus: devices,
-      network: { available: available('network'), receiveBytesPerSecond: receive, transmitBytesPerSecond: transmit, receiveText: formatBytesPerSecond(receive), transmitText: formatBytesPerSecond(transmit), totalText: formatBytesPerSecond(receive !== null && transmit !== null ? receive + transmit : null) },
+      network: { receiveBytesPerSecond: receive, transmitBytesPerSecond: transmit, receiveText: formatBytesPerSecond(receive), transmitText: formatBytesPerSecond(transmit), totalText: formatBytesPerSecond(receive !== null && transmit !== null ? receive + transmit : null) },
       sshTraffic: ssh.isSsh ? { isSsh: true, uploadBytesPerSecond: optionalNumber(ssh.clientUploadBytesPerSecond), downloadBytesPerSecond: optionalNumber(ssh.clientDownloadBytesPerSecond), uploadText: formatBytesPerSecond(ssh.clientUploadBytesPerSecond), downloadText: formatBytesPerSecond(ssh.clientDownloadBytesPerSecond), latencyText: formatDuration(ssh.latencyMilliseconds) } : { isSsh: false },
       disks, diskIo: {
-        available: available('diskIo'),
         readBytesPerSecond: read, writeBytesPerSecond: write,
         readText: read !== null ? formatBytesPerSecond(read) : '--', writeText: write !== null ? formatBytesPerSecond(write) : '--',
-        totalBytesPerSecond: read !== null && write !== null ? read + write : null, totalText: read !== null && write !== null ? formatBytesPerSecond(read + write) : '--',
+        totalText: read !== null && write !== null ? formatBytesPerSecond(read + write) : '--',
       },
     },
     processes: processRows,

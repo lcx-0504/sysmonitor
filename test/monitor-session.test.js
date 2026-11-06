@@ -2,14 +2,17 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createSessionFixture } = require('./session-fixture');
+const { resourceCommandRunner } = require('./resource-fixture');
+
+const captureFrame = session => session.captureChartFrames([Date.now()], Date.now());
 
 test('paused one-shot samples are acknowledged without consuming the resume gap', t => {
   let now = 0; t.mock.method(Date, 'now', () => now);
   const fixture = createSessionFixture(); t.after(() => fixture.session.dispose());
-  fixture.commit(); fixture.session.captureChartFrame(Date.now()); now = 1000; fixture.session.setPaused(true);
+  fixture.commit(); captureFrame(fixture.session); now = 1000; fixture.session.setPaused(true);
   now = 2000; fixture.values.memory.usagePercent = 50; fixture.commit(['memory']);
   now = 10000; fixture.session.setPaused(false); fixture.commit(['cpu']);
-  now = 11000; fixture.values.memory.usagePercent = 60; fixture.commit(['memory']); fixture.session.captureChartFrame(Date.now());
+  now = 11000; fixture.values.memory.usagePercent = 60; fixture.commit(['memory']); captureFrame(fixture.session);
   assert.deepEqual(fixture.session.history.filter(sample => sample.source === 'memory').map(sample => [sample.t, sample.gapBefore]), [[0, false], [10000, true], [11000, false]]);
 });
 
@@ -79,7 +82,7 @@ test('unpublished failures do not leak through chart frames or view hydration', 
   fixture.commit();
   fixture.store.fail('diskIo', Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }));
   fixture.session.acceptInitialSnapshot(fixture.store.read());
-  fixture.session.captureChartFrame(Date.now());
+  captureFrame(fixture.session);
   assert.deepEqual(fixture.session.snapshotMessage(true).status.failures, []);
   assert.equal(fixture.session.model.sources.diskIo.state, 'ready');
   fixture.publish();
@@ -94,6 +97,7 @@ test('paused one-shot collection publishes only after its active modules settle'
   const session = new MonitorSession({ configStore: { getCurrent: () => config }, language: 'en', serviceOptions: { isSsh: false } });
   t.after(() => session.dispose());
   session.paused = true;
+  session.setProcessDemand(true);
   let finishMemory, finishProcesses;
   session.service.runners.find(runner => runner.key === 'resources').collector = {
     collect: () => new Promise(resolve => { finishMemory = resolve; }),
@@ -125,7 +129,7 @@ for (const remote of [false, true]) {
     assert.equal(fixture.session.snapshotMessage(true).viewModel, null);
     const ready = fixture.session.waitForInitialSample();
     fixture.commit(['accelerators']);
-    fixture.session.captureChartFrame(Date.now());
+    captureFrame(fixture.session);
     await ready;
     assert.equal(fixture.session.ready, true);
     assert.equal(updates.at(-1).viewModel.performance.cpu.usagePercent, 12);
@@ -139,7 +143,7 @@ test('direct and SSH services use identical collector deadlines and command budg
   const direct = new MonitorService(options);
   const ssh = new MonitorService({ ...options, commandRunner: { dispose() {} }, fileReader: {}, systemInfo: {} });
   try {
-    const policy = (service) => service.runners.map((runner) => [runner.key, runner.timeoutMilliseconds, runner.cadenceMilliseconds, runner.collector.timeoutMilliseconds]);
+    const policy = (service) => service.runners.map((runner) => [runner.key, runner.timeoutMilliseconds, runner.cadenceCycles]);
     assert.deepEqual(policy(ssh), policy(direct));
   } finally { direct.dispose(); ssh.dispose(); }
 });
@@ -219,7 +223,7 @@ test('manual retry excludes a previous in-flight failure and waits for the new r
   fixture.commit();
   let failPrevious;
   let attempts = 0;
-  const runner = new CollectorRunner({ key: 'processes', snapshotStore: fixture.store, cadenceMilliseconds: 2000, timeoutMilliseconds: 1000,
+  const runner = new CollectorRunner({ key: 'processes', snapshotStore: fixture.store, timeoutMilliseconds: 1000,
     onSettled: () => fixture.publish(),
     collector: { async collect() {
       attempts++;
@@ -294,8 +298,8 @@ test('an NVML failure completes the first round while healthy resources remain u
   assert.equal(fixture.session.ready, true);
   assert.equal(fixture.session.model.performance.cpu.usagePercent, 12);
   assert.equal(fixture.session.model.sources.accelerators.state, 'error');
-  assert.match(fixture.session.model.sources.accelerators.error.message, /NVML/);
   assert.equal(fixture.session.viewState().failures[0].key, 'accelerators');
+  assert.match(fixture.session.viewState().failures[0].message, /NVML/);
 });
 
 test('failed initial CPU and memory queries remain unknown rather than zero', (t) => {
@@ -353,10 +357,10 @@ test('a long pause preserves the chart history when monitoring resumes', (t) => 
   const fixture = createSessionFixture();
   t.after(() => fixture.session.dispose());
   fixture.commit();
-  fixture.session.captureChartFrame(Date.now());
+  captureFrame(fixture.session);
   now = 3000;
   fixture.commit();
-  fixture.session.captureChartFrame(Date.now());
+  captureFrame(fixture.session);
   fixture.session.setPaused(true);
   now += 3600000;
   fixture.session.setPaused(false);
@@ -411,12 +415,15 @@ test('real service completion publishes the complete first snapshot before the n
   };
   const mounts = ['/', '/data', '/nfs-one', '/nfs-two'].map((target, index) => ({ target, fstype: index < 2 ? 'ext4' : 'nfs', size: 1000, used: 400, avail: 600, 'use%': '40%' }));
   let cpuReads = 0;
+  const readFile = async (file) => file === '/proc/stat' ? `cpu ${++cpuReads * 10} 0 10 80 0 0 0 0\ncpu0 1 0 1 8\ncpu1 1 0 1 8\ncpu2 1 0 1 8\ncpu3 1 0 1 8\n` : files[file];
+  const resources = resourceCommandRunner(readFile);
   const session = new MonitorSession({
     configStore: { getCurrent: () => normalizeConfig({}) }, language: 'en',
     serviceOptions: {
-      fileReader: { readFile: async (file) => file === '/proc/stat' ? `cpu ${++cpuReads * 10} 0 10 80 0 0 0 0\ncpu0 1 0 1 8\ncpu1 1 0 1 8\ncpu2 1 0 1 8\ncpu3 1 0 1 8\n` : files[file] },
+      fileReader: { readFile },
       systemInfo: { coreCount: async () => 4, totalMemoryBytes: async () => 1024000 },
-      commandRunner: { dispose() {}, async execFile(command) {
+      commandRunner: { dispose() {}, async execFile(command, args) {
+        if (command === 'sh' && args[1].includes('__SYSMON_RESOURCE_')) return resources.execFile(command, args);
         if (command === 'nvidia-smi') throw Object.assign(new Error('no GPU'), { code: 'ENOENT' });
         if (command === 'findmnt') return { stdout: JSON.stringify({ filesystems: mounts }) };
         return { stdout: '' };

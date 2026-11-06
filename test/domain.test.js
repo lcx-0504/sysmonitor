@@ -29,7 +29,6 @@ const { parseProcessName } = require('../src/domain/process');
 const { getAcceleratorAvailability } = require('../src/domain/accelerator-availability');
 const {
   formatBytesPerSecond,
-  formatBytesPerSecondShort,
   formatDiskBytes,
   formatMemoryBytes,
   formatDuration,
@@ -62,7 +61,6 @@ test('size, rate and duration formatters use consistent binary units and one dec
   assert.equal(formatBytesPerSecond(1024), '1.0 K/s');
   assert.equal(formatBytesPerSecond(1048576), '1.0 M/s');
   assert.equal(formatBytesPerSecond(1073741824), '1.0 G/s');
-  assert.equal(formatBytesPerSecondShort(1024), '1.0K/s');
   assert.equal(formatMemoryBytes(1073741824), '1.0 G');
   assert.equal(formatDiskBytes(1099511627776), '1.0T');
   assert.equal(formatSize(0), '0.0 K');

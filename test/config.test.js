@@ -41,7 +41,7 @@ test('timeout defaults, validation, and shared module budgets', () => {
   assert.equal(policy.diskTopology.timeoutMilliseconds, 120000);
   assert.equal(policy.processes.timeoutMilliseconds, 120000);
   assert.equal(policy.accelerators.timeoutMilliseconds, 120000);
-  assert.equal(policy.diskTopology.cadenceMilliseconds, 10000);
+  assert.equal(policy.diskTopology.minimumIntervalMilliseconds, 10000);
   config.timeouts.enabled = false;
   assert.equal(collectionPolicy(config).resources.timeoutMilliseconds, 10000);
   assert.equal(collectionPolicy(config).accelerators.timeoutMilliseconds, 30000);
@@ -345,12 +345,14 @@ test('ConfigStore writes normalized values globally and does not write during re
 test('ConfigStore restores dirty keys after a failed write and always releases writing state', async () => {
   let shouldFail = true;
   const errors = [];
+  const written = [];
   const vscode = {
     workspace: {
       getConfiguration() {
         return {
           inspect: () => undefined,
-          update: async () => {
+          update: async (key) => {
+            written.push(key);
             if (shouldFail) throw new Error('write failed');
           },
         };
@@ -361,12 +363,13 @@ test('ConfigStore restores dirty keys after a failed write and always releases w
   const configStore = new ConfigStore({ vscode, onError: (error) => errors.push(error)});
   updateSetting(configStore, 'refreshInterval', 5);
   await assert.rejects(configStore.flush(), /write failed/);
-  assert.equal(configStore.isWriting, false);
-  assert.equal(configStore.dirtyKeys.has('refreshInterval'), true);
+  assert.equal(configStore.getSaveState().status, 'error');
 
   shouldFail = false;
   await configStore.flush();
-  assert.equal(configStore.dirtyKeys.size, 0);
+  assert.equal(configStore.getSaveState().status, 'saved');
+  await configStore.flush();
+  assert.deepEqual(written, ['refreshInterval', 'refreshInterval']);
   assert.deepEqual(errors.map(error => error.message), ['write failed']);
   configStore.dispose();
 });
@@ -391,13 +394,14 @@ test('ConfigStore serializes updates made while a write is pending', async () =>
   assert.deepEqual(writes.map((write) => write.value), [3]);
   writes[0].finish();
   await new Promise(setImmediate);
-  assert.equal(store.isWriting, true);
+  assert.equal(store.getSaveState().status, 'saving');
   assert.deepEqual(writes.map((write) => write.value), [3, 7]);
   writes[1].finish();
   await secondFlush;
   assert.equal(stored.refreshInterval, 7);
-  assert.equal(store.isWriting, false);
-  assert.equal(store.dirtyKeys.size, 0);
+  assert.equal(store.getSaveState().status, 'saved');
+  await store.flush();
+  assert.deepEqual(writes.map((write) => write.value), [3, 7]);
   store.dispose();
 });
 
@@ -438,11 +442,10 @@ test('ConfigStore waits for all writes to settle and retries only failed keys', 
   const flush = store.flush();
   const rejected = assert.rejects(flush, /write failed/);
   await new Promise(setImmediate);
-  assert.equal(store.isWriting, true);
+  assert.equal(store.getSaveState().status, 'saving');
   assert.equal(store.flush(), flush);
   finishDisplay();
   await rejected;
-  assert.deepEqual([...store.dirtyKeys], ['refreshInterval']);
   shouldFail = false;
   await store.flush();
   assert.deepEqual(written, ['refreshInterval', 'display', 'refreshInterval']);

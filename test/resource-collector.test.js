@@ -1,20 +1,59 @@
 'use strict';
 const assert=require('node:assert/strict');
+const fs=require('node:fs');
 const test=require('node:test');
-const {ResourceCollector,RESOURCE_COMMAND,RESOURCE_FILES}=require('../src/collectors/resource-collector');
+const {ResourceCollector}=require('../src/collectors/resource-collector');
+const {CommandRunner}=require('../src/core/command-runner');
+const {resourceCommandRunner}=require('./resource-fixture');
+
+const files={ '/proc/stat':'cpu 10 0 10 80\ncpu0 1 0 1 8\n', '/proc/loadavg':'1 2 3 1/10 5\n',
+  '/proc/meminfo':'MemTotal: 1000 kB\nMemAvailable: 400 kB\n',
+  '/proc/net/dev':'Inter-| Receive | Transmit\nface | bytes\neth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n',
+  '/proc/diskstats':'8 0 sda 0 0 10 0 0 0 20 0 0 0 0 0\n' };
 
 test('an unavailable optional route file retains all four resource outputs and selects available interfaces', async () => {
-  const files={ '/proc/stat':'cpu 10 0 10 80\ncpu0 1 0 1 8\n', '/proc/loadavg':'1 2 3 1/10 5\n',
-    '/proc/meminfo':'MemTotal: 1000 kB\nMemAvailable: 400 kB\n',
-    '/proc/net/dev':'Inter-| Receive | Transmit\nface | bytes\neth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n',
-    '/proc/diskstats':'8 0 sda 0 0 10 0 0 0 20 0 0 0 0 0\n' };
-  const reader={ readFile:async path=>{ if(path==='/proc/net/route')throw Object.assign(new Error('missing route'),{code:'ENOENT'});return files[path];} };
-  const collector=new ResourceCollector({fileReader:reader});
-  const value=await collector.collect();
+  const runner=resourceCommandRunner(async path=>{ if(path==='/proc/net/route')throw Object.assign(new Error('missing route'),{code:'ENOENT'});return files[path];});
+  const value=await new ResourceCollector({commandRunner:runner}).collect();
   assert.deepEqual(Object.keys(value),['cpu','memory','network','diskIo']);
   assert.deepEqual(value.network.interfaces,['eth0']); assert.equal(value.memory.usagePercent,60);
-  const stdout=RESOURCE_FILES.map((path,index)=>'__SYSMON_RESOURCE_'+index+'__\n'+(files[path]||'')+'\n').join('')+'__SYSMON_RESOURCE_6__\n';
-  const remote=new ResourceCollector({commandRunner:{execFile:async()=>({stdout})}});
-  assert.deepEqual((await remote.collect()).network.interfaces,['eth0']);
-  assert.match(RESOURCE_COMMAND,/cat '\/proc\/net\/route' 2>\/dev\/null \|\| :/);
+  assert.match(runner.commands[0],/cat '\/proc\/net\/route' 2>\/dev\/null \|\| :/);
+});
+
+test('network and disk rates use the server uptime midpoint of each sample', async () => {
+  const samples=[['100.00','100.20',100,10],['102.00','102.20',500,30]];
+  let index=0;
+  const collector=new ResourceCollector({keys:['network','diskIo'],commandRunner:{async execFile(){
+    const [started,finished,bytes,sectors]=samples[index++];
+    return {stdout:'__SYSMON_RESOURCE_0__\nInter-| Receive | Transmit\nface | bytes\neth0: '+bytes+' 0 0 0 0 0 0 0 '+bytes+' 0 0 0 0 0 0 0\n\n'
+      +'__SYSMON_RESOURCE_1__\nIface Destination Gateway Flags\neth0 00000000 0 0003\n\n'
+      +'__SYSMON_RESOURCE_2__\n8 0 sda 0 0 '+sectors+' 0 0 0 0 0 0 0 0 0\n\n'
+      +'__SYSMON_RESOURCE_3__\n'+started+' '+finished+'\n'};
+  }}});
+  await collector.collect();
+  const value=await collector.collect();
+  assert.equal(value.network.receiveBytesPerSecond,200);
+  assert.equal(value.diskIo.readBytesPerSecond,20*512/2);
+});
+
+test('a resource sample without its uptime interval is incomplete', async () => {
+  const collector=new ResourceCollector({keys:['memory'],commandRunner:{execFile:async()=>({stdout:'__SYSMON_RESOURCE_0__\nMemTotal: 1000 kB\nMemAvailable: 400 kB\n\n__SYSMON_RESOURCE_1__\n'})}});
+  await assert.rejects(collector.collect(),{code:'EINCOMPLETE'});
+});
+
+test('memory falls back to free, buffer and cache pages without MemAvailable', async () => {
+  const meminfo='MemTotal: 1000 kB\nMemFree: 200 kB\nBuffers: 50 kB\nCached: 150 kB\nSwapCached: 999 kB\n';
+  const value=await new ResourceCollector({keys:['memory'],commandRunner:resourceCommandRunner(async()=>meminfo)}).collect();
+  assert.deepEqual(value.memory,{totalBytes:1024000,availableBytes:409600,usedBytes:614400,usagePercent:60});
+  const incomplete=new ResourceCollector({keys:['memory'],commandRunner:resourceCommandRunner(async()=>'MemTotal: 1000 kB\nMemFree: 200 kB\n')});
+  await assert.rejects(incomplete.collect(),{code:'EINCOMPLETE'});
+});
+
+test('the shared resource command reads live Linux files', { skip:!fs.existsSync('/proc/uptime') }, async t => {
+  const runner=new CommandRunner(); t.after(()=>runner.dispose());
+  const collector=new ResourceCollector({commandRunner:runner});
+  await collector.collect();
+  await new Promise(resolve=>setTimeout(resolve,50));
+  const value=await collector.collect();
+  assert.ok(Number.isFinite(value.memory.usagePercent));
+  assert.ok(value.network.interfaces.length===0||Number.isFinite(value.network.receiveBytesPerSecond));
 });

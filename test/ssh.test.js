@@ -9,6 +9,7 @@ const test = require('node:test');
 const { listSshHosts, parseWords } = require('../src/ssh/ssh-config');
 const { SshTransport } = require('../src/ssh/ssh-transport');
 const { SshChannel } = require('../src/ssh/ssh-channel');
+const { resourceCommandRunner } = require('./resource-fixture');
 
 async function waitFor(check) {
   for (let attempt = 0; attempt < 150; attempt++) {
@@ -128,8 +129,8 @@ test('a large disk scan leaves SSH pool capacity available for CPU collection', 
     let cpuReads = 0;
     const reader = { readFile: (file) => transport.execFile('printf', ['%s', file === '/proc/stat'
       ? `cpu ${++cpuReads * 10} 2 3 4 5 6 7 8\ncpu0 1 2 3 4 5 6 7 8\n` : '1.0 2.0 3.0 1/100 123']).then(({ stdout }) => stdout) };
-    const cpu = new CollectorRunner({ key: 'resources', grouped:true, resultKeys:['cpu'], collector: new ResourceCollector({ fileReader:reader,keys:['cpu'] }),
-      snapshotStore: store, cadenceMilliseconds: 2000, timeoutMilliseconds: 250 });
+    const cpu = new CollectorRunner({ key: 'resources', grouped:true, resultKeys:['cpu'], collector: new ResourceCollector({ commandRunner:resourceCommandRunner(reader.readFile),keys:['cpu'] }),
+      snapshotStore: store, timeoutMilliseconds: 250 });
     await cpu.run();
     const values = await disks;
     assert.equal(store.read().cpu.status, 'fresh');

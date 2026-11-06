@@ -16,7 +16,6 @@ function parseNvidiaCards(raw) {
       memory: { usedBytes: toBytes(memoryUsed), totalBytes: toBytes(memoryTotal) },
       temperatureCelsius: Number.isFinite(Number.parseInt(temperature, 10)) ? Number.parseInt(temperature, 10) : null,
       power: Number.isFinite(Number.parseFloat(powerDraw)) ? { drawWatts: Number.parseFloat(powerDraw), limitWatts: Number.parseFloat(powerLimit) } : null,
-      capabilities: { utilization: true, memory: true, temperature: true, power: Number.isFinite(Number.parseFloat(powerDraw)), processes: true, cudaVisibility: true },
     };
   });
 }

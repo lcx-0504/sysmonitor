@@ -89,4 +89,4 @@ function parseMountInfo(raw, diskConfig) {
   return [...new Map(mounts.map((mount) => [mount.mountPath, mount])).values()].filter((mount) => !shouldExclude(mount.fileSystemType, mount.mountPath, diskConfig));
 }
 
-module.exports = { DISK_PRESETS, normalizeMountRules, parseDfOutput, parseFindmntOutput, parseMountInfo, parseRules, shouldExclude, diskSelectionSignature };
+module.exports = { DISK_PRESETS, parseDfOutput, parseFindmntOutput, parseMountInfo, parseRules, shouldExclude, diskSelectionSignature };

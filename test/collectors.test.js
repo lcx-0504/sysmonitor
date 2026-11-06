@@ -4,7 +4,17 @@ const test = require('node:test');
 const { parseDefaultRouteInterfaces, parseNetworkCounters, parseProcessOutput } = require('../src/domain/linux-parsers');
 const { parseNvidiaCards, parseNvidiaProcesses } = require('../src/accelerators/nvidia-provider');
 const { NvidiaProvider } = require('../src/accelerators/nvidia-provider');
-const { parseSshByteCounters, SshTrafficCollector } = require('../src/collectors/ssh-traffic-collector');
+const { SshTrafficCollector } = require('../src/collectors/ssh-traffic-collector');
+const { resourceCommandFiles, resourceCommandRunner } = require('./resource-fixture');
+
+async function sshSamples(outputs, target, options = {}) {
+  let round = 0;
+  const collector = new SshTrafficCollector({ isSsh: true, ...options, ...(typeof target === 'string' ? { clientIp: target } : { connectionInfo: () => target }),
+    commandRunner: { async execFile() { round++; return { stdout: timedSshOutput(outputs[round - 1], round) }; } } });
+  const results = [];
+  for (let index = 0; index < outputs.length; index++) results.push(await collector.collect());
+  return results;
+}
 
 test('SSH collection makes one query per round and matches IPv6 endpoints on a custom port', async () => {
   const {CollectorRunner}=require('../src/core/collector-runner');
@@ -17,7 +27,7 @@ test('SSH collection makes one query per round and matches IPv6 endpoints on a c
     return {stdout:`__SYSMON_SSH_SAMPLE_START__ ${seconds}\n0 0 [2001:db8::2]:2222 [2001:db8::1]:42000\n cubic rtt:8 bytes_sent:${calls*200} bytes_received:${calls*100}\n__SYSMON_SSH_SAMPLE_END__ ${seconds}\n`};
   }}});
   const store=new SnapshotStore();
-  const runner=new CollectorRunner({key:'sshTraffic',collector,snapshotStore:store,cadenceMilliseconds:2000,timeoutMilliseconds:1000});
+  const runner=new CollectorRunner({key:'sshTraffic',collector,snapshotStore:store,timeoutMilliseconds:1000});
   await runner.run();await runner.idle;
   assert.equal(calls,1);assert.equal(store.read().sshTraffic.value.clientDownloadBytesPerSecond,null);
   assert.equal(store.read().sshTraffic.value.latencyMilliseconds,8);
@@ -25,10 +35,11 @@ test('SSH collection makes one query per round and matches IPv6 endpoints on a c
   assert.equal(calls,2);assert.equal(store.read().sshTraffic.value.clientDownloadBytesPerSecond,100);
 });
 
-test('SSH loopback traffic counts the server socket without adding the client socket again', () => {
+test('SSH loopback traffic counts the server socket without adding the client socket again', async () => {
   const connection={serverIp:'127.0.0.1',serverPort:22,clientIp:'127.0.0.1',clientPort:50576};
-  const raw='0 0 127.0.0.1:22 127.0.0.1:50576\n cubic rtt:1 bytes_sent:100 bytes_received:20\n0 0 127.0.0.1:50576 127.0.0.1:22\n cubic rtt:2 bytes_sent:20 bytes_received:100\n';
-  assert.deepEqual(parseSshByteCounters(raw,[connection]),{serverSentBytes:100,serverReceivedBytes:20,latencyMilliseconds:1});
+  const raw=(server, client)=>`0 0 127.0.0.1:22 127.0.0.1:50576\n cubic rtt:1 bytes_sent:${server} bytes_received:${server / 5}\n0 0 127.0.0.1:50576 127.0.0.1:22\n cubic rtt:2 bytes_sent:${client / 5} bytes_received:${client}\n`;
+  const [, second] = await sshSamples([raw(100, 100), raw(300, 1000)], [connection]);
+  assert.deepEqual([second.clientDownloadBytesPerSecond, second.clientUploadBytesPerSecond, second.latencyMilliseconds], [200, 40, 1]);
 });
 
 test('GPU cards survive process-query failure and deadline expiry with unknown occupancy', async () => {
@@ -43,7 +54,7 @@ test('GPU cards survive process-query failure and deadline expiry with unknown o
       throw new Error('process query unavailable');
     }}});
     const store=new SnapshotStore();
-    const runner=new CollectorRunner({key:'accelerators',collector:new AcceleratorCollector({providers:[provider]}),snapshotStore:store,cadenceMilliseconds:2000,timeoutMilliseconds:20});
+    const runner=new CollectorRunner({key:'accelerators',collector:new AcceleratorCollector({providers:[provider]}),snapshotStore:store,timeoutMilliseconds:20});
     await runner.run();
     const value=store.read().accelerators.value;
     assert.equal(value.devices[0].utilizationPercent,70);assert.equal(value.occupancyKnown,false);
@@ -52,9 +63,10 @@ test('GPU cards survive process-query failure and deadline expiry with unknown o
   }
 });
 
-test('SSH latency matches IPv4-mapped socket addresses and RTT without a variance suffix', () => {
+test('SSH latency matches IPv4-mapped socket addresses and RTT without a variance suffix', async () => {
   const raw = '0 0 [::ffff:10.0.0.2]:22 [::ffff:10.0.0.1]:42000\n  cubic rtt:12.5 bytes_sent:100 bytes_received:50\n';
-  assert.equal(parseSshByteCounters(raw, { serverIp: '10.0.0.2', serverPort: 22, clientIp: '10.0.0.1', clientPort: 42000 }).latencyMilliseconds, 12.5);
+  const [sample] = await sshSamples([raw], { serverIp: '10.0.0.2', serverPort: 22, clientIp: '10.0.0.1', clientPort: 42000 });
+  assert.equal(sample.latencyMilliseconds, 12.5);
 });
 const { ResourceCollector } = require('../src/collectors/resource-collector');
 const { NetworkCollector } = require('../src/collectors/network-collector');
@@ -87,22 +99,13 @@ test('capacity query mount metadata omits large overlay options and preserves es
   assert.deepEqual(parseMountInfo(mounts[0].mountInfo, { mountFilter: 'all' }).map(mount => mount.mountPath), ['/data space']);
 });
 
-test('resource collection reads stat once and starts load averages without waiting for stat', async () => {
-  const reads = [];
-  let releaseStat;
-  const reader = { readFile(file) {
-    reads.push(file);
-    if (file === '/proc/stat') return new Promise(resolve => { releaseStat = resolve; });
-    return Promise.resolve('1.0 2.0 3.0 1/100 123');
-  } };
-  const collector = new ResourceCollector({ fileReader:reader, keys:['cpu'] });
-  const collection = collector.collect();
-  assert.deepEqual(reads, ['/proc/stat', '/proc/loadavg']);
-  releaseStat('cpu 1 2 3 4 5 6 7 8\ncpu0 1 2 3 4 5 6 7 8\n');
-  const {cpu:value} = await collection;
+test('resource collection reads stat and load averages in one command', async () => {
+  const runner = resourceCommandRunner(async file => file === '/proc/stat' ? 'cpu 1 2 3 4 5 6 7 8\ncpu0 1 2 3 4 5 6 7 8\n' : '1.0 2.0 3.0 1/100 123');
+  const collector = new ResourceCollector({ commandRunner: runner, keys:['cpu'] });
+  const {cpu:value} = await collector.collect();
   assert.equal(value.coreCount, 1);
   assert.deepEqual(value.loadAverage, { oneMinute: 1, fiveMinutes: 2, fifteenMinutes: 3 });
-  assert.deepEqual(reads, ['/proc/stat', '/proc/loadavg']);
+  assert.deepEqual(runner.commands.map(resourceCommandFiles), [['/proc/stat', '/proc/loadavg']]);
 });
 
 test('unmeasurable overlay mounts are skipped in default and all modes without failing healthy disks', async () => {
@@ -139,7 +142,7 @@ test('stale routes never turn a missing interface into a zero sample and fallbac
   const missing = sample();
   assert.deepEqual(missing.interfaces, []); assert.equal(missing.receiveBytesPerSecond, null); assert.equal(collector.needsWarmup(missing), false);
   device += 'eth1: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n'; now = 2000;
-  const baseline = sample(); assert.equal(collector.needsWarmup(baseline), true); assert.equal(baseline.usedFallbackInterfaces, true);
+  const baseline = sample(); assert.equal(collector.needsWarmup(baseline), true); assert.deepEqual(baseline.interfaces, ['eth1']);
   device = device.replace('eth1: 100', 'eth1: 300'); now = 3000;
   const fresh = sample(); assert.equal(fresh.receiveBytesPerSecond, 200); assert.deepEqual(fresh.interfaces, ['eth1']);
 });
@@ -162,24 +165,45 @@ test('NVIDIA parsers retain stable identity and explicitly mark unmatched proces
   assert.equal(usages.get(11)[0].nativeIndex, null);
 });
 
-test('SSH counters and TCP RTT are parsed for the selected client', () => {
-  const raw = 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:12.5/2.0 bytes_sent:2000 bytes_received:1000\n';
-  assert.deepEqual(parseSshByteCounters(raw, '10.0.0.1'), { serverSentBytes: 2000, serverReceivedBytes: 1000, latencyMilliseconds: 12.5 });
+test('SSH counters and TCP RTT are parsed for the selected client', async () => {
+  const raw = bytes => `ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:12.5/2.0 bytes_sent:${bytes * 2} bytes_received:${bytes}\n`
+    + 'ESTAB 0 0 10.0.0.2:22 10.0.0.9:50000\n cubic rtt:40.0/3.0 bytes_sent:9999 bytes_received:8888\n';
+  const [, second] = await sshSamples([raw(1000), raw(1500)], '10.0.0.1');
+  assert.deepEqual([second.clientDownloadBytesPerSecond, second.clientUploadBytesPerSecond, second.latencyMilliseconds], [1000, 500, 12.5]);
 });
 
-test('local SSH monitoring matches one socket even when clients share an IP', () => {
-  const raw = 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:12.5/2.0 bytes_sent:2000 bytes_received:1000\n'
-    + 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50001\n cubic rtt:40.0/3.0 bytes_sent:9999 bytes_received:8888\n';
+test('local SSH monitoring matches one socket even when clients share an IP', async () => {
+  const raw = bytes => `ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:12.5/2.0 bytes_sent:${bytes * 2} bytes_received:${bytes}\n`
+    + `ESTAB 0 0 10.0.0.2:22 10.0.0.1:50001\n cubic rtt:40.0/3.0 bytes_sent:${bytes * 9} bytes_received:${bytes * 8}\n`;
   const connection = { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 22 };
-  assert.deepEqual(parseSshByteCounters(raw, connection), { serverSentBytes: 2000, serverReceivedBytes: 1000, latencyMilliseconds: 12.5 });
+  const logs = [];
+  const [, second] = await sshSamples([raw(1000), raw(1500)], connection, { onLog: message => logs.push(message) });
+  assert.deepEqual([second.clientDownloadBytesPerSecond, second.clientUploadBytesPerSecond, second.latencyMilliseconds], [1000, 500, 12.5]);
+  assert.deepEqual(logs, []);
+});
+
+test('an unmatched SSH connection tuple falls back to the server port and client address once', async () => {
+  const header = 'Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n';
+  const translated = bytes => header + `0 0 192.168.1.5:2222 10.0.0.1:61000\n cubic rtt:8 bytes_sent:${bytes * 2} bytes_received:${bytes}\n`
+    + '0 0 192.168.1.5:22 10.0.0.1:61001\n cubic rtt:9 bytes_sent:7777 bytes_received:7777\n'
+    + '0 0 192.168.1.5:2222 10.0.0.9:61002\n cubic rtt:9 bytes_sent:7777 bytes_received:7777\n';
+  const exact = bytes => header + `0 0 10.0.0.2:2222 10.0.0.1:50000\n cubic rtt:8 bytes_sent:${bytes * 2} bytes_received:${bytes}\n`;
+  const connection = { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 2222 };
+  const logs = [];
+  const samples = await sshSamples([translated(1000), translated(1500), translated(2000), exact(100), exact(200)], connection, { onLog: message => logs.push(message) });
+  assert.deepEqual(samples.map(sample => sample.clientDownloadBytesPerSecond), [null, 1000, 1000, null, 200]);
+  assert.equal(samples[1].latencyMilliseconds, 8);
+  assert.equal(logs.length, 2);
+  assert.match(logs[0], /exact connection match failed/);
+  assert.match(logs[1], /restored/);
 });
 
 test('SSH collector waits for its own connection tuple before showing local SSH traffic', async () => {
   const connection = { clientIp: '10.0.0.1', clientPort: 50000, serverIp: '10.0.0.2', serverPort: 22 };
   let available = false; let calls = 0;
   const collector = new SshTrafficCollector({
-    isSsh: true, connectionInfo: () => available ? connection : null, timeoutMilliseconds: 8000,
-    commandRunner: { execFile: async (_command, _args, options) => { calls++; assert.equal(options.timeoutMilliseconds, 8000); return { stdout: timedSshOutput('ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n', 1) }; } },
+    isSsh: true, connectionInfo: () => available ? connection : null,
+    commandRunner: { execFile: async () => { calls++; return { stdout: timedSshOutput('ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n', 1) }; } },
   });
   assert.equal((await collector.collect()).isSsh, true);
   assert.equal(calls, 0);
@@ -221,7 +245,8 @@ test('SSH collector requests numeric socket addresses so port 22 can be matched'
     commandRunner: { execFile: async (_command, commandArgs) => { args = commandArgs; return { stdout: timedSshOutput('ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n', 1) }; } },
   });
   const result = await collector.collect();
-  assert.match(args[1], /ss -H -t -i -n state established/);
+  assert.match(args[1], /\bss -t -i -n state established/);
+  assert.doesNotMatch(args[1], /ss -H/);
   assert.equal(result.latencyMilliseconds, 9.1);
 });
 
@@ -333,7 +358,7 @@ test('a deadline during optional GPU identity lookup publishes core metrics with
   } } });
   const store = new SnapshotStore();
   const runner = new CollectorRunner({ key: 'accelerators', collector: new AcceleratorCollector({ providers: [provider] }), snapshotStore: store,
-    timeoutMilliseconds: 20, cadenceMilliseconds: 2000 });
+    timeoutMilliseconds: 20 });
   await runner.run(); await runner.idle;
   assert.equal(store.read().accelerators.status, 'fresh');
   assert.equal(store.read().accelerators.value.devices[0].utilizationPercent, 10);
@@ -356,8 +381,8 @@ test('an empty GPU occupation list needs no process or user identity lookup', as
 
 test('resource collection exposes normalized CPU and memory snapshots', async () => {
   const cpuReads = ['cpu  10 0 10 80 0 0 0 0\ncpu0 1 0 1 8\n', 'cpu  20 0 20 160 0 0 0 0\ncpu0 1 0 1 8\n'];
-  const resources = new ResourceCollector({ keys:['cpu','memory'], fileReader:{readFile:async file =>
-    file === '/proc/stat' ? cpuReads.shift() : file === '/proc/loadavg' ? '1 2 3 1/10 5' : 'MemTotal: 1000 kB\nMemAvailable: 400 kB\n'} });
+  const resources = new ResourceCollector({ keys:['cpu','memory'], commandRunner:resourceCommandRunner(async file =>
+    file === '/proc/stat' ? cpuReads.shift() : file === '/proc/loadavg' ? '1 2 3 1/10 5' : 'MemTotal: 1000 kB\nMemAvailable: 400 kB\n') });
   assert.equal((await resources.collect()).cpu.usagePercent, null);
   const value = await resources.collect();
   assert.equal(value.cpu.usagePercent, 20);
@@ -382,7 +407,7 @@ test('network and disk I/O collectors calculate rates only after a valid baselin
 });
 
 test('process and disk topology collectors use async command adapters', async () => {
-  const processCollector = new ProcessCollector({ commandRunner: { execFile: async () => ({ stdout: '__SYSMON_PROCESSES__ 1 0\n7 root 1.0 2048 Sun Jul 13 12:34:56 2026 /bin/test --flag\n' }) }, osModule: { totalmem: () => 1024 * 1024 * 1024, cpus:() => [0,1,2,3] } });
+  const processCollector = new ProcessCollector({ commandRunner: { execFile: async () => ({ stdout: '__SYSMON_PROCESSES__ 1 0\n7 root 1.0 2048 Sun Jul 13 12:34:56 2026 /bin/test --flag\n__SYSMON_SESSIONS__\n' }) }, osModule: { totalmem: () => 1024 * 1024 * 1024, cpus:() => [0,1,2,3] } });
   assert.equal((await processCollector.collect()).rows[0].processName, 'test');
   let args;
   const topologyCollector = new DiskTopologyCollector({ fileReader: { readFile: async () => mountInfo([{ target: '/data', fstype: 'ext4' }]) }, commandRunner: { execFile: async (_command, commandArgs, options) => { args = options; return { stdout: JSON.stringify({ filesystems: [{ target: '/data', fstype: 'ext4', size: 1024000, used: 512000, avail: 409600, 'use%': '56%' }] }) }; } }, getDiskConfig: () => ({ mountFilter: 'all' }) });
@@ -471,7 +496,7 @@ test('a failed or malformed disk batch retains the entire previous snapshot', as
         throw Object.assign(new Error('capacity command failed: ' + failure), { code: 'EREMOTE' });
       } },
     });
-    const runner = new CollectorRunner({ key: 'diskTopology', collector, snapshotStore: store, cadenceMilliseconds: 10000, timeoutMilliseconds: 1000 });
+    const runner = new CollectorRunner({ key: 'diskTopology', collector, snapshotStore: store, timeoutMilliseconds: 1000 });
     await runner.run(); await runner.idle;
     assert.equal(calls, 2);
     assert.equal(store.read().diskTopology.status, 'stale');
@@ -525,7 +550,7 @@ test('a timed out disk batch keeps previous values and ignores late output', asy
       calls.push(options); return new Promise(resolve => { release = resolve; });
     } },
   });
-  const runner = new CollectorRunner({ key: 'diskTopology', collector, snapshotStore: store, cadenceMilliseconds: 10000, timeoutMilliseconds: 20 });
+  const runner = new CollectorRunner({ key: 'diskTopology', collector, snapshotStore: store, timeoutMilliseconds: 20 });
   await runner.run();
   assert.equal(store.read().diskTopology.lastError.code, 'ETIMEDOUT');
   assert.equal(store.read().diskTopology.value, previous);
@@ -545,12 +570,12 @@ test('excluding a failed target lets the next disk batch recover', async () => {
     getDiskConfig: () => ({ mountFilter: 'custom', customPathExclude: excluded ? '/nfs' : '' }),
     commandRunner: { execFile: async (_command, args, options) => {
       const selected = args.includes('--') ? args.slice(args.indexOf('--') + 1) : queryTargets(options);
-      if (options.input) calls.push(options);
+      if (options?.input) calls.push(options);
       if (selected.includes('/nfs')) throw Object.assign(new Error('capacity query: /nfs: Input/output error'), { code: 'EREMOTE' });
       return { stdout: findmntOutput(mounts.filter(mount => selected.includes(mount.target))) };
     } },
   });
-  const runner = new CollectorRunner({ key: 'diskTopology', collector, snapshotStore: store, cadenceMilliseconds: 10000, timeoutMilliseconds: 1000 });
+  const runner = new CollectorRunner({ key: 'diskTopology', collector, snapshotStore: store, timeoutMilliseconds: 1000 });
   await runner.run(); await runner.idle;
   assert.equal(store.read().diskTopology.value, null);
   assert.equal(store.read().diskTopology.lastError.code, 'EREMOTE');

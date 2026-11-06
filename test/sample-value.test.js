@@ -11,7 +11,7 @@ const { parseNvidiaCards, parseNvidiaProcesses } = require('../src/accelerators/
 const { parseCpuStat, parseMemoryInfo, parseProcessOutput, parseNetworkCounters, parseDiskIoCounters } = require('../src/domain/linux-parsers');
 
 test('numeric fields share missing-value retention while genuine zero values update', () => {
-  const cases = { cpu: ['usagePercent'], memory: ['usagePercent', 'usedBytes', 'availableBytes', 'totalBytes'], network: ['receiveBytesPerSecond', 'transmitBytesPerSecond'], diskIo: ['readBytesPerSecond', 'writeBytesPerSecond'], sshTraffic: ['latencyMilliseconds', 'clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond'] };
+  const cases = { cpu: ['usagePercent'], network: ['receiveBytesPerSecond', 'transmitBytesPerSecond'], diskIo: ['readBytesPerSecond', 'writeBytesPerSecond'], sshTraffic: ['latencyMilliseconds', 'clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond'] };
   for (const [key, fields] of Object.entries(cases)) {
     const store = new SnapshotStore();
     const good = Object.fromEntries(fields.map((field) => [field, 25]));
@@ -27,12 +27,13 @@ test('numeric fields share missing-value retention while genuine zero values upd
   }
 });
 
-test('nested CPU load fields retain independently without mutating the old snapshot', () => {
+test('a missing CPU utilization retains the previous value without mutating the old snapshot', () => {
   const store = new SnapshotStore();
   store.commit('cpu', { usagePercent: 25, coreCount: 8, loadAverage: { oneMinute: 1, fiveMinutes: 2, fifteenMinutes: 3 } });
   const previous = store.read().cpu.value;
-  store.commit('cpu', { usagePercent: null, coreCount: 8, loadAverage: { oneMinute: 0, fiveMinutes: null, fifteenMinutes: NaN } });
-  assert.deepEqual(store.read().cpu.value.loadAverage, { oneMinute: 0, fiveMinutes: 2, fifteenMinutes: 3 });
+  store.commit('cpu', { usagePercent: null, coreCount: 8, loadAverage: { oneMinute: 0, fiveMinutes: 4, fifteenMinutes: 5 } });
+  assert.deepEqual(store.read().cpu.value.loadAverage, { oneMinute: 0, fiveMinutes: 4, fifteenMinutes: 5 });
+  assert.equal(previous.usagePercent, 25);
   assert.equal(previous.loadAverage.oneMinute, 1);
   const view = buildMonitorViewModel(store.read(), 'en');
   assert.equal(view.performance.cpu.usagePercent, 25);
