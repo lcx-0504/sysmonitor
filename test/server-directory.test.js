@@ -32,6 +32,26 @@ test('empty server summaries distinguish disabled metrics, pending samples and f
   assert.deepEqual(directory.rows()[0].metrics,['GPU --/1']);directory.dispose();
 });
 
+test('server rows notify only when a row summary changes', () => {
+  const ready = { state: 'ready' };
+  const device = { host: 'lab', state: 'connected', error: null, model: { sources: { cpu: ready, memory: ready, accelerators: ready }, performance: { cpu: { usagePercent: 10 }, memory: { usagePercent: 20 }, gpus: [] } } };
+  const notifications = [];
+  const directory = new ServerDirectory({ vscode: {}, manager: { get: (id) => (id === 'ssh:lab' ? device : null) }, onChange: (rows, error) => notifications.push([rows.map((row) => row.metrics.join(' ')), error]) });
+  directory.hosts = ['lab'];
+  directory.onDeviceUpdate('ssh:lab', device);
+  directory.onDeviceUpdate('ssh:lab', device);
+  device.model.performance.cpu.usagePercent = 11;
+  directory.onDeviceUpdate('ssh:lab', device);
+  directory.onDeviceUpdate('local', { state: 'connected', host: null, error: null });
+  directory.notify('config unreadable');
+  directory.notify('config unreadable');
+  assert.deepEqual(notifications, [[['CPU 10% RAM 20%'], null], [['CPU 11% RAM 20%'], null], [[], 'config unreadable']]);
+  assert.deepEqual(directory.current(), { hosts: [], error: 'config unreadable' });
+  directory.notify();
+  assert.deepEqual(directory.current().hosts.map((row) => row.metrics), [['CPU 11%', 'RAM 20%']]);
+  directory.dispose();
+});
+
 test('server summaries use the published model until the next snapshot update', async t => {
   const fixture = directoryFixture(t);
   await fixture.transport.connect(); fixture.commit();
@@ -49,8 +69,7 @@ test('monitor opens after a complete rendered sample, including a valid empty GP
   await new Promise(setImmediate);
   fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);
   assert.equal(opened, false);
-  assert.deepEqual(fixture.phases.slice(0, 2), ['connecting', 'connecting']);
-  assert.ok(fixture.phases.includes('loading'));
+  assert.deepEqual(fixture.phases, ['connecting', 'loading']);
   fixture.commit(['accelerators']);
   await action;
   assert.equal(opened, true);

@@ -2,6 +2,7 @@
 
 const path = require('node:path');
 const os = require('node:os');
+const ASSET_ROOT = path.join(__dirname, 'assets');
 let moveQueue = Promise.resolve();
 
 async function getMonitorEditorTitle(vscode) {
@@ -32,8 +33,12 @@ function setMonitorPanelIcon(vscode, panel) {
   };
 }
 
+function monitorWebviewOptions(vscode) {
+  return { enableScripts: true, localResourceRoots: [vscode.Uri.file(ASSET_ROOT)] };
+}
+
 function createMonitorEditorPanel(vscode, title = 'System Monitor') {
-  return vscode.window.createWebviewPanel('sysmonitor.editor', title, vscode.ViewColumn.Active, { enableScripts: true });
+  return vscode.window.createWebviewPanel('sysmonitor.editor', title, vscode.ViewColumn.Active, monitorWebviewOptions(vscode));
 }
 
 function moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError = true } = {}) {
@@ -52,4 +57,4 @@ function moveMonitorPanelToNewWindow(vscode, panel, { disposeOnError = true } = 
   return operation;
 }
 
-module.exports = { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow, getMonitorEditorTitle };
+module.exports = { monitorWebviewOptions, setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWindow, getMonitorEditorTitle };
