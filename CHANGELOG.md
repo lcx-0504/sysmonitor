@@ -24,13 +24,13 @@
 - Fix settings inputs losing focus during automatic saves. Save text fields on blur and switches or selections immediately, preserve independent edits from other views, and provide a retry action for failed saves.
 - Support automatically expanding multiline disk exclusion fields and keep the settings dialog open when its backdrop is clicked.
 - Collapse toolbar actions progressively into an overflow menu based on the available width.
-- Apply server-side command time limits through the system `timeout` tool when available.
+- Apply command time limits through the system `timeout` tool when available, both on monitored servers and for local collection commands, so a timed-out or cancelled command stops together with the processes it started.
 - Keep collection errors visible during a manual retry, with a collecting indicator until results arrive.
 - Report SSH configuration permission and I/O errors instead of displaying an empty server list.
 - Apply monitor settings at User level across windows and automatically migrate renamed settings, including `showVirtualFs` to `hideVirtualFs`.
 - Require VS Code 1.85 or later.
 - Schedule collection by refresh cycles so timing jitter no longer skips rounds. After pausing, resuming, or reconnecting, the first rate and CPU values no longer average over the entire pause. Remote network and disk I/O rates are calculated from server-side sample times.
-- Show the error reported by SSH when an established connection exits, keep only one SSH connection per server while monitoring is paused or stopped by the visible-only refresh option, and terminate the entire process group when a local collection command times out.
+- Show the error reported by SSH when an established connection exits, and keep only one SSH connection per server while monitoring is paused or stopped by the visible-only refresh option.
 - Support systems whose `ss` does not accept `-H` and kernels without `MemAvailable`, report a clear message when `ps` does not support the required output format (for example, BusyBox `ps`), and localize more error messages.
 - Reset the monitor completely when switching devices, so GPU selections no longer carry over from the previous device. Keep clicks on GPU selections and process table headers from being lost during refreshes, stop chart animation and unnecessary rendering while a view is hidden, report copy failures, support keyboard operation for device tabs, context menus, and other controls, and tighten the Webview content security policy.
 
