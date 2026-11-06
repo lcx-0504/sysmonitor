@@ -18,8 +18,9 @@
     "vscode": "^1.85.0"
   },
   "scripts": {
-    "pretest": "node scripts/build-assets.js",
-    "vscode:prepublish": "node scripts/build-assets.js",
+    "build": "node scripts/build-assets.js",
+    "pretest": "node scripts/build-assets.js --check",
+    "vscode:prepublish": "npm run build",
     "test": "node --test test/*.test.js",
     "check": "node scripts/check-syntax.js && npm test",
     "package": "node scripts/package.js"

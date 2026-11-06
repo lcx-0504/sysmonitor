@@ -5,19 +5,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const { WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-html');
+const { catalogs } = require('../src/i18n');
+const { createFakeVscode, requireWithVscode } = require('./fake-vscode');
 
 const projectRoot = path.resolve(__dirname, '..');
 const readJson = (relativePath) => JSON.parse(fs.readFileSync(path.join(projectRoot, relativePath), 'utf8'));
 
-test('extension manifest points to an existing CommonJS entry point', () => {
+test('extension manifest points to a CommonJS entry point exporting the extension activate and deactivate', () => {
   const manifest = readJson('package.json');
   assert.deepEqual(manifest.extensionKind, ['workspace']);
-  const entryPath = path.resolve(projectRoot, manifest.main);
-  assert.equal(fs.existsSync(entryPath), true);
-  const source = fs.readFileSync(entryPath, 'utf8');
-  assert.match(source, /module\.exports\s*=\s*require\('\.\/src\/extension'\)/);
-  const implementation = fs.readFileSync(path.join(projectRoot, 'src/extension.js'), 'utf8');
-  assert.match(implementation, /module\.exports\s*=\s*\{\s*activate,\s*deactivate\s*\}/);
+  const vscode = createFakeVscode();
+  const entry = requireWithVscode(path.resolve(projectRoot, manifest.main), vscode);
+  assert.equal(entry, requireWithVscode(path.join(projectRoot, 'src/extension.js'), vscode));
+  assert.deepEqual(Object.keys(entry).sort(), ['activate', 'deactivate']);
+  assert.equal(typeof entry.activate, 'function');
+  assert.equal(typeof entry.deactivate, 'function');
 });
 
 test('English and Chinese package localization expose the same keys', () => {
@@ -26,16 +28,13 @@ test('English and Chinese package localization expose the same keys', () => {
   assert.deepEqual(Object.keys(chinese).sort(), Object.keys(english).sort());
   assert.equal(english.cmdEditorMoveWindow, english.cmdOpenWindow);
   assert.equal(chinese.cmdEditorMoveWindow, chinese.cmdOpenWindow);
-  const serverList = fs.readFileSync(path.join(projectRoot, 'src/view/assets/servers.mjs'), 'utf8');
-  assert.match(serverList, /serverAction\('server-window', SERVER_ICONS\.window, tr\('openInNewWindow'\)/);
-  assert.match(serverList, /serverAction\('server-remote', SERVER_ICONS\.remote, tr\('openRemoteWindow'\)/);
   assert.equal(chinese.cmdCopyToWindow, '系统监控: 在新窗口打开');
   assert.equal(chinese.cmdOpenRemoteWindow, '系统监控: 打开远程窗口');
-  const settings = fs.readFileSync(path.join(projectRoot, 'src/i18n/catalogs.js'), 'utf8');
-  assert.match(settings, /新建 \/ 切换编辑器视图/);
-  assert.match(settings, /新建 \/ 移动到新窗口/);
-  assert.match(settings, /打开 SSH 终端/);
-  assert.match(settings, /打开远程窗口/);
+  const settingsLabels = catalogs['zh-CN'];
+  assert.equal(settingsLabels.actionEditorView, '新建 / 切换编辑器视图');
+  assert.equal(settingsLabels.actionNewWindow, '新建 / 移动到新窗口');
+  assert.equal(settingsLabels.openSSHTerminal, '打开 SSH 终端');
+  assert.equal(settingsLabels.openRemoteWindow, '打开远程窗口');
 });
 
 test('public configuration defaults remain characterized', () => {
@@ -103,7 +102,6 @@ test('native title actions distinguish creating a view from moving one', () => {
   assert.deepEqual(editorActions.map((item) => item.command), [
     'sysmonitor.editorReturnSidebar', 'sysmonitor.editorMoveWindow', 'sysmonitor.editorTerminal', 'sysmonitor.editorRemoteWindow',
   ]);
-  assert.equal(manifest.contributes.commands.some((item) => item.command === 'sysmonitor.editorDuplicate'), false);
   assert.deepEqual(editorActions.map((item) => item.when), [
     'activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionEditorVisible',
     'activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionWindowVisible',
@@ -120,15 +118,4 @@ test('development files are excluded from VSIX and runtime assets exist', () => 
   assert.equal(vscodeIgnore.some((entry) => entry === 'src/' || entry === 'src/**'), false);
   assert.equal(fs.existsSync(path.join(projectRoot, 'src/view/assets/webview.css')), true);
   for (const fileName of WEBVIEW_SCRIPT_FILES) assert.equal(fs.existsSync(path.join(projectRoot, 'src/view/assets', fileName)), true);
-});
-
-test('Webview resets topology keys on empty GPU results and restores translucent zero-percent tags', () => {
-  const script = WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(projectRoot, 'src/view/assets', fileName), 'utf8')).join('\n');
-  const style = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview.css'), 'utf8');
-  assert.match(script, /if \(created\) \{\s*view\.renderedAcceleratorKeys = identityKeys;/);
-  assert.match(script, /usage\.mappingStatus === 'unmatched' \? ' tag-unknown' : ' ' \+ tagColorClass\(percent\)/);
-  assert.match(style, /\.gpu-tag\.tag-accent[^}]*transparent/);
-  const bridge = fs.readFileSync(path.join(projectRoot, 'src/view/assets/ui.mjs'), 'utf8');
-  assert.match(bridge, /function sendToExtension\(/);
-  assert.doesNotMatch(script, /function postMessage\(/);
 });

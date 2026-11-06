@@ -1,6 +1,8 @@
 'use strict';
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
+const os=require('node:os');
+const path=require('node:path');
 const test=require('node:test');
 const {ResourceCollector}=require('../src/collectors/resource-collector');
 const {CommandRunner}=require('../src/core/command-runner');
@@ -16,7 +18,55 @@ test('an unavailable optional route file retains all four resource outputs and s
   const value=await new ResourceCollector({commandRunner:runner}).collect();
   assert.deepEqual(Object.keys(value),['cpu','memory','network','diskIo']);
   assert.deepEqual(value.network.interfaces,['eth0']); assert.equal(value.memory.usagePercent,60);
-  assert.match(runner.commands[0],/cat '\/proc\/net\/route' 2>\/dev\/null \|\| :/);
+});
+
+// Runs the generated resource command in a real shell against a fixture /proc tree. Each file read advances
+// the fixture uptime by the current step, so the reported interval shows when the command read the uptime.
+function procShell(t, procFiles) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sysmonitor-resources-'));
+  const runner = new CommandRunner();
+  t.after(() => {
+    runner.dispose();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const write = (name, text) => {
+    const file = path.join(root, 'proc', name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  };
+  const step = seconds => fs.writeFileSync(path.join(root, 'step'), String(seconds));
+  for (const [name, text] of Object.entries(procFiles)) write(name, text);
+  step(1);
+  const prelude = 'cat() { command cat "$@"; status=$?; read -r now ignored < "$FIXTURE_ROOT/proc/uptime"; '
+    + 'printf "%s 0\\n" $((now + $(command cat "$FIXTURE_ROOT/step"))) > "$FIXTURE_ROOT/proc/uptime"; return $status; }\n';
+  const commandRunner = { execFile(command, args, options) {
+    const script = prelude + args[1].replaceAll('/proc/', root + '/proc/');
+    return runner.execFile(command, [args[0], script], { ...options, env: { FIXTURE_ROOT: root } });
+  } };
+  return { commandRunner, write, step, remove: name => fs.rmSync(path.join(root, 'proc', name)) };
+}
+
+const netDev = bytes => 'Inter-| Receive | Transmit\nface | bytes\neth0: '+bytes+' 0 0 0 0 0 0 0 '+bytes+' 0 0 0 0 0 0 0\n';
+
+test('the generated resource command brackets its file reads with server uptime readings', async t => {
+  const proc = procShell(t, { uptime: '100 0\n', 'net/dev': netDev(1000), 'net/route': 'Iface Destination Gateway Flags\neth0 00000000 0 0003\n' });
+  const collector = new ResourceCollector({ keys: ['network'], commandRunner: proc.commandRunner });
+  assert.equal((await collector.collect()).network.receiveBytesPerSecond, null);
+  proc.step(3);
+  proc.write('net/dev', netDev(1400));
+  assert.equal((await collector.collect()).network.receiveBytesPerSecond, 100);
+});
+
+test('the generated resource command tolerates only a missing route file', async t => {
+  const proc = procShell(t, { uptime: '100 0\n', ...Object.fromEntries(Object.entries(files).map(([file, text]) => [file.slice('/proc/'.length), text])) });
+  const collector = new ResourceCollector({ commandRunner: proc.commandRunner });
+  const value = await collector.collect();
+  assert.deepEqual(Object.keys(value), ['cpu', 'memory', 'network', 'diskIo']);
+  assert.deepEqual(value.network.interfaces, ['eth0']);
+  assert.equal(value.memory.usagePercent, 60);
+  assert.equal(value.cpu.coreCount, 1);
+  proc.remove('stat');
+  await assert.rejects(collector.collect());
 });
 
 test('network and disk rates use the server uptime midpoint of each sample', async () => {

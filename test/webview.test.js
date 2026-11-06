@@ -4,30 +4,53 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { pathToFileURL } = require('node:url');
 const { getWebviewHtml } = require('../src/view/webview-html');
 const { createTranslator } = require('../src/i18n');
+const { SETTINGS } = require('../src/config/config-schema');
+const { PROTOCOL_VERSION } = require('../src/view/protocol');
+const { createFakeVscode } = require('./fake-vscode');
 
-let modules, state;
+const ASSET_DIRECTORY = path.join(__dirname, '../src/view/assets');
+const readAsset = (file) => fs.readFileSync(path.join(ASSET_DIRECTORY, file), 'utf8');
+const readInitialConfig = (html) => JSON.parse(Buffer.from(html.match(/data-config="([^"]+)"/)[1], 'base64'));
+
+// The static import declarations of every webview module, parsed from source without running it.
+function moduleImports() {
+  return new Map(fs.readdirSync(ASSET_DIRECTORY).filter((file) => file.endsWith('.mjs')).map((file) => {
+    const source = readAsset(file);
+    const declarations = [...source.matchAll(/^import\s+(?:([^;'"]*?)\s+from\s+)?['"]([^'"]+)['"];?/gm)];
+    assert.equal(declarations.length, source.match(/^import\b/gm)?.length || 0, file + ' has an import this test cannot parse');
+    return [file, declarations.map(([, clause = '', specifier]) => {
+      assert.match(specifier, /^\.\/[\w-]+\.mjs$/, file + ' imports ' + specifier);
+      const named = clause.match(/\{([^}]*)\}/);
+      const names = named ? named[1].split(',').map((entry) => entry.trim()).filter(Boolean).map((entry) => entry.split(/\s+as\s+/)[0]) : [];
+      const outside = clause.replace(/\{[^}]*\}/, '').replace(/,/g, ' ').trim();
+      if (outside && !/^\*\s+as\s+\w+$/.test(outside)) names.push('default');
+      return { target: specifier.slice(2), names };
+    })];
+  }));
+}
+
+let modules, state, ui;
 test.before(async () => {
   modules = Object.fromEntries(await Promise.all(
     ['app', 'charts', 'connection', 'layout', 'performance', 'settings', 'navigation', 'servers', 'processes']
       .map(async name => [name, await import('../src/view/assets/' + name + '.mjs')]),
   ));
   ({ state } = await import('../src/view/assets/state.mjs'));
+  ui = await import('../src/view/assets/ui.mjs');
   state.locale = { language: 'zh-CN' };
 });
 
-test('browser modules import without accessing the DOM before initialization', () => {
+test('browser modules import in Node without touching the DOM until they are initialized', () => {
   for (const name of Object.keys(modules)) {
     assert.equal(typeof modules[name]['initialize' + name[0].toUpperCase() + name.slice(1)], 'function');
   }
 });
 
-test('frontend module dependencies form an acyclic graph', () => {
-  const dir = path.join(__dirname, '../src/view/assets');
-  const imports = new Map(fs.readdirSync(dir).filter(file => file.endsWith('.mjs')).map(file => [file,
-    [...fs.readFileSync(path.join(dir, file), 'utf8').matchAll(/from\s+["']\.\/([^"']+)["']/g)].map(match => match[1]),
-  ]));
+test('static check: webview module dependencies form an acyclic graph', () => {
+  const imports = new Map([...moduleImports()].map(([file, declarations]) => [file, declarations.map(({ target }) => target)]));
   const done = new Set();
   function visit(file, stack = []) {
     assert.equal(stack.includes(file), false, [...stack, file].join(' -> '));
@@ -38,11 +61,28 @@ test('frontend module dependencies form an acyclic graph', () => {
   for (const file of imports.keys()) visit(file);
 });
 
+// main.mjs initializes the DOM when it is imported, so the bindings of every module, the entry module
+// included, are checked against the exports of the modules they name. A missing binding would fail module
+// linking in the browser and leave the whole webview blank.
+test('every named import of a webview module, including the entry module, is exported by its target', async () => {
+  const imports = moduleImports();
+  const targets = new Set([...imports.values()].flat().map(({ target }) => target));
+  const exported = new Map();
+  for (const target of targets) {
+    assert.ok(imports.has(target), target + ' does not exist');
+    exported.set(target, new Set(Object.keys(await import(pathToFileURL(path.join(ASSET_DIRECTORY, target))))));
+  }
+  assert.ok(imports.get('main.mjs').length > 0);
+  const missing = [...imports].flatMap(([file, declarations]) => declarations.flatMap(({ target, names }) =>
+    names.filter((name) => !exported.get(target).has(name)).map((name) => `${file} imports ${name} from ${target}`)));
+  assert.deepEqual(missing, []);
+});
+
 test('HTML loads a native module with a nonce, allowed resource origin, and encoded configuration', async () => {
   const html = await getWebviewHtml({
     nonce: 'test', initConfig: { language: 'zh-CN', value: '<script>unsafe</script>' },
     webview: { cspSource: 'https://fixture.invalid', asWebviewUri: () => ({ toString: () => 'https://fixture.invalid/main.mjs' }) },
-    vscode: { Uri: { file: value => value } },
+    vscode: createFakeVscode(),
   });
   assert.match(html, /<script type="module" nonce="test" src="https:\/\/fixture.invalid\/main.mjs"><\/script>/);
   assert.match(html, /script-src 'nonce-test' https:\/\/fixture.invalid/);
@@ -76,17 +116,64 @@ test('GPU footers use finite values and escape process search text', () => {
   assert.match(modules.processes.procSearchStr({ name: 'Task', user: 'User', cmd: 'run', pid: 12, gpus: [{ idx: 3 }] }), /gpu3 gpu 3 #3/);
 });
 
-test('layout retains card minimums, a four-column maximum, and overlay scrollbars', () => {
-  const css = fs.readFileSync(path.join(__dirname, '../src/view/assets/webview.css'), 'utf8');
-  assert.match(css, /150px/);
-  assert.match(css, /gpu/);
-  assert.match(css, /#connection-retry[^}]*secondaryBackground/);
-  assert.match(css, /\.modal-scrollbar/);
-  assert.match(css, /\.device-scrollbar/);
+test('static check: every CSS custom property the scripts read is defined in the stylesheet', () => {
+  const css = readAsset('webview.css');
+  const scripts = fs.readdirSync(ASSET_DIRECTORY).filter((file) => file.endsWith('.mjs')).map(readAsset).join('\n');
+  const read = [...new Set([...scripts.matchAll(/getPropertyValue\(\s*['"](--[\w-]+)['"]/g)].map((match) => match[1]))];
+  assert.ok(read.length > 0);
+  for (const property of read) assert.match(css, new RegExp(property + '\\s*:'), property);
 });
 
-test('the stylesheet relies on one hidden rule, named stacking layers and one reduced-motion block', () => {
-  const css = fs.readFileSync(path.join(__dirname, '../src/view/assets/webview.css'), 'utf8');
+test('static check: every GPU tag colour class that scripts produce has a translucent stylesheet background', () => {
+  const css = readAsset('webview.css');
+  const produced = new Set([0, 70, 90].map(ui.tagColorClass));
+  produced.add('tag-unknown');
+  assert.deepEqual([...produced].sort(), ['tag-accent', 'tag-danger', 'tag-unknown', 'tag-warn']);
+  for (const className of produced) assert.match(css, new RegExp('\\.gpu-tag\\.' + className + '\\b[^{]*\\{[^}]*background:[^;}]*transparent'), className);
+});
+
+test('process GPU tags colour by memory percentage and mark usage without a matching card', () => {
+  const tags = modules.processes.gpuTags({ gpus: [
+    { idx: 0, vramStr: '0.0G', memTotalStr: '80.0G', pct: 0 },
+    { idx: 1, vramStr: '60.0G', memTotalStr: '80.0G', pct: 75 },
+    { idx: 2, vramStr: '76.0G', memTotalStr: '80.0G', pct: 95 },
+    { idx: 3, vramStr: '1.0G', pct: null, mappingStatus: 'unmatched' },
+  ] });
+  assert.deepEqual(tags, [
+    { className: 'gpu-tag tag-accent', text: '#0 0.0G/80.0G 0%' },
+    { className: 'gpu-tag tag-warn', text: '#1 60.0G/80.0G 75%' },
+    { className: 'gpu-tag tag-danger', text: '#2 76.0G/80.0G 95%' },
+    { className: 'gpu-tag tag-unknown', text: '#3 1.0G/— —' },
+  ]);
+  assert.deepEqual(modules.processes.gpuTags({}), []);
+});
+
+test('messages to the extension carry the protocol version and go through the VS Code bridge', () => {
+  const posted = [];
+  const bridge = state.bridge;
+  state.bridge = { postMessage: (message) => posted.push(message) };
+  try {
+    ui.sendToExtension('switchPage', { page: 'proc' });
+  } finally {
+    state.bridge = bridge;
+  }
+  assert.deepEqual(posted, [{ version: PROTOCOL_VERSION, cmd: 'switchPage', page: 'proc' }]);
+});
+
+test('the settings page takes the GPU first-N range from the configuration schema', async () => {
+  const { minimum, maximum, default: initial } = SETTINGS.statusBar.properties.gpu.properties.firstN;
+  const html = await getWebviewHtml({ nonce: 'n', initConfig: { language: 'en' } });
+  assert.deepEqual(readInitialConfig(html).gpuFirstSetting, { default: initial, minimum, maximum });
+});
+
+test('static check: overlay scrollbars float over their content and the retry button uses the theme secondary button colours', () => {
+  const css = readAsset('webview.css');
+  for (const selector of ['.modal-scrollbar', '.device-scrollbar']) assert.match(css, new RegExp(selector.replace('.', '\\.') + ' \\{[^}]*position: absolute'), selector);
+  assert.match(css, /#connection-retry \{[^}]*--vscode-button-secondaryBackground[^}]*--vscode-button-secondaryForeground/);
+});
+
+test('static check: the stylesheet has one [hidden] rule, one !important, z-index only through named layers and one reduced-motion block', () => {
+  const css = readAsset('webview.css');
   assert.equal(css.match(/\[hidden\]/g).length, 1);
   assert.equal(css.match(/!important/g).length, 1);
   assert.doesNotMatch(css, /z-index:\s*\d/);
@@ -104,11 +191,13 @@ test('static labels come from the template and reflect the initial state', async
   assert.match(running, /id="proc-footnote-info" aria-label="为减少 SSH 传输开销/);
 });
 
-test('process footnote reports the row limit, search coverage, and incomplete candidates', () => {
+test('process footnote reports the row limit and search coverage, and shows its info button only for incomplete candidates', () => {
   const footnote = modules.processes.processFootnote;
   const zh = createTranslator('zh-CN');
   assert.equal(footnote({ total: 80, candidates: 80, matched: 80, searching: false }, zh), null);
   assert.deepEqual(footnote({ total: 600, candidates: 287, matched: 287, searching: false }, zh), { text: '显示前 100 个进程', incomplete: true });
+  assert.deepEqual(footnote({ total: 150, candidates: 150, matched: 150, searching: false }, zh), { text: '显示前 100 个进程', incomplete: false });
+  assert.deepEqual(footnote({ total: 150, candidates: 150, matched: 120, searching: true }, zh), { text: '在 150 个进程中搜索到 120 个结果，显示前 100 个。', incomplete: false });
   assert.deepEqual(footnote({ total: 80, candidates: 80, matched: 3, searching: true }, zh), { text: '在 80 个进程中搜索到 3 个结果。', incomplete: false });
   assert.deepEqual(footnote({ total: 600, candidates: 287, matched: 137, searching: true }, zh),
     { text: '在 287 个进程中搜索到 137 个结果，显示前 100 个，搜索结果可能不完全。', incomplete: true });

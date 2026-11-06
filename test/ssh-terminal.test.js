@@ -9,7 +9,8 @@ const { spawnSync } = require('node:child_process');
 const {
   openSshTerminal, processSession, sessionTerminalOptions, quoteShellArgument, quoteRemoteShellArgument,
 } = require('../src/view/ssh-terminal');
-const { MultiMonitorViewProvider } = require('../src/view/multi-monitor-view-provider');
+const { createFakeVscode } = require('./fake-vscode');
+const { createDeviceManager, createMultiProvider } = require('./view-fixture');
 
 const SESSION_NAMES = ['train', 'my session', "it's", "'; touch pwned; '", '$HOME', '${SHELL}', '`id`', '$(id)', 'a\\b', 'trailing\\', '%s %n', '!event', 'semi;colon|pipe&', '会话 ünï'];
 
@@ -48,33 +49,25 @@ function assertAttached(sandbox, session, result, exitCode, label) {
 }
 
 test('SSH terminal launches ssh directly with literal arguments and no local shell command', () => {
-  const created = [];
-  let shown = 0;
-  const terminal = { show: () => shown++, sendText: () => assert.fail('SSH must be the terminal process') };
-  const vscode = { window: { createTerminal: (options) => { created.push(options); return terminal; } } };
-  assert.equal(openSshTerminal(vscode, 'campus', null), terminal);
-  assert.deepEqual(created[0], { name: 'SSH: campus', shellPath: 'ssh', shellArgs: ['campus'] });
+  const vscode = createFakeVscode();
+  const terminal = openSshTerminal(vscode, 'campus', null);
+  assert.equal(terminal, vscode.fake.terminals[0]);
+  assert.deepEqual(terminal.options, { name: 'SSH: campus', shellPath: 'ssh', shellArgs: ['campus'] });
   const config = "/tmp/config path/owner's ssh";
   openSshTerminal(vscode, 'campus', config);
-  assert.deepEqual(created[1], { name: 'SSH: campus', shellPath: 'ssh', shellArgs: ['-F', config, 'campus'] });
-  assert.equal(shown, 2);
+  assert.deepEqual(vscode.fake.terminals[1].options, { name: 'SSH: campus', shellPath: 'ssh', shellArgs: ['-F', config, 'campus'] });
+  assert.deepEqual(vscode.fake.terminals.map((created) => created.shown), [true, true]);
 });
 
-test('SSH shortcut validates the selected host and launches without a monitor preflight', async () => {
-  const created = [];
-  const provider = Object.create(MultiMonitorViewProvider.prototype);
-  provider.serverDirectory = {
-    hasHost: (host) => host === 'campus',
-    runShortcutAction: async (_host, _kind, action) => action(),
-  };
-  provider.vscode = {
-    workspace: { getConfiguration: () => ({ get: () => null }) },
-    window: { createTerminal: (options) => { created.push(options); return { show() {} }; } },
-  };
+test('SSH shortcut validates the selected host and launches without a monitor preflight', async (t) => {
+  const { provider, vscode, manager } = createMultiProvider({ hosts: ['campus'], manager: createDeviceManager({ open: () => assert.fail('a terminal must not open a monitor session') }) });
+  t.after(() => provider.dispose());
+  await provider.refreshHosts();
   await provider.openTerminal('unknown');
-  assert.equal(created.length, 0);
+  assert.equal(vscode.fake.terminals.length, 0);
   await provider.openTerminal('campus');
-  assert.deepEqual(created, [{ name: 'SSH: campus', shellPath: 'ssh', shellArgs: ['campus'] }]);
+  assert.deepEqual(vscode.fake.terminals.map((terminal) => terminal.options), [{ name: 'SSH: campus', shellPath: 'ssh', shellArgs: ['campus'] }]);
+  assert.deepEqual(manager.preparing, []);
 });
 
 test('shell quoting escapes single quotes and keeps every other character literal', () => {

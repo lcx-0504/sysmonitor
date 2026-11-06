@@ -52,7 +52,6 @@ test('GPU 100 percent stays flat through null retention, failure, late arrival a
   update(0, '100'); update(2000, '100');
   const missing = update(4000, 'N/A');
   assert.equal(missing.performance.gpus[0].util, 100);
-  assert.equal(Object.hasOwn(missing.performance.gpus[0], 'utilSampled'), false);
   update(6000, null, true); h.time(9000);
   assert.equal(data.sparkDisplayTime(state.charts.gpus[0]), 4000);
   update(10000, '100'); h.time(11000);

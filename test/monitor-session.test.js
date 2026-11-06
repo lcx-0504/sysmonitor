@@ -545,12 +545,28 @@ test('the device manager applies process demand to existing and later devices', 
   const manager = new DeviceMonitorManager({ localLinux: false,
     configStore: { getSaveState: () => ({ status: 'saved', error: null }), getCurrent: () => normalizeConfig({}) } });
   t.after(() => manager.dispose());
-  const demands = [];
-  manager.devices.set('ssh:a', { setProcessDemand: value => demands.push(['a', value]), dispose() {} });
-  manager.devices.set('ssh:b', { setProcessDemand: value => demands.push(['b', value]), dispose() {} });
-  manager.setProcessDemand(['ssh:b', 'ssh:c']);
-  assert.deepEqual(demands, [['a', false], ['b', true]]);
+  const demands = (...ids) => ids.map(id => manager.get(id).service.processDemand);
   manager.setPaused(true);
-  assert.equal(manager.open('ssh:c').service.processDemand, true);
-  assert.equal(manager.open('ssh:d').service.processDemand, false);
+  manager.sync(['ssh:a', 'ssh:b']);
+  assert.deepEqual(demands('ssh:a', 'ssh:b'), [false, false]);
+  manager.setProcessDemand(['ssh:b', 'ssh:c']);
+  assert.deepEqual(demands('ssh:a', 'ssh:b'), [false, true]);
+  manager.sync(['ssh:a', 'ssh:b', 'ssh:c', 'ssh:d']);
+  assert.deepEqual(demands('ssh:a', 'ssh:b', 'ssh:c', 'ssh:d'), [false, true, true, false]);
+  manager.setProcessDemand([]);
+  assert.deepEqual(demands('ssh:a', 'ssh:b', 'ssh:c', 'ssh:d'), [false, false, false, false]);
+});
+
+test('starting, resuming and reconnecting a session force a resume that resets counter baselines', async t => {
+  const resumes = [];
+  const fixture = createSessionFixture({ remote: true, id: 'ssh:lab', service: { resume(options) { resumes.push(options); } } });
+  t.after(() => fixture.session.dispose());
+  await fixture.transport.connect();
+  assert.deepEqual(resumes, []);
+  fixture.session.start();
+  fixture.session.pause();
+  fixture.session.resume();
+  fixture.transport.emitState('disconnected', new Error('lost'));
+  fixture.transport.emitState('connected');
+  assert.deepEqual(resumes, [{ force: true }, { force: true }, { force: true }]);
 });

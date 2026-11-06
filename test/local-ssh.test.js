@@ -1,43 +1,44 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const path = require('node:path');
 const test = require('node:test');
-const { normalizeNavigation, normalizeEditorNavigation, MultiMonitorViewProvider } = require('../src/view/multi-monitor-view-provider');
+const { ConfigStore } = require('../src/config/config-store');
 const { normalizeConfig } = require('../src/config/normalize-config');
 const { DeviceMonitorManager } = require('../src/services/device-monitor-manager');
+const { createFakeVscode, createMemento } = require('./fake-vscode');
 const { createSessionFixture } = require('./session-fixture');
+const {
+  SIDEBAR_STATE_KEY, readInitialConfig, createDeviceManager, createReadyDevice, createMultiProvider, openSidebar, commandsOf,
+} = require('./view-fixture');
 
-async function sidebarHtml(provider) {
-  const view = { visible: true, webview: { html: '', onDidReceiveMessage() {}, postMessage: async () => true }, onDidDispose() {} };
-  await provider.resolveWebviewView(view);
-  return view.webview.html;
+const campus = (page = 'perf') => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page });
+
+function monitor(t, options) {
+  const result = createMultiProvider(options);
+  t.after(() => result.provider.dispose());
+  return result;
 }
 
-test('residual-process warning copies PIDs and acknowledges without resuming monitoring', async () => {
+async function sidebarHtml(provider, vscode) {
+  return (await openSidebar(provider, vscode, { ready: false })).webview.html;
+}
+
+test('residual-process warning copies PIDs and acknowledges without resuming monitoring', async (t) => {
   const choices = ['复制 PID', '我知道了'];
-  const messages = [], copied = [], broadcasts = [];
+  const vscode = createFakeVscode({ language: 'zh-cn', window: { showWarningMessage: () => choices.shift() } });
+  const { provider, manager } = monitor(t, { vscode, manager: createDeviceManager({ paused: true }) });
+  const view = await openSidebar(provider, vscode);
+  view.messages.length = 0;
   let acknowledged = 0;
-  const provider = Object.create(MultiMonitorViewProvider.prototype);
-  provider.manager = { paused: true, isPaused() { return this.paused; }, setPaused: () => assert.fail('notification must not resume monitoring') };
-  provider.broadcast = (message) => broadcasts.push(message);
-  provider.logger = () => {};
-  provider.vscode = {
-    env: { language: 'zh-cn', clipboard: { writeText: async (text) => copied.push(text) } },
-    window: { showWarningMessage: async (message, ...buttons) => {
-      messages.push(message);
-      assert.deepEqual(buttons, ['复制 PID', '我知道了']);
-      return choices.shift();
-    } },
-  };
   await provider.notifyResidualProcesses('campus', [1, 2, 3, 4, 5], () => acknowledged++);
   assert.equal(acknowledged, 1);
-  assert.equal(provider.manager.paused, true);
-  assert.deepEqual(copied, ['1, 2, 3, 4, 5']);
-  assert.deepEqual(broadcasts, []);
-  assert.equal(messages[0], '远程服务器性能采集多次超时，服务器「campus」有 5 个采集进程在超时或连接断开后仍未退出。监控已自动暂停，通常等待一段时间后这些采集进程会自动退出，但仍建议检查这些进程并按需清理。若服务器性能较低、频繁出现此类问题，建议增加刷新时间间隔（设置->刷新时间）。 PID：1, 2, 3, 4, 5');
+  assert.equal(manager.paused, true);
+  assert.deepEqual(manager.pauseRequests, []);
+  assert.deepEqual(vscode.fake.clipboard, ['1, 2, 3, 4, 5']);
+  assert.deepEqual(view.messages, []);
+  const message = '远程服务器性能采集多次超时，服务器「campus」有 5 个采集进程在超时或连接断开后仍未退出。监控已自动暂停，通常等待一段时间后这些采集进程会自动退出，但仍建议检查这些进程并按需清理。若服务器性能较低、频繁出现此类问题，建议增加刷新时间间隔（设置->刷新时间）。 PID：1, 2, 3, 4, 5';
+  assert.deepEqual(vscode.fake.warnings, [[message, '复制 PID', '我知道了'], [message, '复制 PID', '我知道了']]);
 });
-
 
 test('residual threshold uses the existing global pause for every device', () => {
   const changes = [];
@@ -56,217 +57,147 @@ test('residual threshold uses the existing global pause for every device', () =>
   assert.deepEqual(changes, [true]);
 });
 
-
-test('paused one-shot metrics reach the view without adding a trend point', () => {
+test('paused one-shot metrics reach the view without adding a trend point', async (t) => {
   const id = 'ssh:fixture';
-  const { session: device } = createSessionFixture({ id, paused: true });
-  Object.assign(device, { ready: true, model: { performance: {} }, modelAt: 500 });
-  const provider = new MultiMonitorViewProvider({
-    vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager: { paused: true, isPaused() { return this.paused; }, get: () => device, sync() {}, setConfigFile() {} },
-    configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({ tabs: [id], selected: id, page: 'perf' }) },
-    localLinux: false, loadHosts: async () => [],
+  const fixture = createSessionFixture({ id, paused: true });
+  const device = fixture.session;
+  t.after(() => device.dispose());
+  const vscode = createFakeVscode();
+  const { provider } = monitor(t, {
+    vscode, manager: createDeviceManager({ paused: true, devices: new Map([[id, device]]) }), sidebarState: { tabs: [id], selected: id, page: 'perf' },
   });
-  const messages = [];
-  provider.sidebar = { ready: true, state: provider.sidebarState, target: { visible: true, webview: { postMessage: (message) => messages.push(message) } } };
+  const view = await openSidebar(provider, vscode);
+  view.messages.length = 0;
+  fixture.commit();
   provider.onDeviceUpdate(id, device);
-  const update = messages.find((message) => message.cmd === 'snapshot');
+  const update = commandsOf(view.messages, 'snapshot')[0];
   assert.equal(update.viewModel, device.model);
-  assert.equal(update.sampleTime, 500);
+  assert.equal(update.viewModel.performance.cpu.usagePercent, 12);
+  assert.equal(update.sampleTime, device.modelAt);
   assert.deepEqual(update.samples, []);
   assert.deepEqual(device.chartSamples(), []);
-  provider.dispose();
-  device.dispose();
 });
 
-
-test('changing action switches updates local native titles and all webviews immediately', async () => {
-  const contexts = [];
-  const messages = [];
-  let current = normalizeConfig({});
-  let changed;
-  const provider = new MultiMonitorViewProvider({
-    vscode: {
-      env: { language: 'zh-cn' },
-      commands: { executeCommand: (...args) => contexts.push(args) },
-      workspace: { getConfiguration: () => ({ get: () => null }) },
-    },
-    manager: { paused: false, isPaused() { return this.paused; }, get() { return null; }, sync() {}, setConfigFile() {}, updateConfig() {} },
-    configStore: {
-      getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => current,
-      update(key, changes) { for (const {path, value} of changes) current[key][path[0]][path[1]] = value; changed(); },
-    },
-    workspaceState: { get: () => ({}), update: async () => {} },
-    localLinux: false, loadHosts: async () => [],
+test('changing action switches updates local native titles and all webviews immediately', async (t) => {
+  const vscode = createFakeVscode({ language: 'zh-cn' });
+  const configStore = new ConfigStore({ vscode });
+  const { provider } = monitor(t, { vscode, configStore });
+  const subscription = configStore.onDidChange(() => {
+    provider.updateActionVisibility();
+    provider.pushConfig();
   });
-  changed = () => { provider.manager.updateConfig(); provider.updateActionVisibility(); provider.pushConfig(); };
-  provider.sidebar = { state: provider.sidebarState, ready: true, sidebar: true, target: { visible: true, webview: { postMessage: (message) => messages.push(message) } } };
-  contexts.length = 0;
-  await provider.handleMessage({ version: 1, cmd: 'setConfig', key: 'servers', changes: ['editor','window','terminal','remoteWindow'].map(key => ({ path:['actions',key], value:false })) }, provider.sidebar);
-  assert.deepEqual(contexts.filter(([command, key]) => command === 'setContext' && key.startsWith('sysmonitor.action')), [
-    ['setContext', 'sysmonitor.actionEditorVisible', false],
-    ['setContext', 'sysmonitor.actionWindowVisible', false],
-    ['setContext', 'sysmonitor.actionTerminalVisible', false],
-    ['setContext', 'sysmonitor.actionRemoteWindowVisible', false],
+  t.after(() => subscription.dispose());
+  const view = await openSidebar(provider, vscode);
+  vscode.fake.journal.length = 0;
+  await view.receive({ version: 1, cmd: 'setConfig', key: 'servers', changes: ['editor', 'window', 'terminal', 'remoteWindow'].map((key) => ({ path: ['actions', key], value: false })) });
+  const actionContexts = vscode.fake.journal.filter((entry) => entry.command === 'setContext' && entry.args[0].startsWith('sysmonitor.action'));
+  assert.deepEqual(actionContexts.map((entry) => entry.args), [
+    ['sysmonitor.actionEditorVisible', false],
+    ['sysmonitor.actionWindowVisible', false],
+    ['sysmonitor.actionTerminalVisible', false],
+    ['sysmonitor.actionRemoteWindowVisible', false],
   ]);
-  assert.equal(messages.some((message) => message.cmd === 'config' && message.serversCfg.actions.editor === false), true);
-  provider.dispose();
+  assert.equal(commandsOf(view.messages, 'config').some((message) => message.serversCfg.actions.editor === false), true);
+  await configStore.flush();
 });
 
-
-test('SSH default-install action is explicit, deduplicated, and writes the global Remote-SSH setting', async () => {
-  const entries = ['example.other-extension'];
-  const writes = [];
-  const configuration = {
-    get: (key) => key === 'defaultExtensions' ? entries : null,
-    update: async (key, value, target) => {
-      writes.push({ key, value, target });
-      entries.splice(0, entries.length, ...value);
-    },
-  };
-  const provider = new MultiMonitorViewProvider({
-    vscode: { env: { language: 'zh-cn' }, Uri: { file: (file) => file }, workspace: { getConfiguration: () => configuration } },
-    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, get() { return null; } },
-    configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({}) },
-    localLinux: false, loadHosts: async () => [],
-  });
-  const messages = [];
-  const source = { state: provider.sidebarState, ready: true, target: { webview: { postMessage: (message) => messages.push(message) } } };
-  provider.sidebar = source;
-  assert.equal(provider.isSshDefaultExtension(), false);
-  assert.equal(writes.length, 0);
-  await provider.handleMessage({ version: 1, cmd: 'addSshDefaultExtension' }, source);
-  assert.equal(writes.length, 1);
-  assert.deepEqual(writes[0], { key: 'defaultExtensions', value: ['example.other-extension', 'LiChenxi.sysmonitor'], target: true });
-  assert.equal(provider.isSshDefaultExtension(), true);
-  assert.equal(messages.at(-1).installed, true);
-  await provider.handleMessage({ version: 1, cmd: 'addSshDefaultExtension' }, source);
-  assert.equal(writes.length, 1);
-  assert.match(await sidebarHtml(provider), /id="server-intro-ssh-default"/);
+test('SSH default-install action is explicit, deduplicated, and writes the global Remote-SSH setting', async (t) => {
+  const vscode = createFakeVscode({ language: 'zh-cn', settings: { 'remote.SSH': { defaultExtensions: ['example.other-extension'] } } });
+  const { provider } = monitor(t, { vscode });
+  const view = await openSidebar(provider, vscode);
+  assert.equal(commandsOf(view.messages, 'config')[0].sshDefaultInstalled, false);
+  assert.deepEqual(vscode.fake.settingWrites, []);
+  await view.receive({ version: 1, cmd: 'addSshDefaultExtension' });
+  assert.deepEqual(vscode.fake.settingWrites, [{ section: 'remote.SSH', key: 'defaultExtensions', value: ['example.other-extension', 'LiChenxi.sysmonitor'], target: true }]);
+  assert.deepEqual(view.messages.at(-1), { cmd: 'sshDefaultExtensions', installed: true });
+  await view.receive({ version: 1, cmd: 'addSshDefaultExtension' });
+  assert.equal(vscode.fake.settingWrites.length, 1);
+  const html = await sidebarHtml(provider, vscode);
+  assert.match(html, /id="server-intro-ssh-default"/);
+  assert.equal(readInitialConfig(html).sshDefaultInstalled, true);
 });
 
-
-test('joining default extensions from the first-use guide dismisses it only after success', async () => {
-  const updates = [];
-  const entries = [];
-  const provider = new MultiMonitorViewProvider({
-    vscode: { env: { language: 'zh-cn' }, Uri: { file: (file) => file }, workspace: { getConfiguration: () => ({
-      get: () => entries,
-      update: async (_key, value) => { entries.push(...value); },
-    }) } },
-    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, get() { return null; } },
-    configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({}) },
-    uiStateStore: { get: () => updates.length > 0, update: async (...args) => updates.push(args) },
-    localLinux: false, loadHosts: async () => [],
-  });
-  const messages = [];
-  const source = { state: provider.sidebarState, ready: true, target: { webview: { postMessage: (message) => messages.push(message) } } };
-  provider.sidebar = source;
-  await provider.handleMessage({ version: 1, cmd: 'addSshDefaultExtension', dismissIntro: true }, source);
-  assert.deepEqual(updates, [['sysmonitor.localIntroDismissed', true]]);
-  assert.equal(messages.some((message) => message.cmd === 'localIntroDismissed'), true);
-  assert.equal(messages.some((message) => message.cmd === 'sshDefaultExtensions' && message.installed), true);
-  const initial = JSON.parse(Buffer.from((await sidebarHtml(provider)).match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
-  assert.equal(initial.showLocalIntro, false);
+test('joining default extensions from the first-use guide dismisses it only after success', async (t) => {
+  const vscode = createFakeVscode({ language: 'zh-cn', settings: { 'remote.SSH': { defaultExtensions: [] } } });
+  const uiStateStore = createMemento();
+  const { provider } = monitor(t, { vscode, uiStateStore });
+  const view = await openSidebar(provider, vscode);
+  await view.receive({ version: 1, cmd: 'addSshDefaultExtension', dismissIntro: true });
+  assert.deepEqual(uiStateStore.writes, [['sysmonitor.localIntroDismissed', true]]);
+  assert.equal(commandsOf(view.messages, 'localIntroDismissed').length, 1);
+  assert.equal(view.messages.some((message) => message.cmd === 'sshDefaultExtensions' && message.installed), true);
+  assert.equal(readInitialConfig(await sidebarHtml(provider, vscode)).showLocalIntro, false);
 });
 
-
-test('SSH default-install errors are returned to the inline controls without changing settings', async () => {
-  const configuration = { get: () => [], update: async () => { throw new Error('settings write denied'); } };
-  const updates = [];
-  const provider = new MultiMonitorViewProvider({
-    vscode: { workspace: { getConfiguration: () => configuration } },
-    manager: { isPaused: () => false, sync() {}, setConfigFile() {}, get() { return null; } },
-    configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({}) },
-    uiStateStore: { get: () => false, update: async (...args) => updates.push(args) },
-    localLinux: false, loadHosts: async () => [],
-  });
-  const messages = [];
-  const source = { state: provider.sidebarState, ready: true, target: { webview: { postMessage: (message) => messages.push(message) } } };
-  provider.sidebar = source;
-  await provider.handleMessage({ version: 1, cmd: 'addSshDefaultExtension', dismissIntro: true }, source);
-  assert.deepEqual(messages.at(-1), { cmd: 'sshDefaultExtensions', installed: false, error: 'settings write denied' });
-  assert.deepEqual(updates, []);
+test('SSH default-install errors are returned to the inline controls without changing settings', async (t) => {
+  const vscode = createFakeVscode({ onSettingUpdate: () => {
+    throw new Error('settings write denied');
+  } });
+  const uiStateStore = createMemento();
+  const { provider } = monitor(t, { vscode, uiStateStore });
+  const view = await openSidebar(provider, vscode);
+  await view.receive({ version: 1, cmd: 'addSshDefaultExtension', dismissIntro: true });
+  assert.deepEqual(view.messages.at(-1), { cmd: 'sshDefaultExtensions', installed: false, error: 'settings write denied' });
+  assert.deepEqual(vscode.fake.settings['remote.SSH'], {});
+  assert.deepEqual(uiStateStore.writes, []);
 });
 
-
-test('closing the final device tab immediately updates its server row to idle', async () => {
-  const devices = new Map([['ssh:campus', { id: 'ssh:campus', state: 'connected', model: null, service: { readSnapshot: () => null } }]]);
-  const manager = {
-    get: (id) => devices.get(id) || null,
-    setConfigFile() {},
-    sync(open) { for (const id of devices.keys()) if (!open.has(id)) devices.delete(id); },
-  };
-  const provider = new MultiMonitorViewProvider({
-    vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager, configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
-    localLinux: false, loadHosts: async () => ['campus'],
-  });
+test('closing the final device tab immediately updates its server row to idle', async (t) => {
+  const device = await createReadyDevice('ssh:campus');
+  t.after(() => device.dispose());
+  const devices = new Map([['ssh:campus', device]]);
+  const manager = createDeviceManager({ devices, sync(open) {
+    for (const id of devices.keys()) if (!open.has(id)) devices.delete(id);
+  } });
+  const vscode = createFakeVscode();
+  const { provider, workspaceState } = monitor(t, { vscode, manager, sidebarState: campus(), hosts: ['campus'] });
   await provider.refreshHosts();
-  const messages = [];
-  const source = { state: provider.sidebarState, sidebar: true, ready: true, target: { visible: true, webview: { postMessage: (message) => messages.push(message) } } };
-  provider.sidebar = source;
-  await provider.handleMessage({ version: 1, cmd: 'closeDevice', id: 'ssh:campus' }, source);
-  assert.deepEqual(source.state.tabs, []);
+  const view = await openSidebar(provider, vscode);
+  await view.receive({ version: 1, cmd: 'closeDevice', id: 'ssh:campus' });
+  assert.deepEqual(workspaceState.writes.at(-1), [SIDEBAR_STATE_KEY, { tabs: [], selected: null, page: 'servers' }]);
   assert.equal(devices.has('ssh:campus'), false);
-  assert.equal(messages.some((message) => message.cmd === 'servers' && message.hosts[0].state === 'idle'), true);
+  assert.equal(view.messages.some((message) => message.cmd === 'servers' && message.hosts[0].state === 'idle'), true);
 });
 
-
-test('page switches retain the current snapshot while device switches hydrate atomically', async () => {
-  const config = normalizeConfig({});
-  const model = { performance: { cpu: { usagePercent: 12 } }, processes: [] };
-  const device = (id) => {
-    const { session } = createSessionFixture({ id });
-    Object.assign(session, { ready: true, model, modelAt: 1, chartSamples: () => [{ t: 1, cpu: 12 }] });
-    return session;
-  };
-  const devices = new Map([['ssh:campus', device('ssh:campus')], ['ssh:lab007', device('ssh:lab007')]]);
-  const manager = { paused: false, isPaused() { return this.paused; }, get: (id) => devices.get(id), sync() {}, setConfigFile() {} };
-  const provider = new MultiMonitorViewProvider({
-    vscode: { env: { language: 'zh-cn' }, workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager, configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => config },
-    workspaceState: { get: () => ({ tabs: ['ssh:campus', 'ssh:lab007'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
-    localLinux: false, loadHosts: async () => [],
-  });
-  const messages = [];
-  const source = { state: provider.sidebarState, sidebar: true, ready: true, target: { visible: true, webview: { postMessage: (message) => messages.push(message) } } };
-  provider.sidebar = source;
-  await provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'servers' }, source);
-  assert.equal(messages.filter((message) => message.cmd === 'navigation').length, 1);
-  assert.equal(messages.some((message) => message.cmd === 'history' || message.cmd === 'snapshot'), false);
-  messages.length = 0;
-  provider.onDeviceUpdate('ssh:campus', devices.get('ssh:campus'));
-  assert.equal(messages.some((message) => message.cmd === 'snapshot'), true);
-  assert.equal(messages.find((message) => message.cmd === 'snapshot').sampleTime, 1);
-  messages.length = 0;
-  await provider.handleMessage({ version: 1, cmd: 'switchDevice', id: 'ssh:lab007' }, source);
-  assert.equal(messages.filter((message) => message.cmd === 'deviceState').length, 1);
-  assert.equal(messages.some((message) => message.cmd === 'history' || message.cmd === 'snapshot'), false);
-  assert.equal(messages.find((message) => message.cmd === 'deviceState').viewModel, model);
-  assert.equal(messages.find((message) => message.cmd === 'deviceState').samples[0].t, 1);
-  assert.equal(messages.find((message) => message.cmd === 'deviceState').sampleTime, 1);
-  messages.length = 0;
-  provider.sendCurrent(source);
-  assert.equal(messages.find((message) => message.cmd === 'snapshot').sampleTime, 1);
-});
-
-
-test('monitor views wait for SSH while terminal opens without a preflight', async () => {
+test('page switches retain the current snapshot while device switches hydrate atomically', async (t) => {
   const devices = new Map();
-  const prepared = [];
-  const manager = {
-    paused: false, isPaused() { return this.paused; }, configFile: null,
-    get(id) { return devices.get(id) || null; },
+  for (const id of ['ssh:campus', 'ssh:lab007']) devices.set(id, await createReadyDevice(id));
+  t.after(() => devices.forEach((device) => device.dispose()));
+  const vscode = createFakeVscode({ language: 'zh-cn' });
+  const { provider } = monitor(t, {
+    vscode, manager: createDeviceManager({ devices }), sidebarState: { tabs: ['ssh:campus', 'ssh:lab007'], selected: 'ssh:campus', page: 'perf' },
+  });
+  const view = await openSidebar(provider, vscode);
+  view.messages.length = 0;
+  await view.receive({ version: 1, cmd: 'switchPage', page: 'servers' });
+  assert.equal(commandsOf(view.messages, 'navigation').length, 1);
+  assert.equal(commandsOf(view.messages, 'snapshot').length, 0);
+  view.messages.length = 0;
+  provider.onDeviceUpdate('ssh:campus', devices.get('ssh:campus'));
+  assert.equal(commandsOf(view.messages, 'snapshot')[0].sampleTime, devices.get('ssh:campus').modelAt);
+  view.messages.length = 0;
+  await view.receive({ version: 1, cmd: 'switchDevice', id: 'ssh:lab007' });
+  const lab = devices.get('ssh:lab007');
+  const [hydrated] = commandsOf(view.messages, 'deviceState');
+  assert.equal(commandsOf(view.messages, 'deviceState').length, 1);
+  assert.equal(commandsOf(view.messages, 'snapshot').length, 0);
+  assert.equal(hydrated.viewModel, lab.model);
+  assert.deepEqual(hydrated.samples, lab.chartSamples());
+  assert.equal(hydrated.sampleTime, lab.modelAt);
+  view.messages.length = 0;
+  await view.receive({ version: 1, cmd: 'ready' });
+  assert.equal(commandsOf(view.messages, 'snapshot')[0].sampleTime, lab.modelAt);
+});
+
+test('monitor views wait for SSH while terminal opens without a preflight', async (t) => {
+  const devices = new Map();
+  const manager = createDeviceManager({
+    devices,
     open(id) {
       const fixture = createSessionFixture({ id, remote: true });
       const device = fixture.session;
-      device.transport.connect = async () => {
+      t.after(() => device.dispose());
+      fixture.transport.connect = async () => {
         if (id === 'ssh:bad') throw new Error('SSH exited (255)');
         device.setConnection('connected');
         fixture.commit();
@@ -274,58 +205,49 @@ test('monitor views wait for SSH while terminal opens without a preflight', asyn
       devices.set(id, device);
       return device;
     },
-    sync(open) { for (const id of devices.keys()) if (!open.has(id)) devices.delete(id); },
-    setConfigFile() {},
-    setPreparing(id, value) { prepared.push([id, value]); },
-  };
-  let editorOpens = 0;
-  let floatingOpens = 0;
-  let terminalOpens = 0;
+    sync(open) {
+      for (const id of devices.keys()) if (!open.has(id)) devices.delete(id);
+    },
+  });
   const scheduled = [];
-  const vscode = {
-    env: { language: 'zh-cn' },
-    workspace: { getConfiguration: () => ({ get: () => null }) },
-    window: { createTerminal: () => { terminalOpens++; return { show() {} }; } },
-  };
-  const provider = new MultiMonitorViewProvider({
-    vscode, manager, configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => normalizeConfig({}) },
-    workspaceState: { get: () => ({}), update: async () => {} }, localLinux: false,
-    loadHosts: async () => ['good', 'bad'],
-    scheduleErrorClear: (callback, milliseconds) => { scheduled.push({ callback, milliseconds }); return scheduled.length; },
+  const vscode = createFakeVscode({ language: 'zh-cn' });
+  const { provider, workspaceState } = monitor(t, {
+    vscode, manager, hosts: ['good', 'bad'],
+    scheduleErrorClear: (callback, milliseconds) => {
+      scheduled.push({ callback, milliseconds });
+      return scheduled.length;
+    },
     cancelErrorClear() {},
   });
   await provider.refreshHosts();
-  provider.openEditorPanel = async () => { editorOpens++; };
-  provider.openFloatingPanel = async (state) => { floatingOpens++; assert.deepEqual(state.tabs, ['ssh:good']); };
-  const messages = [];
-  const source = { state: provider.sidebarState, sidebar: true, ready: true, target: { visible: true, webview: { postMessage: (message) => messages.push(message) } } };
-  provider.sidebar = source;
+  const view = await openSidebar(provider, vscode);
+  const row = (host) => commandsOf(view.messages, 'servers').at(-1).hosts.find((entry) => entry.host === host);
 
-  await provider.handleMessage({ version: 1, cmd: 'openServer', host: 'bad', inEditor: true }, source);
-  assert.equal(editorOpens, 0);
-  assert.deepEqual(source.state.tabs, []);
+  await view.receive({ version: 1, cmd: 'openServer', host: 'bad', inEditor: true });
+  assert.equal(vscode.fake.panels.length, 0);
   assert.equal(devices.has('ssh:bad'), false);
-  assert.match(provider.serverDirectory.rows().find((row) => row.host === 'bad').error, /255/);
-  assert.equal(messages.some((message) => message.cmd === 'servers' && message.hosts.some((row) => row.host === 'bad' && row.busy)), true);
+  assert.match(row('bad').error, /255/);
+  assert.equal(view.messages.some((message) => message.cmd === 'servers' && message.hosts.some((entry) => entry.host === 'bad' && entry.busy)), true);
   assert.equal(scheduled.at(-1).milliseconds, 10000);
-  await provider.handleMessage({ version: 1, cmd: 'openTerminal', host: 'bad' }, source);
-  assert.equal(terminalOpens, 1);
-  assert.match(provider.serverDirectory.rows().find((row) => row.host === 'bad').error, /255/);
+  await view.receive({ version: 1, cmd: 'openTerminal', host: 'bad' });
+  assert.equal(vscode.fake.terminals.length, 1);
+  assert.match(row('bad').error, /255/);
   scheduled.at(-1).callback();
-  assert.equal(provider.serverDirectory.rows().find((row) => row.host === 'bad').state, 'idle');
-  assert.equal(provider.serverDirectory.rows().find((row) => row.host === 'bad').error, null);
+  assert.equal(row('bad').state, 'idle');
+  assert.equal(row('bad').error, null);
 
-  await provider.handleMessage({ version: 1, cmd: 'openServer', host: 'good', inWindow: true }, source);
-  assert.equal(floatingOpens, 1);
-  assert.deepEqual(prepared.slice(-2), [['ssh:good', true], ['ssh:good', false]]);
-  await provider.handleMessage({ version: 1, cmd: 'openServer', host: 'good', inEditor: true }, source);
-  assert.equal(editorOpens, 1);
+  await view.receive({ version: 1, cmd: 'openServer', host: 'good', inWindow: true });
+  assert.equal(vscode.fake.panels.length, 1);
+  assert.deepEqual(readInitialConfig(vscode.fake.panels[0].webview.html).navigation.tabs, ['ssh:good']);
+  assert.equal(vscode.fake.executed.some(([command]) => command === 'workbench.action.moveEditorToNewWindow'), true);
+  assert.deepEqual(manager.preparing.slice(-2), [['ssh:good', true], ['ssh:good', false]]);
+  await view.receive({ version: 1, cmd: 'openServer', host: 'good', inEditor: true });
+  assert.equal(vscode.fake.panels.length, 2);
   devices.delete('ssh:good');
-  await provider.handleMessage({ version: 1, cmd: 'openTerminal', host: 'good' }, source);
-  assert.equal(terminalOpens, 2);
-  provider.dispose();
+  await view.receive({ version: 1, cmd: 'openTerminal', host: 'good' });
+  assert.equal(vscode.fake.terminals.length, 2);
+  assert.deepEqual(workspaceState.writes, []);
 });
-
 
 test('a hidden server stays sampled while its first monitor view is being prepared', () => {
   const config = normalizeConfig({ servers: { visibleOnly: true } });

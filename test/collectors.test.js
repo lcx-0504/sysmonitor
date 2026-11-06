@@ -237,12 +237,13 @@ test('SSH traffic includes every pool connection, excludes other clients and res
   assert.equal((await collector.collect()).isSsh, true);
 });
 
-test('SSH collector requests numeric socket addresses so port 22 can be matched', async () => {
+test('the SSH socket query asks ss for numeric addresses without -H, which older ss lacks, and skips its header line', async () => {
   let args;
+  const header = 'Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n';
   const collector = new SshTrafficCollector({
     isSsh: true,
     clientIp: '10.0.0.1',
-    commandRunner: { execFile: async (_command, commandArgs) => { args = commandArgs; return { stdout: timedSshOutput('ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n', 1) }; } },
+    commandRunner: { execFile: async (_command, commandArgs) => { args = commandArgs; return { stdout: timedSshOutput(header + 'ESTAB 0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:9.1/1.0 bytes_sent:10 bytes_received:20\n', 1) }; } },
   });
   const result = await collector.collect();
   assert.match(args[1], /\bss -t -i -n state established/);
