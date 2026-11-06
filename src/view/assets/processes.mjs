@@ -360,4 +360,4 @@ export function initializeProcesses() {
   });
 }
 
-export { esc, procSearchStr, normalizeProcessDisplay, refreshProcTable, sessionLabel, processNameTitle, processFootnote, processCopyValues };
+export { esc, procSearchStr, normalizeProcessDisplay, refreshProcTable, sessionLabel, processNameTitle, processFootnote, processCopyValues, gpuTags };

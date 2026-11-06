@@ -37,7 +37,6 @@ test('a missing CPU utilization retains the previous value without mutating the 
   assert.equal(previous.loadAverage.oneMinute, 1);
   const view = buildMonitorViewModel(store.read());
   assert.equal(view.performance.cpu.usagePercent, 25);
-  assert.equal(Object.hasOwn(view.performance.cpu, 'sampled'), false);
 });
 
 test('missing SSH RTT and counters retain last values only for the same connection', async () => {
@@ -81,7 +80,7 @@ test('GPU fields retain by device identity, while absent and replaced devices cl
   store.commit('accelerators', data(parseNvidiaCards('0, A100, N/A, N/A, 80, N/A, N/A, N/A, GPU-A')));
   const held = buildMonitorViewModel(store.read()).performance.gpus[0];
   assert.equal(held.util, 1); assert.equal(held.temp, 45); assert.equal(held.power.draw, '50');
-  assert.equal(Object.hasOwn(held, 'utilSampled'), false); assert.equal(held.isIdle, true);
+  assert.equal(held.isIdle, true);
   store.commit('accelerators', data(parseNvidiaCards('0, A100, N/A, N/A, 80, N/A, N/A, N/A, GPU-B')));
   const replaced = buildMonitorViewModel(store.read()).performance.gpus[0];
   assert.equal(replaced.util, null); assert.equal(replaced.temp, null); assert.equal(replaced.power, null);

@@ -166,6 +166,9 @@ test('SSH pool performs concurrent requests without any temporary directory or f
   await waitFor(() => children.every((child) => child.exitCode !== null || child.signalCode !== null));
   assert.deepEqual(await fs.readdir(root), ['keep']);
   assert.equal(await fs.readFile(path.join(root, 'keep'), 'utf8'), 'unchanged');
+});
+
+test('static check: the remote dispatcher script never creates or removes files, kills processes or reads background PIDs', async () => {
   const worker = await fs.readFile(path.join(__dirname, '../src/ssh/dispatcher.sh'), 'utf8');
   assert.doesNotMatch(worker, /\b(?:rm|rmdir|mktemp|mkdir|touch|ln|kill|pkill|killall|setsid)\b|\$!/);
 });

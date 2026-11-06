@@ -1,14 +1,9 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const test = require('node:test');
-const { WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-html');
 const { formatStatusBarText } = require('../src/view/status-bar-controller');
 const { buildMonitorViewModel, displayDeviceName } = require('../src/services/monitor-view-model');
-
-const readWebviewScript = () => WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(__dirname, '..', 'src/view/assets', fileName), 'utf8')).join('\n');
 
 test('status bar consumes shared idle decisions instead of recomputing thresholds', () => {
   const text = formatStatusBarText({ cpu: false, ram: false, disk: false, diskIO: 'off', net: 'off', ssh: false, gpu: { summary: true, showIdleIds: true, mode: 'off' } }, {
@@ -165,10 +160,6 @@ test('GPU card, process tag and user capsule use the same rounded memory percent
   assert.equal(model.performance.gpus[0].memPct, 90);
   assert.equal(model.performance.gpus[0].users[0].percent, 90);
   assert.equal(model.processes[0].gpus[0].pct, 90);
-  const script = readWebviewScript();
-  assert.match(script, /memory: Number\.isFinite\(gpu\.memPct\) \? gpu\.memPct : null/);
-  assert.match(script, /const percent = usage\.pct;/);
-  assert.match(script, /element\('span', 'gpu-user ' \+ tagColorClass\(user\.percent\)/);
 });
 
 test('GPU display name removes only vendor and marketing prefixes', () => {

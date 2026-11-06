@@ -46,6 +46,22 @@ test('forced resume makes every collector due and pausing resets counter baselin
   assert.ok(service.runners.every(runner => runner.isDue()));
 });
 
+test('only disk capacity takes a cycle count derived from its ten-second minimum and the refresh interval', t => {
+  const { normalizeConfig } = require('../src/config/normalize-config');
+  const cadences = service => Object.fromEntries(service.runners.map(runner => [runner.key, runner.cadenceCycles]));
+  const everyCycle = { resources: 1, sshTraffic: 1, processes: 1, accelerators: 1 };
+  for (const [refreshInterval, diskCycles] of [[1, 10], [2, 5], [3, 4], [10, 1], [15, 1]]) {
+    const service = new MonitorService({ runtimeConfig: normalizeConfig({ refreshInterval }), isSsh: false });
+    t.after(() => service.dispose());
+    assert.deepEqual(cadences(service), { ...everyCycle, diskTopology: diskCycles }, String(refreshInterval));
+  }
+  const service = new MonitorService({ runtimeConfig: normalizeConfig({}), isSsh: false });
+  t.after(() => service.dispose());
+  service.pause();
+  service.updateConfig(normalizeConfig({ refreshInterval: 3 }));
+  assert.deepEqual(cadences(service), { ...everyCycle, diskTopology: 4 });
+});
+
 test('the resource collector clears every counter baseline on reset', async () => {
   const { ResourceCollector } = require('../src/collectors/resource-collector');
   const { resourceCommandRunner } = require('./resource-fixture');

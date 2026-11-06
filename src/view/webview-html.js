@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const pkg = require('../../package.json');
 const { createTranslator, resolveLanguage } = require('../i18n');
-const { COLLECTION_FIELDS, REFRESH_SETTING } = require('../config/default-config');
+const { COLLECTION_FIELDS, REFRESH_SETTING, GPU_FIRST_SETTING } = require('../config/default-config');
 const { DISK_PRESETS } = require('../domain/disk');
 const WEBVIEW_SCRIPT_FILES = ['app.mjs', 'chart-state.mjs', 'charts.mjs', 'connection.mjs', 'layout.mjs', 'navigation.mjs', 'performance.mjs', 'popover.mjs', 'processes.mjs', 'servers.mjs', 'settings.mjs', 'ui.mjs'];
 
@@ -14,7 +14,7 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
   const moduleUri = webview?.asWebviewUri
     ? webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'assets', 'main.mjs'))).toString()
     : './main.mjs';
-  const configBase64 = Buffer.from(JSON.stringify({ ...initConfig, collectionFields: COLLECTION_FIELDS, refreshSetting: REFRESH_SETTING, diskPresets: DISK_PRESETS }), "utf8").toString("base64");
+  const configBase64 = Buffer.from(JSON.stringify({ ...initConfig, collectionFields: COLLECTION_FIELDS, refreshSetting: REFRESH_SETTING, gpuFirstSetting: GPU_FIRST_SETTING, diskPresets: DISK_PRESETS }), "utf8").toString("base64");
   const surface = initConfig && initConfig.surface === 'editor' ? 'editor' : 'sidebar';
   const paused = initConfig && initConfig.paused === true;
   return `<!DOCTYPE html>
@@ -164,7 +164,7 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
     <span class="proc-count" id="proc-count">--</span>
     <div class="filter-wrap" id="filter-wrap"><input class="proc-filter" id="proc-filter" placeholder="${t("filterHint")}" /><button class="filter-clear" id="filter-clear">&times;</button></div>
   </div>
-  <div class="filter-hint" id="filter-hint"><span class="hint-close" id="hint-close">&times;</span>${t("searchHint")}${t("sentenceSeparator")}${t("searchHintGpu")}${t("sentenceSeparator")}<code>GPU0</code> <code>#0</code> <code>GPU 0</code></div>
+  <div class="hint-box filter-hint" id="filter-hint"><span class="hint-close" id="hint-close">&times;</span>${t("searchHint")}${t("sentenceSeparator")}${t("searchHintGpu")}${t("sentenceSeparator")}<code>GPU0</code> <code>#0</code> <code>GPU 0</code></div>
   <div class="table-scroll">
     <table><thead><tr id="proc-hdr"></tr></thead><tbody id="proc-tbody"></tbody></table>
   </div>
@@ -172,7 +172,7 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
 </div>
 
 <div class="tab-content" id="tab-servers">
-  <div class="filter-hint server-intro-hint" id="server-intro-hint"><span id="server-intro-text"></span><div class="server-intro-actions"><small id="server-intro-ssh-error" hidden></small><button type="button" class="tb" id="server-intro-close">${t("gotIt")}</button><button type="button" class="tb on" id="server-intro-ssh-default">${t("addToDefaults")}</button></div></div>
+  <div class="hint-box server-intro-hint" id="server-intro-hint"><span id="server-intro-text"></span><div class="server-intro-actions"><small id="server-intro-ssh-error" hidden></small><button type="button" class="tb" id="server-intro-close">${t("gotIt")}</button><button type="button" class="tb on" id="server-intro-ssh-default">${t("addToDefaults")}</button></div></div>
   <div class="server-list" id="server-list"></div>
 </div>
 

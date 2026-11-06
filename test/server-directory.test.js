@@ -3,28 +3,43 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { ServerDirectory } = require('../src/view/server-directory');
 const { createSessionFixture } = require('./session-fixture');
+const { createFakeVscode } = require('./fake-vscode');
 
-function directoryFixture(t) {
+// A directory that has loaded its host list through the public refresh, with change records cleared.
+async function listedDirectory({ hosts = ['lab'], manager = {}, onChange = () => {}, ...options } = {}) {
+  let listed = false;
+  const directory = new ServerDirectory({
+    vscode: createFakeVscode(), loadHosts: async () => hosts, manager: { setConfigFile() {}, ...manager },
+    onChange: (...args) => {
+      if (listed) onChange(...args);
+    },
+    ...options,
+  });
+  await directory.refresh();
+  listed = true;
+  return directory;
+}
+
+async function directoryFixture(t) {
   const phases = [];
   const prepared = [];
   const fixture = createSessionFixture({ remote: true, id: 'ssh:lab' });
-  const directory = new ServerDirectory({
-    vscode: {}, manager: {
-      paused: false, get: () => fixture.session, open: () => fixture.session,
+  const directory = await listedDirectory({
+    manager: {
+      paused: false, isPaused() { return this.paused; }, get: () => fixture.session, open: () => fixture.session,
       setPreparing: (_id, enabled) => prepared.push(enabled),
     },
     onChange: (rows) => phases.push(rows[0].state),
   });
-  directory.hosts = ['lab'];
   fixture.session.onUpdate = () => directory.onDeviceUpdate('ssh:lab', fixture.session);
   t.after(() => { directory.dispose(); fixture.session.dispose(); });
   return { ...fixture, directory, phases, prepared };
 }
 
-test('empty server summaries distinguish disabled metrics, pending samples and failures', () => {
+test('empty server summaries distinguish disabled metrics, pending samples and failures', async () => {
   const sources={cpu:{state:'disabled'},memory:{state:'disabled'},accelerators:{state:'disabled'}};
   const device={state:'connected',displayError:()=>null,model:{sources,performance:{cpu:{},memory:{},gpus:[]}}};
-  const directory=new ServerDirectory({vscode:{},manager:{get:()=>device}});directory.hosts=['lab'];
+  const directory=await listedDirectory({manager:{get:()=>device}});
   assert.deepEqual(directory.rows()[0].metrics,[]);assert.equal(directory.rows()[0].summaryLoading,false);
   sources.cpu={state:'loading'};assert.equal(directory.rows()[0].summaryLoading,true);
   sources.cpu.state='error';assert.equal(directory.rows()[0].summaryLoading,false);
@@ -32,12 +47,13 @@ test('empty server summaries distinguish disabled metrics, pending samples and f
   assert.deepEqual(directory.rows()[0].metrics,['GPU --/1']);directory.dispose();
 });
 
-test('server rows notify only when a row summary changes', () => {
+test('server rows notify only when a row summary changes', async () => {
   const ready = { state: 'ready' };
   const device = { host: 'lab', state: 'connected', error: null, displayError() { return this.error; }, model: { sources: { cpu: ready, memory: ready, accelerators: ready }, performance: { cpu: { usagePercent: 10 }, memory: { usagePercent: 20 }, gpus: [] } } };
   const notifications = [];
-  const directory = new ServerDirectory({ vscode: {}, manager: { get: (id) => (id === 'ssh:lab' ? device : null) }, onChange: (rows, error) => notifications.push([rows.map((row) => row.metrics.join(' ')), error]) });
-  directory.hosts = ['lab'];
+  device.model.performance.cpu.usagePercent = 9;
+  const directory = await listedDirectory({ manager: { get: (id) => (id === 'ssh:lab' ? device : null) }, onChange: (rows, error) => notifications.push([rows.map((row) => row.metrics.join(' ')), error]) });
+  device.model.performance.cpu.usagePercent = 10;
   directory.onDeviceUpdate('ssh:lab', device);
   directory.onDeviceUpdate('ssh:lab', device);
   device.model.performance.cpu.usagePercent = 11;
@@ -53,7 +69,7 @@ test('server rows notify only when a row summary changes', () => {
 });
 
 test('server summaries use the published model until the next snapshot update', async t => {
-  const fixture = directoryFixture(t);
+  const fixture = await directoryFixture(t);
   await fixture.transport.connect(); fixture.commit();
   const metrics = fixture.directory.rows()[0].metrics;
   fixture.store.fail('cpu', new Error('collection timed out'));
@@ -63,7 +79,7 @@ test('server summaries use the published model until the next snapshot update', 
 });
 
 test('monitor opens after a complete rendered sample, including a valid empty GPU result', async (t) => {
-  const fixture = directoryFixture(t);
+  const fixture = await directoryFixture(t);
   let opened = false;
   const action = fixture.directory.runMonitorAction('lab', async () => { opened = true; });
   await new Promise(setImmediate);
@@ -77,7 +93,7 @@ test('monitor opens after a complete rendered sample, including a valid empty GP
 });
 
 test('an existing complete sample opens immediately even when one collector has since advanced', async (t) => {
-  const fixture = directoryFixture(t);
+  const fixture = await directoryFixture(t);
   await fixture.transport.connect();
   fixture.commit();
   fixture.phases.length = 0;
@@ -90,7 +106,7 @@ test('an existing complete sample opens immediately even when one collector has 
 });
 
 test('opening from the server list uses the same settled initial snapshot when a module fails', async (t) => {
-  const fixture = directoryFixture(t);
+  const fixture = await directoryFixture(t);
   let message = null;
   const action = fixture.directory.runMonitorAction('lab', async () => { message = fixture.session.snapshotState(true); });
   await new Promise(setImmediate);
@@ -106,7 +122,7 @@ test('opening from the server list uses the same settled initial snapshot when a
 });
 
 test('reconnection waits for all required partitions from the new connection', async (t) => {
-  const fixture = directoryFixture(t);
+  const fixture = await directoryFixture(t);
   await fixture.transport.connect();
   fixture.commit();
   fixture.session.setConnection('disconnected', new Error('lost'));
@@ -123,7 +139,7 @@ test('reconnection waits for all required partitions from the new connection', a
 });
 
 test('a retry and a view can await the same sample without replacing each other', async (t) => {
-  const fixture = directoryFixture(t);
+  const fixture = await directoryFixture(t);
   await fixture.transport.connect();
   const first = fixture.directory.waitForInitialSample('lab', 0);
   const second = fixture.directory.waitForInitialSample('lab', 0, { allowPaused: true });
@@ -133,7 +149,7 @@ test('a retry and a view can await the same sample without replacing each other'
 });
 
 test('disposing the directory cancels pending opens without closing a shared session', async (t) => {
-  const fixture = directoryFixture(t);
+  const fixture = await directoryFixture(t);
   let opened = false;
   const action = fixture.directory.runMonitorAction('lab', async () => { opened = true; });
   await new Promise(setImmediate);
@@ -147,20 +163,21 @@ test('disposing the directory cancels pending opens without closing a shared ses
 test('the latest server-list refresh wins when config reads finish out of order', async () => {
   const reads = [];
   const applied = [];
-  let configFile = 'first';
+  const vscode = createFakeVscode({ settings: { 'remote.SSH': { configFile: 'first' } } });
   const directory = new ServerDirectory({
-    vscode: { workspace: { getConfiguration: () => ({ get: () => configFile }) } },
+    vscode,
     manager: { setConfigFile: (file) => applied.push(file), get: () => null },
-    loadHosts: () => new Promise((resolve) => reads.push(resolve)),
+    loadHosts: (file) => new Promise((resolve) => reads.push([file, resolve])),
   });
   const first = directory.refresh();
-  configFile = 'second';
+  vscode.fake.settings['remote.SSH'].configFile = 'second';
   const second = directory.refresh();
-  reads[1](['current']);
+  assert.deepEqual(reads.map(([file]) => file), ['first', 'second']);
+  reads[1][1](['current']);
   await second;
-  reads[0](['outdated']);
+  reads[0][1](['outdated']);
   await first;
-  assert.deepEqual(directory.hosts, ['current']);
+  assert.deepEqual(directory.rows().map((row) => row.host), ['current']);
   assert.deepEqual(applied, ['second']);
   directory.dispose();
 });
@@ -168,7 +185,7 @@ test('the latest server-list refresh wins when config reads finish out of order'
 test('a server-list refresh finishing after disposal does not touch connections', async () => {
   let finish;
   const directory = new ServerDirectory({
-    vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
+    vscode: createFakeVscode(),
     manager: { setConfigFile() { assert.fail('disposed directory changed connections'); } },
     loadHosts: () => new Promise((resolve) => { finish = resolve; }),
     onChange() { assert.fail('disposed directory notified a view'); },
@@ -177,16 +194,16 @@ test('a server-list refresh finishing after disposal does not touch connections'
   directory.dispose();
   finish(['lab']);
   await refresh;
-  assert.deepEqual(directory.hosts, []);
+  assert.deepEqual(directory.rows(), []);
+  assert.equal(directory.hasHost('lab'), false);
 });
 
 test('terminal and Remote-SSH actions leave the monitor row unchanged', async () => {
   const phases = [];
-  const directory = new ServerDirectory({
-    vscode: {}, manager: { get: () => null, configFile: null },
+  const directory = await listedDirectory({
+    manager: { get: () => null, configFile: null },
     onChange: (rows) => phases.push(rows[0].state),
   });
-  directory.hosts = ['lab'];
   let opened = 0;
   await directory.runShortcutAction('lab', 'terminal', async () => { opened++; });
   await directory.runShortcutAction('lab', 'remoteWindow', async () => { opened++; });
@@ -198,19 +215,20 @@ test('terminal and Remote-SSH actions leave the monitor row unchanged', async ()
 });
 
 test('shortcut actions preserve monitor errors and report their own launch failures', async () => {
-  const errors = [];
   const phases = [];
-  const directory = new ServerDirectory({
-    vscode: { window: { showErrorMessage: (message) => errors.push(message) } },
-    manager: { get: () => null },
+  const vscode = createFakeVscode();
+  const directory = await listedDirectory({
+    vscode, scheduleErrorClear: () => null, cancelErrorClear() {},
+    manager: { get: () => null, isPaused: () => false, setPreparing() {}, open: () => ({ async connect() { throw new Error('monitor connection failed'); } }) },
     onChange: (rows) => phases.push(rows[0].state),
   });
-  directory.hosts = ['lab'];
-  directory.hostErrors.set('lab', { message: 'monitor connection failed' });
+  await directory.runMonitorAction('lab', async () => assert.fail('a failed connection must not open a monitor'));
+  assert.equal(directory.rows()[0].error, 'monitor connection failed');
+  phases.length = 0;
   await directory.runShortcutAction('lab', 'terminal', async () => {});
   await directory.runShortcutAction('lab', 'remoteWindow', async () => { throw new Error('window could not open'); });
   assert.deepEqual(phases, []);
-  assert.deepEqual(errors, ['window could not open']);
+  assert.deepEqual(vscode.fake.errors, [['window could not open']]);
   assert.equal(directory.rows()[0].error, 'monitor connection failed');
   directory.dispose();
 });
@@ -224,11 +242,10 @@ test('terminal shortcut does not reconnect a disconnected monitor device', async
     service: { readSnapshot: () => ({}) },
   };
   const phases = [];
-  const directory = new ServerDirectory({
-    vscode: {}, manager: { get: () => device, configFile: null },
+  const directory = await listedDirectory({
+    manager: { get: () => device, configFile: null },
     onChange: (rows) => phases.push(rows[0].state),
   });
-  directory.hosts = ['lab'];
   await directory.runShortcutAction('lab', 'terminal', async () => {});
   assert.equal(monitorReconnects, 0);
   assert.equal(device.state, 'disconnected');

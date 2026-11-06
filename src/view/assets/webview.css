@@ -272,8 +272,8 @@
   .filter-clear { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; line-height: 1; padding: 0 2px; display: none; }
   .filter-clear:hover { color: var(--text); }
   .filter-wrap.has-text .filter-clear { display: block; }
-  .filter-hint { display: none; font-size: 10px; color: var(--muted); background: var(--vscode-input-background, #2d2d2d); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; margin-bottom: 4px; line-height: 1.5; flex-shrink: 0; }
-  .filter-hint.show { display: block; }
+  .hint-box { display: none; font-size: 10px; color: var(--muted); background: var(--vscode-input-background, #2d2d2d); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; margin-bottom: 4px; line-height: 1.5; flex-shrink: 0; }
+  .hint-box.show { display: block; }
   .filter-hint code { background: var(--border); border-radius: 2px; padding: 0 3px; font-size: 9px; }
   .filter-hint .hint-close { float: right; cursor: pointer; color: var(--muted); margin-left: 8px; font-size: 11px; }
   .filter-hint .hint-close:hover { color: var(--text); }

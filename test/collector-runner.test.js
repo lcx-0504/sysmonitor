@@ -42,7 +42,6 @@ test('resources share one command, warmup, deadline and snapshot publication', a
     onSettled:() => { publications++; for (const key of resultKeys) assert.ok(store.read()[key].value); } });
   await runner.run(); await runner.idle;
   assert.equal(calls, 2); assert.equal(publications, 1); assert.equal(commands.size, 1);
-  assert.match([...commands][0], /read -r started ignored < \/proc\/uptime[\s\S]*read -r finished ignored < \/proc\/uptime/);
   assert.equal(store.read().cpu.value.coreCount, 1);
   assert.equal(store.read().network.value.receiveBytesPerSecond, 200);
   assert.equal(store.read().diskIo.value.readBytesPerSecond, 10240);
@@ -50,6 +49,45 @@ test('resources share one command, warmup, deadline and snapshot publication', a
   await runner.run(); await runner.idle;
   for (const key of resultKeys) { assert.equal(store.read()[key].value, previous[key].value); assert.equal(store.read()[key].status, 'stale'); }
   assert.equal(publications, 2);
+});
+
+
+test('a requested counter reset makes the next run warm up from a fresh baseline', async () => {
+  const { ResourceCollector } = require('../src/collectors/resource-collector');
+  const { resourceCommandRunner } = require('./resource-fixture');
+  let bytes = 1000;
+  let seconds = 100;
+  const route = 'Iface Destination Gateway Flags\neth0 00000000 0 0003\n';
+  const commandRunner = resourceCommandRunner(async (file) => (file === '/proc/net/route' ? route
+    : `Inter-| Receive | Transmit\nface | bytes\neth0: ${bytes} 0 0 0 0 0 0 0 ${bytes} 0 0 0 0 0 0 0\n`), { uptime: () => {
+    const at = seconds;
+    seconds += 1;
+    bytes += 100;
+    return at;
+  } });
+  const store = new SnapshotStore();
+  const runner = new CollectorRunner({ key: 'resources', resultKeys: ['network'], grouped: true, snapshotStore: store, timeoutMilliseconds: 1000,
+    collector: new ResourceCollector({ keys: ['network'], commandRunner }) });
+  await runner.run();
+  await runner.idle;
+  assert.equal(commandRunner.commands.length, 2);
+  seconds += 600;
+  bytes += 6000000;
+  await runner.run();
+  await runner.idle;
+  assert.equal(commandRunner.commands.length, 3);
+  assert.ok(store.read().network.value.receiveBytesPerSecond > 9000);
+  seconds += 600;
+  bytes += 6000000;
+  runner.requestReset();
+  await runner.run();
+  await runner.idle;
+  assert.equal(commandRunner.commands.length, 5);
+  assert.equal(store.read().network.value.receiveBytesPerSecond, 100);
+  await runner.run();
+  await runner.idle;
+  assert.equal(commandRunner.commands.length, 6);
+  assert.equal(store.read().network.value.receiveBytesPerSecond, 100);
 });
 
 

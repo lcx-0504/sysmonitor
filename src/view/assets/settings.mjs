@@ -10,7 +10,6 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const SETTING_MENU = 'setting';
 const REFRESH_INTERVAL_PRESETS = [1, 2, 5, 10];
 const CHART_MINUTE_PRESETS = [1, 2, 5, 10, 30];
-const GPU_FIRST_LIMITS = { minimum: 1, maximum: 1024 };
 const MODAL_SCROLL_THUMB_MIN_PX = 28;
 const SCROLL_OVERFLOW_TOLERANCE_PX = 1;
 // A textarea's scrollHeight excludes its top and bottom borders.
@@ -439,7 +438,8 @@ function renderStatusBarGpuSettings(parent, gpu, barVisible) {
     [['off', tr('scopeOff')], ['all', tr('gpuAll')], ['first', tr('gpuFirst')], ['specify', tr('gpuSpecify')], ['my', tr('scopeMy')]], assign(gpu, 'mode'), { visible: barVisible });
   const perfVisible = barVisible && gpu.mode !== 'off';
   const gpuBody = settingGroup(parent, 'gpu-perf-options', { visible: perfVisible });
-  setting(gpuBody, 'gpu-first', { type: 'number', id: 'gpu-first-input', label: tr('gpuFirst'), ...GPU_FIRST_LIMITS,
+  const { minimum, maximum } = state.initial.gpuFirstSetting;
+  setting(gpuBody, 'gpu-first', { type: 'number', id: 'gpu-first-input', label: tr('gpuFirst'), minimum, maximum,
     value: gpu.firstN, visible: barVisible && gpu.mode === 'first', change(value) {
       changeConfig('statusBar', () => {
         gpu.firstN = value;

@@ -6,8 +6,9 @@ const path = require('node:path');
 const test = require('node:test');
 const protocol = require('../src/view/protocol');
 const { MonitorViewProvider } = require('../src/view/monitor-view-provider');
-const { MultiMonitorViewProvider } = require('../src/view/multi-monitor-view-provider');
 const { normalizeConfig } = require('../src/config/normalize-config');
+const { createFakeVscode } = require('./fake-vscode');
+const { createMultiProvider } = require('./view-fixture');
 
 const VIEW_DIRECTORY = path.join(__dirname, '..', 'src', 'view');
 const ASSET_DIRECTORY = path.join(VIEW_DIRECTORY, 'assets');
@@ -52,20 +53,20 @@ test('the frontend recognizes device ids only through the shared helpers', async
   assert.doesNotMatch(source, /\.slice\(4\)/);
 });
 
-test('every webview command has a handler and view hosts name commands only through the protocol', () => {
+test('every webview command has a handler, every extension command is sent, and view hosts name commands only through the protocol', (t) => {
+  const vscode = createFakeVscode();
   const configStore = { getCurrent: () => normalizeConfig({}), getSaveState: () => ({ status: 'saved', error: null }) };
-  const single = new MonitorViewProvider({ vscode: {}, session: {}, configStore });
-  const multi = new MultiMonitorViewProvider({
-    vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
-    manager: { get() { return null; }, sync() {}, setConfigFile() {} }, configStore,
-    workspaceState: { get: () => ({}) }, localLinux: false, loadHosts: async () => [],
-  });
+  const single = new MonitorViewProvider({ vscode, session: {}, configStore });
+  const { provider: multi } = createMultiProvider({ vscode, configStore });
+  t.after(() => multi.dispose());
   const handled = new Set([...Object.keys(single.messageHandlers), ...Object.keys(multi.messageHandlers)]);
   assert.deepEqual([...handled].sort(), Object.values(protocol.TO_EXTENSION).sort());
-  multi.dispose();
+  const sent = new Set();
   for (const file of HOST_FILES) {
     const source = fs.readFileSync(path.join(VIEW_DIRECTORY, file), 'utf8');
     assert.doesNotMatch(source, /\bcmd\s*:\s*['"`]/, file);
     assert.doesNotMatch(source, /(?<!typeof )\bmessage\.cmd\s*[!=]==\s*['"`]/, file);
+    for (const match of source.matchAll(/\bTO_WEBVIEW\.(\w+)/g)) sent.add(match[1]);
   }
+  assert.deepEqual([...sent].sort(), Object.keys(protocol.TO_WEBVIEW).sort());
 });

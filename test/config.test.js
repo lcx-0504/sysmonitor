@@ -76,6 +76,7 @@ function updateSetting(store, key, value) {
 }
 
 const { setActionVisibilityContexts } = require('../src/view/action-visibility');
+const { createFakeVscode } = require('./fake-vscode');
 
 function scopedSettings(global = {}, workspace = {}, folders = {}) {
   const { DEFAULT_CONFIG } = require('../src/config/default-config');
@@ -197,20 +198,20 @@ test('remote window behavior defaults to menu and accepts exactly the three supp
 });
 
 test('action button settings default on and drive all four native toolbar contexts', () => {
-  const calls = [];
-  const vscode = { commands: { executeCommand: (...args) => calls.push(args) } };
+  const vscode = createFakeVscode();
+  const calls = () => vscode.fake.journal.map((entry) => [entry.command, ...entry.args]);
   const defaults = setActionVisibilityContexts(vscode, normalizeConfig({}).servers);
-  assert.deepEqual(calls, [
+  assert.deepEqual(calls(), [
     ['setContext', 'sysmonitor.actionEditorVisible', true],
     ['setContext', 'sysmonitor.actionWindowVisible', true],
     ['setContext', 'sysmonitor.actionTerminalVisible', true],
     ['setContext', 'sysmonitor.actionRemoteWindowVisible', true],
   ]);
-  calls.length = 0;
+  vscode.fake.journal.length = 0;
   setActionVisibilityContexts(vscode, normalizeConfig({}).servers, defaults);
-  assert.deepEqual(calls, []);
+  assert.deepEqual(calls(), []);
   setActionVisibilityContexts(vscode, normalizeConfig({ servers: { actions: { editor: false, remoteWindow: false } } }).servers, defaults);
-  assert.deepEqual(calls, [
+  assert.deepEqual(calls(), [
     ['setContext', 'sysmonitor.actionEditorVisible', false],
     ['setContext', 'sysmonitor.actionRemoteWindowVisible', false],
   ]);
@@ -501,6 +502,66 @@ test('manifest field schemas match the shared normalization definitions', () => 
   assert.equal(settingSchema('collection', ['enabled']), null);
   const disk = normalizeConfig({ disk: { customFsExclude: 123, customPathExclude: ['/work'] } }).disk;
   assert.equal(disk.customFsExclude, ''); assert.equal(disk.customPathExclude, '');
+});
+
+test('every declared setting derives its default, manifest schema and normalization from the single definition', () => {
+  const { SETTINGS, CONFIGURATION_KEYS, manifestConfiguration } = require('../src/config/config-schema');
+  const manifest = manifestConfiguration();
+  assert.deepEqual(CONFIGURATION_KEYS, Object.keys(SETTINGS));
+  assert.deepEqual(require('../src/config/config-store').CONFIGURATION_KEYS, CONFIGURATION_KEYS);
+  assert.deepEqual(Object.keys(manifest), CONFIGURATION_KEYS.map(key => 'sysmonitor.' + key));
+  assert.deepEqual(normalizeConfig({}), DEFAULT_CONFIG);
+  for (const key of CONFIGURATION_KEYS) assert.deepEqual(manifest['sysmonitor.' + key].default, DEFAULT_CONFIG[key], key);
+  const leaves = [];
+  const visit = (definition, path) => {
+    if (definition.type !== 'object') {
+      leaves.push([path, definition]);
+      return;
+    }
+    for (const [name, child] of Object.entries(definition.properties)) visit(child, [...path, name]);
+  };
+  visit({ type: 'object', properties: SETTINGS }, []);
+  const read = (value, path) => path.reduce((current, segment) => current?.[segment], value);
+  const manifestSchema = ([key, ...rest]) => rest.reduce((schema, segment) => schema.properties[segment], manifest['sysmonitor.' + key]);
+  const normalized = (path, value) => read(normalizeConfig(path.reduceRight((child, segment) => ({ [segment]: child }), value)), path);
+  for (const [path, definition] of leaves) {
+    const label = path.join('.');
+    const schema = manifestSchema(path);
+    for (const keyword of ['type', 'enum', 'minimum', 'maximum', 'uniqueItems']) assert.deepEqual(schema[keyword], definition[keyword], label + ' ' + keyword);
+    if (definition.optional) assert.equal(read(DEFAULT_CONFIG, path), undefined, label);
+    else assert.deepEqual(read(DEFAULT_CONFIG, path), definition.default, label);
+    if (definition.type === 'number' || definition.type === 'integer') {
+      assert.equal(normalized(path, definition.minimum - 1), definition.minimum, label);
+      assert.equal(normalized(path, definition.maximum + 1), definition.maximum, label);
+      assert.equal(normalized(path, definition.minimum + 0.25), definition.type === 'integer' ? definition.minimum : definition.minimum + 0.25, label);
+      assert.equal(normalized(path, String(definition.minimum)), definition.default, label);
+    } else if (definition.enum) {
+      for (const value of definition.enum) assert.equal(normalized(path, value), value, label);
+      assert.equal(normalized(path, 'unsupported'), definition.default, label);
+    } else if (definition.type === 'boolean') {
+      assert.equal(normalized(path, !definition.default), !definition.default, label);
+      assert.equal(normalized(path, String(!definition.default)), definition.default, label);
+    } else if (definition.type === 'array') {
+      assert.deepEqual(normalized(path, 'unsupported'), definition.default, label);
+    } else {
+      assert.equal(normalized(path, 'kept'), 'kept', label);
+      assert.equal(normalized(path, 7), '', label);
+    }
+  }
+});
+
+test('collection settings are written field by field under sysmonitor.collection and undeclared keys are rejected', async () => {
+  const fixture = scopedSettings();
+  const store = new ConfigStore({ vscode: fixture.vscode });
+  assert.deepEqual(store.read().collection, DEFAULT_CONFIG.collection);
+  assert.throws(() => store.update('timeouts', [{ path: ['standardTimeout'], value: 20 }]), /Invalid configuration/);
+  assert.throws(() => store.update('collection', [{ path: ['enabled'], value: true }]), /Invalid configuration/);
+  store.update('collection', [{ path: ['custom'], value: true }, { path: ['standardTimeout'], value: 25 }]);
+  await store.flush();
+  assert.deepEqual(fixture.writes.map(({ key, value }) => [key, value]), [['collection', { custom: true, standardTimeout: 25 }]]);
+  assert.deepEqual(store.getCurrent().collection, { ...DEFAULT_CONFIG.collection, custom: true, standardTimeout: 25 });
+  assert.equal(collectionPolicy(store.getCurrent()).resources.timeoutMilliseconds, 25000);
+  store.dispose();
 });
 
 test('field changes preserve independent edits from another view and settings.json', async () => {

@@ -5,21 +5,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const { createFakeVscode, createMemento } = require('./fake-vscode');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/extension.js'), 'utf8');
 
 async function activate({ platform, remoteName, extensionKind = 2, language = 'zh-CN', realConfig = false, env = {} }) {
-  const providers = new Map();
-  const providerOptions = new Map();
-  const serializers = new Map();
-  const commands = new Map();
-  const contexts = new Map();
-  const executed = [];
   const managers = [];
   const sessions = [];
-  const statusBars = [];
+  const controllers = [];
   const flushes = [];
-  const savedConfig = {};
   const disposable = { dispose() {} };
   let configurationUpgraded = false;
   class ConfigStore {
@@ -49,35 +43,9 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     constructor(options) { this.options = options; }
   }
   class StatusBarController {
-    constructor(options) { statusBars.push(options); }
+    constructor(options) { controllers.push(options); }
   }
-  const vscode = {
-    ExtensionKind: { UI: 1, Workspace: 2 },
-    Uri: { file: (file) => file },
-    env: { remoteName, language },
-    workspace: {
-      getConfiguration: () => ({ get: () => undefined, inspect:key=>({globalValue:savedConfig[key]}),update:async(key,value)=>{savedConfig[key]=value;} }),
-      onDidChangeConfiguration: () => disposable,
-    },
-    window: {
-      createOutputChannel: () => ({ ...disposable, appendLine() {} }),
-      registerWebviewViewProvider(id, provider, options) { providers.set(id, provider); providerOptions.set(id, options); return disposable; },
-      registerWebviewPanelSerializer(id, serializer) { serializers.set(id, serializer); return disposable; },
-      createStatusBarItem(alignment,priority) {
-        const item={alignment,priority,show() {},hide() {},dispose() {this.disposed=true;}};
-        statusBars.push(item); return item;
-      },
-    },
-    commands: {
-      executeCommand(command, ...args) {
-        if (command === 'setContext') contexts.set(args[0], args[1]);
-        else executed.push([command, ...args]);
-        return Promise.resolve();
-      },
-      registerCommand(id, callback) { commands.set(id, callback); return disposable; },
-    },
-    StatusBarAlignment:{Left:1,Right:2},
-  };
+  const vscode = createFakeVscode({ remoteName, language });
   const modules = {
     './i18n': require('../src/i18n'),
     vscode,
@@ -97,31 +65,19 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
   };
   vm.runInNewContext(source, sandbox, { filename: 'src/extension.js' });
   const subscriptions = [];
-  const memento = () => ({ get: (_key, fallback) => fallback, update: async () => {} });
-  await sandbox.module.exports.activate({ subscriptions, extension: { extensionKind }, workspaceState: memento(), globalState: memento() });
-  const provider = providers.get('sysmonitor.panel');
+  await sandbox.module.exports.activate({ subscriptions, extension: { extensionKind }, workspaceState: createMemento(), globalState: createMemento() });
+  const provider = vscode.fake.viewProviders.get('sysmonitor.panel').provider;
   let html = '';
   if (provider.resolveWebviewView && !realConfig) {
-    const view = { webview: { html: '' } };
+    const view = vscode.fake.createView();
     provider.resolveWebviewView(view);
     html = view.webview.html;
   }
-  return { managers, sessions, statusBars, flushes, contexts, executed, commands, serializers, subscriptions, provider, providerOptions, html, MultiMonitorViewProvider, MonitorViewProvider, deactivate: sandbox.module.exports.deactivate };
-}
-
-function webviewTarget(post) {
-  const target = {
-    visible: true,
-    webview: {
-      html: '',
-      postMessage: (message) => { post(message); return Promise.resolve(true); },
-      onDidReceiveMessage(handler) { target.receive = handler; },
-    },
-    onDidDispose() {},
-    onDidChangeVisibility() {},
-    onDidChangeViewState() {},
+  return {
+    vscode, managers, sessions, controllers, flushes, subscriptions, provider, html, MultiMonitorViewProvider, MonitorViewProvider,
+    commands: vscode.fake.registeredCommands, contexts: vscode.fake.contexts, executed: vscode.fake.executed,
+    statusBarItems: vscode.fake.statusBarItems, deactivate: sandbox.module.exports.deactivate,
   };
-  return target;
 }
 
 test('native SSH monitoring retains client-only metadata when full endpoints are unavailable', async () => {
@@ -131,30 +87,30 @@ test('native SSH monitoring retains client-only metadata when full endpoints are
 });
 
 test('panel settings update the native status bar through the shared config subscription', async t => {
-  const {provider,statusBars} = await activate({platform:'linux',remoteName:'ssh-remote',realConfig:true});
+  const {provider,statusBarItems,vscode} = await activate({platform:'linux',remoteName:'ssh-remote',realConfig:true});
   t.after(() => provider.configStore.dispose());
-  const original = statusBars[0];
-  const sidebarMessages = [], editorMessages = [];
-  const view = webviewTarget(message => sidebarMessages.push(message));
+  const original = statusBarItems[0];
+  const view = vscode.fake.createView();
   await provider.resolveWebviewView(view);
   await view.receive({version:1,cmd:'ready'});
-  const panel = webviewTarget(message => editorMessages.push(message));
+  const panel = vscode.fake.createPanel();
   await provider.attachEditor(panel, { page: 'perf' });
   await panel.receive({version:1,cmd:'ready'});
-  sidebarMessages.length = 0;
-  editorMessages.length = 0;
+  view.messages.length = 0;
+  panel.messages.length = 0;
   view.receive({version:1,cmd:'setConfig',key:'statusBar',changes:[{path:['alignment'],value:'right'},{path:['priority'],value:50}]});
-  assert.equal(statusBars.length,2);
+  assert.equal(statusBarItems.length,2);
   assert.equal(original.disposed,true);
-  assert.equal(statusBars[1].alignment,2);
-  assert.equal(statusBars[1].priority,50);
-  assert.equal(sidebarMessages.filter(message=>message.cmd === 'config').length,1);
-  assert.equal(editorMessages.filter(message=>message.cmd === 'config').length,1);
+  assert.equal(statusBarItems[1].alignment,vscode.StatusBarAlignment.Right);
+  assert.equal(statusBarItems[1].priority,50);
+  assert.equal(view.messages.filter(message=>message.cmd === 'config').length,1);
+  assert.equal(panel.messages.filter(message=>message.cmd === 'config').length,1);
   await provider.configStore.flush();
-  assert.equal(statusBars.length,2);
-  assert.equal(sidebarMessages.filter(message=>message.cmd === 'config').length,1);
-  assert.equal(editorMessages.filter(message=>message.cmd === 'config').length,1);
-  assert.equal(sidebarMessages.at(-1).status,'saved');
+  assert.equal(statusBarItems.length,2);
+  assert.equal(view.messages.filter(message=>message.cmd === 'config').length,1);
+  assert.equal(panel.messages.filter(message=>message.cmd === 'config').length,1);
+  assert.equal(view.messages.at(-1).status,'saved');
+  assert.deepEqual(vscode.fake.settingWrites.map(({ section, key, value }) => [section, key, value.alignment, value.priority]), [['sysmonitor', 'statusBar', 'right', 50]]);
 });
 
 for (const platform of ['darwin', 'win32', 'linux']) {
@@ -188,7 +144,8 @@ for (const platform of ['darwin', 'win32', 'linux']) {
     const result = await activate({ platform, remoteName: 'ssh-remote', extensionKind: 1 });
     assert.equal(result.managers.length, 0);
     assert.equal(result.sessions.length, 0);
-    assert.equal(result.statusBars.length, 0);
+    assert.equal(result.controllers.length, 0);
+    assert.equal(result.statusBarItems.length, 0);
     assert.match(result.html, /请在远程环境中运行扩展/);
     assert.doesNotMatch(result.html, /当前远程环境不是 Linux/);
     assert.equal(result.contexts.get('sysmonitor.sidebarFixedActive'), false);
@@ -215,14 +172,28 @@ const MODES = [
   { platform: 'linux', remoteName: 'ssh-remote', extensionKind: 1 },
 ];
 
-test('every mode registers all contributed commands and leaves hidden views unretained', async () => {
+test('every mode registers exactly the contributed commands and leaves hidden views unretained', async () => {
   const manifest = require('../package.json');
+  const contributed = manifest.contributes.commands.map(({ command }) => command).sort();
   for (const mode of MODES) {
     const result = await activate(mode);
-    for (const { command } of manifest.contributes.commands) assert.equal(typeof result.commands.get(command), 'function', JSON.stringify(mode) + ' ' + command);
-    assert.equal(result.providerOptions.get('sysmonitor.panel'), undefined, JSON.stringify(mode));
-    assert.equal(result.contexts.has('sysmonitor.sidebarDeviceActive'), false, JSON.stringify(mode));
-    assert.equal(typeof result.serializers.get('sysmonitor.editor').deserializeWebviewPanel, 'function', JSON.stringify(mode));
+    assert.deepEqual([...result.commands.keys()].sort(), contributed, JSON.stringify(mode));
+    for (const command of contributed) assert.equal(typeof result.commands.get(command), 'function', JSON.stringify(mode) + ' ' + command);
+    assert.equal(result.vscode.fake.viewProviders.get('sysmonitor.panel').options, undefined, JSON.stringify(mode));
+    assert.equal(typeof result.vscode.fake.serializers.get('sysmonitor.editor').deserializeWebviewPanel, 'function', JSON.stringify(mode));
+  }
+});
+
+test('context keys are declared once, all used by manifest when clauses, and the only ones any mode sets', async () => {
+  const { ACTION_CONTEXTS, TITLE_CONTEXTS } = require('../src/view/action-visibility');
+  const manifest = require('../package.json');
+  const declared = [...Object.values(ACTION_CONTEXTS), ...Object.values(TITLE_CONTEXTS)].sort();
+  const clauses = Object.values(manifest.contributes.menus).flat().map((item) => item.when || '').join(' ');
+  const referenced = new Set(clauses.match(/(?<!==\s*)\bsysmonitor\.\w+/g));
+  assert.deepEqual([...referenced].sort(), declared);
+  for (const mode of MODES) {
+    const result = await activate(mode);
+    for (const key of result.contexts.keys()) assert.ok(declared.includes(key), JSON.stringify(mode) + ' sets undeclared context ' + key);
   }
 });
 
@@ -283,9 +254,10 @@ test('device manager callbacks reach the multi-device views', async () => {
 
 test('unsupported environments close restored monitor editors', async () => {
   const result = await activate({ platform: 'darwin', remoteName: 'ssh-remote' });
-  let disposed = 0;
-  await result.serializers.get('sysmonitor.editor').deserializeWebviewPanel({ dispose: () => { disposed++; } }, { page: 'proc' });
-  assert.equal(disposed, 1);
+  const panel = result.vscode.fake.createPanel();
+  await result.vscode.fake.serializers.get('sysmonitor.editor').deserializeWebviewPanel(panel, { page: 'proc' });
+  assert.equal(panel.disposed, true);
+  assert.deepEqual(panel.webview.htmlHistory, []);
 });
 
 test('deactivation waits for pending settings writes and ignores write failures', async () => {
@@ -297,12 +269,12 @@ test('deactivation waits for pending settings writes and ignores write failures'
 });
 
 test('the status bar controller owns its item instead of the extension subscriptions', async t => {
-  const { provider, statusBars, subscriptions } = await activate({ platform: 'linux', remoteName: 'ssh-remote', realConfig: true });
+  const { provider, statusBarItems, subscriptions } = await activate({ platform: 'linux', remoteName: 'ssh-remote', realConfig: true });
   t.after(() => provider.configStore.dispose());
-  assert.equal(subscriptions.includes(statusBars[0]), false);
+  assert.equal(subscriptions.includes(statusBarItems[0]), false);
   const controller = subscriptions.find((entry) => entry && typeof entry.recreate === 'function');
   controller.dispose();
-  assert.equal(statusBars[0].disposed, true);
+  assert.equal(statusBarItems[0].disposed, true);
   controller.recreate();
-  assert.equal(statusBars.length, 1);
+  assert.equal(statusBarItems.length, 1);
 });

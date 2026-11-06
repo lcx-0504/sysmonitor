@@ -38,9 +38,9 @@ const SHELL_FIXTURE = [
   'fixture_gpu() { printf "GPU_CALL\\n" >&2; printf "%s\\n" "$GPU_ROWS"; return "$GPU_STATUS"; }',
   'alias nvidia-smi=fixture_gpu',
   'getconf() { printf "%s\\n" "$CLOCK_TICKS"; }',
-  'id() { printf "%s\\n" "$USER_ID"; }',
-  'tmux() { [ -n "$TMUX_ROWS" ] || return 1; printf "%s\\n" "$TMUX_ROWS"; }',
-  'screen() { printf "%s\\n" "$SCREEN_ROWS"; return 1; }',
+  'id() { printf "id\\n" >> "$FIXTURE_ROOT/session-calls"; printf "%s\\n" "$USER_ID"; }',
+  'tmux() { printf "tmux\\n" >> "$FIXTURE_ROOT/session-calls"; [ -n "$TMUX_ROWS" ] || return 1; printf "%s\\n" "$TMUX_ROWS"; }',
+  'screen() { printf "screen\\n" >> "$FIXTURE_ROOT/session-calls"; printf "%s\\n" "$SCREEN_ROWS"; return 1; }',
   'sleep() {',
   '  printf "%s\\n" "$1" >> "$FIXTURE_ROOT/sleeps"',
   '  case "$1:$SLEEP_FRACTIONS" in *.*:0) return 1 ;; esac',
@@ -51,7 +51,7 @@ const SHELL_FIXTURE = [
 ].join('\n');
 
 function fixture(t, rows, { first = {}, second = first, uptime = [100, 101], gpu = '', gpuStatus = 0, gpuEnabled = true, psStatus = 0, interval = 2,
-  tmux = '', screen = '', userId = '1000', clockTicks = 100, sleepFractions = true, advanceUptime = '', shell = 'sh' } = {}) {
+  tmux = '', screen = '', userId = '1000', clockTicks = 100, sleepFractions = true, advanceUptime = '', shell = 'sh', prelude = '' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sysmonitor-processes-'));
   const runner = new CommandRunner();
   t.after(() => { runner.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
@@ -64,7 +64,7 @@ function fixture(t, rows, { first = {}, second = first, uptime = [100, 101], gpu
     commandRunner: { async execFile(command, args, options) {
       assert.equal(command, 'sh');
       assert.equal(args[1], SNAPSHOT_SCRIPT);
-      const result = await runner.execFile(shell, ['-c', SHELL_FIXTURE + args[1], ...args.slice(2)], { ...options, env: {
+      const result = await runner.execFile(shell, ['-c', SHELL_FIXTURE + prelude + args[1], ...args.slice(2)], { ...options, env: {
         SYSMON_PROC_ROOT: path.join(root, 'proc'), FIXTURE_ROOT: root, GPU_ROWS: gpu, GPU_STATUS: String(gpuStatus), PS_STATUS: String(psStatus),
         CLOCK_TICKS: String(clockTicks), USER_ID: userId, TMUX_ROWS: tmux, SCREEN_ROWS: screen, SLEEP_FRACTIONS: sleepFractions ? '1' : '0',
         ADVANCE_UPTIME: advanceUptime,
@@ -73,8 +73,8 @@ function fixture(t, rows, { first = {}, second = first, uptime = [100, 101], gpu
       return result;
     } },
   });
-  const sleeps = () => fs.existsSync(path.join(root, 'sleeps')) ? fs.readFileSync(path.join(root, 'sleeps'), 'utf8').trim().split('\n') : [];
-  return { collector, calls, sleeps };
+  const lines = name => fs.existsSync(path.join(root, name)) ? fs.readFileSync(path.join(root, name), 'utf8').trim().split('\n') : [];
+  return { collector, calls, sleeps: () => lines('sleeps'), sessionCalls: () => lines('session-calls') };
 }
 
 const steady = (pids, ticks = () => 0) => Object.fromEntries(pids.map(pid => [pid, { ticks: ticks(pid), start: 10 }]));
@@ -114,6 +114,19 @@ test('the sampling window is half the refresh interval and at most one second', 
   const sample = await slow.collector.collect();
   assert.deepEqual(slow.sleeps(), []);
   assert.equal(sample.rows[0].cpuUsagePercent, 0);
+});
+
+test('process CPU converts ticks with the reported clock rate and falls back to 100 ticks per second', async t => {
+  const rows = [row(7, { command: 'steady' }), row(9, { command: 'new' })];
+  const first = { 7: { ticks: 0, start: 10 } };
+  const second = { 7: { ticks: 50, start: 10 }, 9: { ticks: 25, start: 25000 } };
+  const cpuOf = sample => Object.fromEntries(sample.rows.map(process => [process.pid, process.cpuUsagePercent]));
+  const reported = await fixture(t, rows, { first, second, clockTicks: 250 }).collector.collect();
+  assert.deepEqual(cpuOf(reported), { 7: 20, 9: 10 });
+  for (const clockTicks of ['', 'unknown', '0']) {
+    const fallback = await fixture(t, rows, { first, second, clockTicks }).collector.collect();
+    assert.equal(cpuOf(fallback)[7], 50, JSON.stringify(clockTicks));
+  }
 });
 
 test('remote selection unions independent CPU, RAM and GPU top hundreds with a 300-row bound', async t => {
@@ -219,12 +232,27 @@ test('tmux and screen sessions are attributed to the nearest session of the curr
   assert.equal(model.processes.find(process => process.pid === 400).session, null);
 });
 
-test('missing or failing session commands leave the process list intact', async t => {
+test('failing session commands or an unknown user id leave the process list intact', async t => {
   const rows = [row(100, { command: 'bash' }), row(101, { ppid: 100 })];
   const sample = await fixture(t, rows, { first: steady([100, 101]), screen: 'No Sockets found in /run/screen/S-alice.' }).collector.collect();
   assert.deepEqual(sample.rows.map(process => [process.pid, process.session]), [[100, null], [101, null]]);
   const unknownUser = await fixture(t, rows, { first: steady([100, 101]), tmux: '100\tmain', userId: '' }).collector.collect();
   assert.deepEqual(unknownUser.rows.map(process => process.session), [null, null]);
+});
+
+test('absent tmux or screen commands are skipped without being run', async t => {
+  const rows = [row(100, { command: 'bash' }), row(101, { ppid: 100 }), row(200, { command: 'SCREEN -S exp' }), row(201, { ppid: 200 })];
+  const options = { first: steady([100, 101, 200, 201]), tmux: '100\tmain', screen: '\t200.exp\t(Detached)' };
+  const absent = (...names) => `command() { case "$2" in ${names.join('|')}) return 1 ;; esac; return 0; }\n`;
+  const sessionsOf = sample => sample.rows.map(process => [process.pid, process.session && process.session.type]);
+  const neither = fixture(t, rows, { ...options, prelude: absent('tmux', 'screen') });
+  const withoutTools = await neither.collector.collect();
+  assert.deepEqual(sessionsOf(withoutTools), [[100, null], [101, null], [200, null], [201, null]]);
+  assert.deepEqual(neither.sessionCalls(), []);
+  const screenOnly = fixture(t, rows, { ...options, prelude: absent('tmux') });
+  const withScreen = await screenOnly.collector.collect();
+  assert.deepEqual(sessionsOf(withScreen), [[100, null], [101, null], [200, 'screen'], [201, 'screen']]);
+  assert.deepEqual(screenOnly.sessionCalls(), ['id', 'screen']);
 });
 
 test('process totals reuse published memory and core counts before querying the host', async t => {
