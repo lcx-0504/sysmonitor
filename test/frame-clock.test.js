@@ -71,7 +71,7 @@ test('an empty GPU inventory in a late batch clears the preceding device history
   const history=new MetricHistory([],2000);
   const model={sources:Object.fromEntries(['cpu','memory','network','diskIo','sshTraffic','accelerators'].map(key=>[key,{state:key==='accelerators'?'ready':'loading'}])),
     performance:{gpus:[{idx:0,deviceKey:'gpu-a',util:50}]}};
-  history.recordDisplayFrame(model,0,60000);
+  history.recordDisplayFrames(model,[0],0,60000);
   model.performance.gpus=[];
   const updates=history.recordDisplayFrames(model,[2000,4000,6000],6500,60000);
   assert.equal(updates.length,1);

@@ -6,9 +6,9 @@ const { RemoteSystemInfo } = require('../ssh/remote-system-info');
 const { effectiveTimeouts } = require('./collection-policy');
 
 class DeviceMonitorManager {
-  constructor({ configStore, language, localLinux, configFile = null, onUpdate = () => {}, onLog = () => {},
+  constructor({ configStore, localLinux, configFile = null, onUpdate = () => {}, onLog = () => {},
     onResidualProcesses = () => {}, onWarning = () => {}, onPauseChange = () => {} }) {
-    Object.assign(this, { configStore, language, localLinux, configFile, onUpdate, onLog, onResidualProcesses, onWarning, onPauseChange });
+    Object.assign(this, { configStore, localLinux, configFile, onUpdate, onLog, onResidualProcesses, onWarning, onPauseChange });
     this.devices = new Map();
     this.visibleIds = new Set();
     this.preparingIds = new Set();
@@ -36,7 +36,7 @@ class DeviceMonitorManager {
       },
     }) : null;
     const device = new MonitorSession({
-      id, host, transport, configStore: this.configStore, language: this.language,
+      id, host, transport, configStore: this.configStore,
       isPaused: () => this.paused,
       onUpdate: (session) => this.onUpdate(id, session),
       onLog: (message) => this.onLog(id + ': ' + message),

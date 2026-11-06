@@ -25,8 +25,8 @@ test('GPU core measurements delivered after ownership lookup retain one full int
     h.time(readyAt);
     store.commit('accelerators', { devices:parseNvidiaCards('0, A100, '+util+', 100, 1000, 45, 50, 300, GPU-a'),
       usagesByPid:new Map(), currentUserDeviceKeys:[] }, sampleAt);
-    const model = buildMonitorViewModel(store.read(), 'en');
-    data.applySamples(h.history.recordDisplayFrame(model, readyAt, 300000), { timeline:h.history.timeline(readyAt) });
+    const model = buildMonitorViewModel(store.read());
+    data.applySamples(h.history.recordDisplayFrames(model, [readyAt], readyAt, 300000), { timeline:h.history.timeline(readyAt) });
   }
   h.time(4800); assert.equal(data.sparkDisplayTime(state.charts.gpus[0]), 2800);
   assert.match(charts.sparkPaths(state.charts.gpus[0], 100).line, /L100,45\.0$/);
@@ -45,8 +45,8 @@ test('GPU 100 percent stays flat through null retention, failure, late arrival a
       devices: parseNvidiaCards('0, A100, ' + util + ', 100, 1000, 45, 50, 300, GPU-a'),
       usagesByPid: new Map(), currentUserDeviceKeys: [],
     }, at);
-    const model = buildMonitorViewModel(store.read(), 'en');
-    data.applySamples(h.history.recordDisplayFrame(model, at, 300000), { timeline: h.history.timeline(at) });
+    const model = buildMonitorViewModel(store.read());
+    data.applySamples(h.history.recordDisplayFrames(model, [at], at, 300000), { timeline: h.history.timeline(at) });
     return model;
   }
   update(0, '100'); update(2000, '100');
@@ -111,7 +111,7 @@ test('switching devices replaces points, versions and playback rather than reusi
   const other = new MetricHistory();
   h.model.sources.cpu = { state: 'ready', sequence: 1, sampledAt: 1000 };
   h.model.performance.cpu.usagePercent = 10;
-  const samples = other.recordDisplayFrame(h.model, 1000, 300000);
+  const samples = other.recordDisplayFrames(h.model, [1000], 1000, 300000);
   h.time(1000); data.applySamples(samples, { replace: true, timeline: other.timeline(1000) });
   assert.deepEqual(state.charts.cpu.map(point => [point.t, point.v]), [[1000, 10]]);
   assert.equal(data.sparkDisplayTime('cpu'), -1000);
@@ -190,13 +190,13 @@ test('paused retries leave recorded GPU generations intact until resumed samples
   h.stop(3000);
   h.model.sources.accelerators = { state: 'ready', sequence: 99, sampledAt: 4000 };
   h.model.performance.gpus = [a(50), b(60)];
-  assert.deepEqual(h.history.recordDisplayFrame(h.model, 4000, 300000), []);
+  assert.deepEqual(h.history.recordDisplayFrames(h.model, [4000], 4000, 300000), []);
   assert.equal(h.history.gpuGenerations.has('b'), false);
   h.restore();
   assert.deepEqual(Object.keys(state.charts.gpus), ['0']);
   h.resume(10000);
   h.model.sources.accelerators = { state: 'ready', sequence: 100, sampledAt: 10000 };
-  h.publish(h.history.recordDisplayFrame(h.model, 10000, 300000));
+  h.publish(h.history.recordDisplayFrames(h.model, [10000], 10000, 300000));
   assert.deepEqual(points(state.charts.gpus[0]), [[0, 10, false], [2000, 30, false], [10000, 50, true]]);
   assert.deepEqual(points(state.charts.gpus[1]), [[10000, 60, false]]);
   const live = Object.values(state.charts.gpus).map(points);

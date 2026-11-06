@@ -15,7 +15,7 @@ function createSessionFixture({ id = 'local', remote = false, paused = false, ch
     dispose() {},
   } : null;
   const session = new MonitorSession({ id, host: remote ? id.slice(4) : null, transport, configStore, chartClock,
-    language: 'en', onUpdate,
+    onUpdate,
     createService(options) {
       publish = () => options.onSnapshot(store.read());
       return {

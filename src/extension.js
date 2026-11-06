@@ -61,7 +61,6 @@ async function activate(context) {
     let provider = null;
     const manager = new DeviceMonitorManager({
       configStore,
-      language: vscode.env.language,
       localLinux,
       configFile: sshConfigFile,
       onLog: logDebug,
@@ -159,7 +158,6 @@ async function activate(context) {
   let provider = null;
   const session = new MonitorSession({
     configStore,
-    language: vscode.env.language,
     serviceOptions: { isSsh: isSSH, sshClientIp, sshConnectionInfo: sshConnectionInfo() ? sshConnectionInfo : null },
     onLog: logDebug,
     onUpdate: (current) => {

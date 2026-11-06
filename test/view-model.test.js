@@ -30,7 +30,7 @@ test('GPU availability follows occupation processes independently of utilization
   const store = new SnapshotStore();
   const devices = parseNvidiaCards('0, A100, 99, 70000, 80000, 45, 50, 250, GPU-A\n1, A100, 0, 1, 80000, 45, 50, 250, GPU-B');
   store.commit('accelerators', { devices, usagesByPid: new Map([[7, [{ deviceKey: 'nvidia:GPU-B', nativeIndex: 1, memoryUsedBytes: 0, memoryTotalBytes: 80000 * 1024 * 1024 }]]]), currentUserDeviceKeys: [] });
-  let gpus = buildMonitorViewModel(store.read(), 'en').performance.gpus;
+  let gpus = buildMonitorViewModel(store.read()).performance.gpus;
   assert.equal(gpus[0].isIdle, true);
   assert.equal(gpus[1].isIdle, false);
   assert.deepEqual(gpus[1].users, []);
@@ -38,7 +38,7 @@ test('GPU availability follows occupation processes independently of utilization
   assert.doesNotMatch(formatStatusBarText({ gpu: { summary: true, showIdleIds: true, mode: 'all', metric: 'util', skipIdle: true } }, { gpus }), /#0/);
   assert.match(formatStatusBarText({ gpu: { summary: true, showIdleIds: true, mode: 'all', metric: 'util', skipIdle: true } }, { gpus }), /#1/);
   store.fail('accelerators', new Error('process query timeout'));
-  gpus = buildMonitorViewModel(store.read(), 'en').performance.gpus;
+  gpus = buildMonitorViewModel(store.read()).performance.gpus;
   assert.ok(gpus.every((gpu) => gpu.availability === 'unknown' && !gpu.isIdle));
 });
 
@@ -47,11 +47,11 @@ test('process rendering revision remains stable when unrelated resource metrics 
   const store = new SnapshotStore();
   const cpu = { usagePercent: 10, coreCount: 8, loadAverage: { oneMinute: 1, fiveMinutes: 2, fifteenMinutes: 3 } };
   store.commit('cpu', cpu);
-  const first = buildMonitorViewModel(store.read(), 'en').processRevision;
+  const first = buildMonitorViewModel(store.read()).processRevision;
   store.commit('cpu', { ...cpu, usagePercent: 20 });
-  assert.equal(buildMonitorViewModel(store.read(), 'en').processRevision, first);
+  assert.equal(buildMonitorViewModel(store.read()).processRevision, first);
   store.commit('processes', { rows: [], totalCount: 0 });
-  assert.notEqual(buildMonitorViewModel(store.read(), 'en').processRevision, first);
+  assert.notEqual(buildMonitorViewModel(store.read()).processRevision, first);
 });
 
 test('status bar uses client-perspective SSH upload and download strings consistently', () => {
@@ -89,7 +89,7 @@ test('view model combines GPU users, CPU denominator and SSH latency', () => {
     sshTraffic: { value: { isSsh: true, clientUploadBytesPerSecond: 1024, clientDownloadBytesPerSecond: 0, latencyMilliseconds: 12.25 } },
     accelerators: { value: { devices: [device], usagesByPid: new Map([[7, [{ nativeIndex: 0, deviceKey: 'nvidia:uuid', memoryUsedBytes: 2 * gib, memoryTotalBytes: 80 * gib, processKey: '7:1' }]], [8, [{ nativeIndex: 0, deviceKey: 'nvidia:uuid', memoryUsedBytes: gib, memoryTotalBytes: 80 * gib, processKey: '8:1' }]]]), currentUserDeviceKeys: ['nvidia:uuid'] } },
   };
-  const model = buildMonitorViewModel(snapshot, 'en');
+  const model = buildMonitorViewModel(snapshot);
   assert.deepEqual(model.performance.cpu.loadAverage, { oneMinute: '1.2', fiveMinutes: '2.6', fifteenMinutes: '4.0' });
   assert.equal(model.performance.gpus[0].displayName, 'H100 80GB HBM3');
   assert.equal(model.performance.gpus[0].isMine, true);
@@ -111,8 +111,8 @@ test('mount filtering is applied once before both views consume a snapshot', () 
     ] },
     accelerators: { value: { devices: [], usagesByPid: new Map(), currentUserDeviceKeys: [] } },
   };
-  assert.deepEqual(buildMonitorViewModel(snapshot, 'en').performance.disks.map((disk) => disk.mount), ['/', '/data/child']);
-  assert.deepEqual(buildMonitorViewModel(snapshot, 'en', { hideParentMounts: false }).performance.disks.map((disk) => disk.mount), ['/', '/data', '/data/child']);
+  assert.deepEqual(buildMonitorViewModel(snapshot).performance.disks.map((disk) => disk.mount), ['/', '/data/child']);
+  assert.deepEqual(buildMonitorViewModel(snapshot, { hideParentMounts: false }).performance.disks.map((disk) => disk.mount), ['/', '/data', '/data/child']);
 });
 
 test('the latest mount selection immediately projects cached capacity without modifying its snapshot', () => {
@@ -120,8 +120,8 @@ test('the latest mount selection immediately projects cached capacity without mo
   const topology = [['/', 'ext4'], ['/nfs', 'nfs4'], ['/data', 'xfs'], ['/tmp', 'tmpfs']].map(([mountPath, fileSystemType]) =>
     ({ mountPath, fileSystemType, usedBytes: 40, availableBytes: 60, totalBytes: 100 }));
   store.commit('diskTopology', topology); const snapshot = store.read();
-  const before = buildMonitorViewModel(snapshot, 'en', { mountFilter: 'all', hideParentMounts: false });
-  const projected = buildMonitorViewModel(snapshot, 'en', { mountFilter: 'custom', customPathExclude: '/nfs', hideVirtualFs: true, hideParentMounts: false });
+  const before = buildMonitorViewModel(snapshot, { mountFilter: 'all', hideParentMounts: false });
+  const projected = buildMonitorViewModel(snapshot, { mountFilter: 'custom', customPathExclude: '/nfs', hideVirtualFs: true, hideParentMounts: false });
   assert.deepEqual(before.performance.disks.map(disk => disk.mount), ['/', '/nfs', '/data', '/tmp']);
   assert.deepEqual(projected.performance.disks.map(disk => disk.mount), ['/', '/data']);
   assert.equal(projected.sources.diskTopology.revision, before.sources.diskTopology.revision);
@@ -134,7 +134,7 @@ test('disk breakdown, occupied ratio and bar segments use the same capacity snap
     diskTopology: { value: [{ mountPath: '/data', usedBytes: 70 * gib, availableBytes: 25 * gib, totalBytes: 100 * gib, usagePercent: 70 }] },
     accelerators: { status: 'ready', value: { devices: [], usagesByPid: new Map(), currentUserDeviceKeys: [] } },
   };
-  const disk = buildMonitorViewModel(snapshot, 'en').performance.disks[0];
+  const disk = buildMonitorViewModel(snapshot).performance.disks[0];
   assert.equal(disk.reservedStr, '5.0G');
   assert.equal(disk.usedStr, '70.0G');
   assert.equal(disk.availableStr, '25.0G');
@@ -145,7 +145,7 @@ test('disk breakdown, occupied ratio and bar segments use the same capacity snap
   assert.equal(disk.pct, 75);
   snapshot.diskTopology.value[0].usedBytes = 85 * gib;
   snapshot.diskTopology.value[0].availableBytes = 10 * gib;
-  assert.equal(buildMonitorViewModel(snapshot, 'en').performance.disks[0].pct, 90);
+  assert.equal(buildMonitorViewModel(snapshot).performance.disks[0].pct, 90);
 });
 
 test('GPU card, process tag and user capsule use the same rounded memory percentage', () => {
@@ -161,7 +161,7 @@ test('GPU card, process tag and user capsule use the same rounded memory percent
       currentUserDeviceKeys: [],
     } },
   };
-  const model = buildMonitorViewModel(snapshot, 'en');
+  const model = buildMonitorViewModel(snapshot);
   assert.equal(model.performance.gpus[0].memPct, 90);
   assert.equal(model.performance.gpus[0].users[0].percent, 90);
   assert.equal(model.processes[0].gpus[0].pct, 90);

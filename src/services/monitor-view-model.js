@@ -86,7 +86,7 @@ function buildDisks(topology, diskConfig) {
   return disks;
 }
 
-function buildMonitorViewModel(snapshot, language, diskConfig = {}) {
+function buildMonitorViewModel(snapshot, diskConfig = {}) {
   const available = (key) => !!snapshot[key] && snapshot[key].value != null;
   const cpu = valueOf(snapshot.cpu, { usagePercent: null, coreCount: 0, loadAverage: { oneMinute: 0, fiveMinutes: 0, fifteenMinutes: 0 } });
   const memory = valueOf(snapshot.memory, { usagePercent: 0, usedBytes: 0, availableBytes: 0, totalBytes: 0 });
@@ -114,7 +114,6 @@ function buildMonitorViewModel(snapshot, language, diskConfig = {}) {
       }];
     })),
     performance: {
-      language,
       cpu: { available: available('cpu'), usagePercent: optionalNumber(cpu.usagePercent), coreCount: cpu.coreCount, loadAverage: {
         oneMinute: Number.isFinite(cpu.loadAverage.oneMinute) ? cpu.loadAverage.oneMinute.toFixed(1) : '--', fiveMinutes: Number.isFinite(cpu.loadAverage.fiveMinutes) ? cpu.loadAverage.fiveMinutes.toFixed(1) : '--', fifteenMinutes: Number.isFinite(cpu.loadAverage.fifteenMinutes) ? cpu.loadAverage.fifteenMinutes.toFixed(1) : '--',
       } },

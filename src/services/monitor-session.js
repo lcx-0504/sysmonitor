@@ -13,9 +13,9 @@ function processesSettled(snapshot) {
 }
 
 class MonitorSession {
-  constructor({ id = 'local', host = null, transport = null, configStore, language,
+  constructor({ id = 'local', host = null, transport = null, configStore,
     isPaused = null, chartClock, onUpdate = () => {}, onLog = () => {}, serviceOptions = {}, createService = (options) => new MonitorService(options) }) {
-    Object.assign(this, { id, host, transport, configStore, language, onUpdate });
+    Object.assign(this, { id, host, transport, configStore, onUpdate });
     this.paused = false;
     this.isPaused = isPaused || (() => this.paused);
     this.state = transport ? 'connecting' : 'connected';
@@ -95,7 +95,7 @@ class MonitorSession {
     if (this.service.processDemand === demanded) return;
     this.service.setProcessDemand(demanded);
     this.processesPending = demanded;
-    if (!this.model) return;
+    if (!this.presentedSnapshot) return;
     this.projectSnapshot({ ...this.presentedSnapshot, processes: this.service.readSnapshot().processes });
     this.notify();
   }
@@ -150,7 +150,7 @@ class MonitorSession {
   projectSnapshot(snapshot) {
     if (processesSettled(snapshot)) this.processesPending = false;
     this.presentedSnapshot = snapshot;
-    this.model = buildMonitorViewModel(snapshot, this.language, this.configStore.getCurrent().disk);
+    this.model = buildMonitorViewModel(snapshot, this.configStore.getCurrent().disk);
     this.metricHistory.syncSources(this.model, this.frameClock.now());
   }
 

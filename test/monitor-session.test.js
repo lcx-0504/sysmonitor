@@ -22,7 +22,7 @@ const { MonitorSession } = require('../src/services/monitor-session');
 
 test('disabled performance modules do not delay the first display or surface their old failures', async t => {
   let config=normalizeConfig({});
-  const session=new MonitorSession({configStore:{getCurrent:()=>config},language:'en',serviceOptions:{isSsh:false,statusBarAvailable:false}});
+  const session=new MonitorSession({configStore:{getCurrent:()=>config},serviceOptions:{isSsh:false,statusBarAvailable:false}});
   t.after(()=>session.dispose());
   session.service.snapshotStore.fail('diskTopology',new Error('disk failed'));
   session.acceptSnapshot(session.service.readSnapshot());
@@ -94,7 +94,7 @@ test('paused one-shot collection publishes only after its active modules settle'
   const config = normalizeConfig({ statusBar: { barEnabled: false }, display: { hiddenGroups: {
     cpu: true, disk: true, network: true, gpuCards: true, gpuSummary: true,
   } } });
-  const session = new MonitorSession({ configStore: { getCurrent: () => config }, language: 'en', serviceOptions: { isSsh: false } });
+  const session = new MonitorSession({ configStore: { getCurrent: () => config }, serviceOptions: { isSsh: false } });
   t.after(() => session.dispose());
   session.paused = true;
   session.setProcessDemand(true);
@@ -418,7 +418,7 @@ test('real service completion publishes the complete first snapshot before the n
   const readFile = async (file) => file === '/proc/stat' ? `cpu ${++cpuReads * 10} 0 10 80 0 0 0 0\ncpu0 1 0 1 8\ncpu1 1 0 1 8\ncpu2 1 0 1 8\ncpu3 1 0 1 8\n` : files[file];
   const resources = resourceCommandRunner(readFile);
   const session = new MonitorSession({
-    configStore: { getCurrent: () => normalizeConfig({}) }, language: 'en',
+    configStore: { getCurrent: () => normalizeConfig({}) },
     serviceOptions: {
       fileReader: { readFile },
       systemInfo: { coreCount: async () => 4, totalMemoryBytes: async () => 1024000 },
@@ -524,7 +524,7 @@ test('enabling process demand on a running service collects immediately', async 
 
 test('the device manager applies process demand to existing and later devices', t => {
   const { DeviceMonitorManager } = require('../src/services/device-monitor-manager');
-  const manager = new DeviceMonitorManager({ localLinux: false, language: 'en',
+  const manager = new DeviceMonitorManager({ localLinux: false,
     configStore: { getSaveState: () => ({ status: 'saved', error: null }), getCurrent: () => normalizeConfig({}) } });
   t.after(() => manager.dispose());
   const demands = [];

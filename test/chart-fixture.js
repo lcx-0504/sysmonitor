@@ -30,13 +30,13 @@ function harness(t, minutes = 5) {
     if (source === 'cpu' || source === 'memory') model.performance[source] = { usagePercent: value };
     else if (source === 'accelerators') model.performance.gpus = value;
     else model.performance[source] = value;
-    const samples = history.recordDisplayFrame(model, now, minutes * 60000);
+    const samples = history.recordDisplayFrames(model, [now], now, minutes * 60000);
     publish(samples);
     return samples;
   }
   function fail(source, at) {
     time(at); model.sources[source].state = 'error';
-    publish(history.recordDisplayFrame(model, now, minutes * 60000));
+    publish(history.recordDisplayFrames(model, [now], now, minutes * 60000));
   }
   function restore() { data.applySamples(history.samples, { replace: true, timeline: history.timeline(now) }); }
   function stop(at, gap = true) { time(at); history.stop(now, { gap }); publish(); data.setSparkActivity(true, true); }

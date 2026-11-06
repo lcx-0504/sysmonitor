@@ -44,7 +44,7 @@ test('disabled modules leave scheduling, failures and initial readiness together
     assert.equal(service.readSnapshot()[key].lastError, null, key);
     assert.equal(service.readSnapshot()[key].value, null, key);
   }
-  const model = buildMonitorViewModel(service.readSnapshot(), 'en');
+  const model = buildMonitorViewModel(service.readSnapshot());
   assert.deepEqual(model.performance.gpus, []);
   assert.equal(model.sources.accelerators.state, 'disabled');
   service.updateConfig(normalizeConfig({}));
@@ -122,7 +122,7 @@ test('process CPU normalization is available without the CPU utilization collect
   const collector=new ProcessCollector({commandRunner:{execFile:async()=>({stdout:'__SYSMON_PROCESSES__ 1 0\n7 root 50.0 2048 Sun Jul 13 12:34:56 2026 /bin/test\n__SYSMON_SESSIONS__\n'})},
     systemInfo:{totalMemoryBytes:async()=>1024**3,coreCount:async()=>4}});
   const store=new SnapshotStore(); store.reset('cpu','disabled'); store.commit('processes',await collector.collect());
-  const model=buildMonitorViewModel(store.read(),'en');
+  const model=buildMonitorViewModel(store.read());
   assert.equal(model.processes[0].cpu,50); assert.equal(model.processes[0].cpuWhole,12.5);
 });
 
@@ -131,10 +131,10 @@ test('the server list drops disabled metric summaries along with their samples',
   const service=new MonitorService({runtimeConfig:normalizeConfig({}),isSsh:true,statusBarAvailable:false});
   service.pause(); t.after(()=>service.dispose());
   service.snapshotStore.commit('cpu',{usagePercent:80,coreCount:4,loadAverage:{oneMinute:1,fiveMinutes:2,fifteenMinutes:3}});
-  const device={service,state:'connected',model:buildMonitorViewModel(service.readSnapshot(),'en')};
+  const device={service,state:'connected',model:buildMonitorViewModel(service.readSnapshot())};
   const directory=new ServerDirectory({vscode:{},manager:{get:()=>device}});
   t.after(()=>directory.dispose()); directory.hosts=['fixture'];
   assert.deepEqual(directory.rows()[0].metrics,['CPU 80%']);
-  service.updateConfig(disabledConfig()); device.model=buildMonitorViewModel(service.readSnapshot(),'en');
+  service.updateConfig(disabledConfig()); device.model=buildMonitorViewModel(service.readSnapshot());
   assert.deepEqual(directory.rows()[0].metrics,[]);
 });

@@ -323,7 +323,7 @@ test('monitor views wait for SSH while terminal opens without a preflight', asyn
 
 test('a hidden server stays sampled while its first monitor view is being prepared', () => {
   const config = normalizeConfig({ servers: { visibleOnly: true } });
-  const manager = new DeviceMonitorManager({ configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => config }, language: 'en', localLinux: false });
+  const manager = new DeviceMonitorManager({ configStore: { getSaveState: () => ({ status:'saved', error:null }), getCurrent: () => config }, localLinux: false });
   const calls = [];
   const service = {
     scheduler: { isPaused: true },

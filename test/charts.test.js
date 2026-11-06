@@ -9,7 +9,7 @@ test('display frames keep one interval of lookahead while successful data is sti
   const h = harness(t);
   h.model.sources.diskIo = { state:'ready', sequence:100, sampledAt:0 };
   h.model.performance.diskIo = { readBytesPerSecond:60, writeBytesPerSecond:30, readSampled:false };
-  function frame(at) { h.time(at); h.publish(h.history.recordDisplayFrame(h.model, at, 300000)); }
+  function frame(at) { h.time(at); h.publish(h.history.recordDisplayFrames(h.model, [at], at, 300000)); }
   for (let at = 0; at <= 12000; at += 2000) {
     if (at === 6000) h.model.performance.diskIo.readBytesPerSecond = 70;
     frame(at);
@@ -28,7 +28,7 @@ test('every displayed metric records the same frame clock independently of colle
   h.model.performance = { cpu:{ usagePercent:20, sampled:false }, memory:{ usagePercent:30 },
     network:{ transmitBytesPerSecond:40, receiveBytesPerSecond:50 }, diskIo:{ readBytesPerSecond:60, writeBytesPerSecond:70 },
     sshTraffic:{ uploadBytesPerSecond:80, downloadBytesPerSecond:90 }, gpus:gpu(100) };
-  for (const at of [0,2000,4000,6000]) { h.time(at); h.publish(h.history.recordDisplayFrame(h.model, at, 300000)); }
+  for (const at of [0,2000,4000,6000]) { h.time(at); h.publish(h.history.recordDisplayFrames(h.model, [at], at, 300000)); }
   h.time(7000);
   for (const series of [state.charts.cpu,state.charts.memory,state.charts.netTx,state.charts.netRx,state.charts.diskRead,state.charts.diskWrite,state.charts.sshTx,state.charts.sshRx,state.charts.gpus[0]]) {
     assert.deepEqual(series.map(point => point.t), [0,2000,4000,6000]);
@@ -41,7 +41,7 @@ test('every displayed metric records the same frame clock independently of colle
 test('a reported failure stops recording and drains the existing buffer before holding', t => {
   const h = harness(t);
   h.model.sources.cpu = { state:'ready', sequence:10, sampledAt:0 }; h.model.performance.cpu = { usagePercent:60 };
-  function frame(at) { h.time(at); h.publish(h.history.recordDisplayFrame(h.model, at, 300000)); }
+  function frame(at) { h.time(at); h.publish(h.history.recordDisplayFrames(h.model, [at], at, 300000)); }
   for (const at of [0,2000,4000]) frame(at);
   h.model.sources.cpu.state = 'stale'; h.time(5500);
   assert.equal(data.sparkDisplayTime('cpu'), 3500);
@@ -257,10 +257,10 @@ test('paused displayed values enter history only after resuming, with a manual g
   const h = harness(t); h.record('cpu', 40, 0); h.stop(1000);
   h.model.sources.cpu = { state: 'ready', sequence: 99, sampledAt: 2000 };
   h.model.performance.cpu.usagePercent = 90;
-  assert.deepEqual(h.history.recordDisplayFrame(h.model, 2000, 300000), []);
+  assert.deepEqual(h.history.recordDisplayFrames(h.model, [2000], 2000, 300000), []);
   assert.deepEqual(state.charts.cpu.map(point => point.v), [40]);
   h.resume(10000);
-  h.publish(h.history.recordDisplayFrame(h.model, 10000, 300000));
+  h.publish(h.history.recordDisplayFrames(h.model, [10000], 10000, 300000));
   assert.deepEqual(points(state.charts.cpu), [[0, 40, false], [10000, 90, true]]);
 });
 
@@ -287,7 +287,7 @@ test('a stalled source retains its window even while another source advances for
 test('live and hydrate preserve window predecessors for sparse valid samples', t => {
   const h = harness(t, 1);
   for (const at of [0, 45000, 90000]) h.record('cpu', 40, at);
-  h.time(93000); h.publish(h.history.recordDisplayFrame(h.model, 93000, 60000));
+  h.time(93000); h.publish(h.history.recordDisplayFrames(h.model, [93000], 93000, 60000));
   const path = charts.sparkPaths(state.charts.cpu, 100).line;
   h.restore();
   assert.equal(charts.sparkPaths(state.charts.cpu, 100).line, path);

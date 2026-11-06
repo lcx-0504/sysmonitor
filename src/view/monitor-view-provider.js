@@ -213,7 +213,7 @@ class MonitorViewProvider {
     const demanded = this.records().some((record) => record.target.visible && this.pageOf(record) === 'proc');
     if (demanded === this.processDemand) return;
     this.processDemand = demanded;
-    if (typeof this.session.setProcessDemand === 'function') this.session.setProcessDemand(demanded);
+    this.session.setProcessDemand(demanded);
   }
 
   pageOf(record) {

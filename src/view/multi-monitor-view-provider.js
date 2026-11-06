@@ -279,7 +279,7 @@ class MultiMonitorViewProvider {
     const key = [...ids].sort().join('\n');
     if (key === this.processDemandKey) return;
     this.processDemandKey = key;
-    if (typeof this.manager.setProcessDemand === 'function') this.manager.setProcessDemand(ids);
+    this.manager.setProcessDemand(ids);
   }
 
   persist(source, { hydrate = false } = {}) {

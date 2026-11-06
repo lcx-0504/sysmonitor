@@ -96,10 +96,6 @@ class MetricHistory {
     this.gapOnResume = false;
   }
 
-  recordDisplayFrame(model, now, windowMilliseconds) {
-    return this.recordDisplayFrames(model, [now], now, windowMilliseconds);
-  }
-
   recordDisplayFrames(model, times, readyAt, windowMilliseconds) {
     if (this.stoppedAt !== null) return [];
     const updates = [];

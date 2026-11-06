@@ -131,7 +131,7 @@ test('remote selection unions independent CPU, RAM and GPU top hundreds with a 3
   assert.equal(sample.rows[0].pid, 1);
   assert.equal(sample.rows[0].cpuUsagePercent, 199);
   const store = new SnapshotStore(); store.commit('processes', sample);
-  const model = buildMonitorViewModel(store.read(), 'en');
+  const model = buildMonitorViewModel(store.read());
   assert.equal(model.processTotalCount, 600);
   assert.equal(model.processes.length, 300);
 });
@@ -214,7 +214,7 @@ test('tmux and screen sessions are attributed to the nearest session of the curr
     400: null, 500: null, 501: null, 600: null,
   });
   const store = new SnapshotStore(); store.commit('processes', sample);
-  const model = buildMonitorViewModel(store.read(), 'en');
+  const model = buildMonitorViewModel(store.read());
   assert.deepEqual(model.processes.find(process => process.pid === 201).session, { type: 'screen', name: 'exp', id: '200.exp' });
   assert.equal(model.processes.find(process => process.pid === 400).session, null);
 });
