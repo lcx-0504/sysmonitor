@@ -1,5 +1,7 @@
 import { state } from "./state.mjs";
 import { copyText, sendToExtension, tagColorClass, tr } from "./ui.mjs";
+import { TO_EXTENSION } from "./protocol.mjs";
+import { LOCAL_DEVICE_ID } from "./device-id.mjs";
 
 const PROCESS_ROW_LIMIT = 100;
 const PROCESS_DISPLAY_MODES = { cpu: ['core', 'whole', 'both'], ram: ['size', 'percent', 'both'] };
@@ -223,7 +225,7 @@ function removeCtxMenu() {
   }
 
 function openSessionTerminal(p) {
-  sendToExtension({ cmd: 'openSessionTerminal', deviceId: state.ui.deviceId || 'local', pid: p.pid });
+  sendToExtension(TO_EXTENSION.openSessionTerminal, { deviceId: state.ui.deviceId || LOCAL_DEVICE_ID, pid: p.pid });
 }
 
 function menuItem(menu, label, action) {
@@ -333,11 +335,11 @@ export function initializeProcesses({ switchPage: navigate, bindInfoButton: bind
       if (key === 'name' || key === 'cmd') {
         var expandKey = key === 'name' ? 'expandName' : 'expandCmd';
         display[expandKey] = !display[expandKey];
-        sendToExtension({cmd:'setProcessDisplay',key:expandKey,value:display[expandKey]});
+        sendToExtension(TO_EXTENSION.setProcessDisplay, { key: expandKey, value: display[expandKey] });
       } else {
         var modes = PROCESS_DISPLAY_MODES[key];
         display[key] = modes[(modes.indexOf(display[key]) + 1) % modes.length];
-        sendToExtension({cmd:'setProcessDisplay',key:key,value:display[key]});
+        sendToExtension(TO_EXTENSION.setProcessDisplay, { key, value: display[key] });
       }
       renderProcTable();
     });

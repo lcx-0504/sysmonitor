@@ -1,5 +1,6 @@
 import { state } from "./state.mjs";
 import { sendToExtension, tr } from "./ui.mjs";
+import { TO_EXTENSION } from "./protocol.mjs";
 import { addSshDefaultExtension, updateSshDefaultUi } from "./settings.mjs";
 let updateLocalIntro;
 
@@ -29,7 +30,7 @@ function renderRemoteMenu(folders) {
     connect.textContent = tr("connectToHost");
     connect.addEventListener('click', function() {
       var host = state.ui.remoteMenuHost; closeRemoteMenu();
-      sendToExtension({ cmd: 'openRemoteWindow', host: host });
+      sendToExtension(TO_EXTENSION.openRemoteWindow, { host });
     });
     remoteMenu.appendChild(connect);
     if (folders.length) {
@@ -44,7 +45,7 @@ function renderRemoteMenu(folders) {
       item.textContent = folder.folder; item.title = folder.folder;
       item.addEventListener('click', function() {
         var host = state.ui.remoteMenuHost; closeRemoteMenu();
-        sendToExtension({ cmd: 'openRemoteWindow', host: host, folderIndex: folder.index });
+        sendToExtension(TO_EXTENSION.openRemoteWindow, { host, folderIndex: folder.index });
       });
       remoteMenu.appendChild(item);
     });
@@ -67,7 +68,7 @@ function activateRemoteWindow(host, button) {
     closeRemoteMenu();
     state.ui.remoteMenuHost = host; remoteMenuButton = button;
     button.setAttribute('aria-busy', 'true');
-    sendToExtension({ cmd: 'activateRemoteWindow', host: host });
+    sendToExtension(TO_EXTENSION.activateRemoteWindow, { host });
   }
 
 function renderServers() {
@@ -113,19 +114,19 @@ function renderServers() {
         var open = document.createElement('button');
         open.type = 'button'; open.className = 'tb server-open';
         open.textContent = tr("open");
-        open.addEventListener('click', function() { sendToExtension({ cmd: 'openServer', host: server.host }); });
+        open.addEventListener('click', function() { sendToExtension(TO_EXTENSION.openServer, { host: server.host }); });
         var editor = document.createElement('button');
         editor.type = 'button'; editor.className = 'server-action server-editor';
         editor.innerHTML = serverIcons.editor;
         editor.title = tr("openInEditor");
         editor.setAttribute('aria-label', editor.title);
-        editor.addEventListener('click', function() { sendToExtension({ cmd: 'openServer', host: server.host, inEditor: true }); });
+        editor.addEventListener('click', function() { sendToExtension(TO_EXTENSION.openServer, { host: server.host, inEditor: true }); });
         var floating = document.createElement('button');
         floating.type = 'button'; floating.className = 'server-action server-window';
         floating.innerHTML = serverIcons.window;
         floating.title = tr("openInNewWindow");
         floating.setAttribute('aria-label', floating.title);
-        floating.addEventListener('click', function() { sendToExtension({ cmd: 'openServer', host: server.host, inWindow: true }); });
+        floating.addEventListener('click', function() { sendToExtension(TO_EXTENSION.openServer, { host: server.host, inWindow: true }); });
         var remote = document.createElement('button');
         remote.type = 'button'; remote.className = 'server-action server-remote';
         remote.innerHTML = serverIcons.remote;
@@ -139,7 +140,7 @@ function renderServers() {
         terminal.innerHTML = serverIcons.terminal;
         terminal.title = tr("openSSHTerminal");
         terminal.setAttribute('aria-label', terminal.title);
-        terminal.addEventListener('click', function() { sendToExtension({ cmd: 'openTerminal', host: server.host }); });
+        terminal.addEventListener('click', function() { sendToExtension(TO_EXTENSION.openTerminal, { host: server.host }); });
         actions.appendChild(open); actions.appendChild(editor); actions.appendChild(floating); actions.appendChild(terminal); actions.appendChild(remote);
         row.appendChild(main); row.appendChild(actions);
         serverRowNodes.set(server.host, row);
@@ -190,14 +191,29 @@ export function initializeServers({ updateLocalIntro: refreshIntro }) {
   document.addEventListener('keydown', function(event) { if (event.key === 'Escape') closeRemoteMenu(); });
   state.elements.serverPage.addEventListener('scroll', closeRemoteMenu);
   window.addEventListener('resize', closeRemoteMenu);
-  document.getElementById('topbar-server-refresh').addEventListener('click', function() { sendToExtension({cmd:'refreshServers'}); });
+  document.getElementById('topbar-server-refresh').addEventListener('click', function() { sendToExtension(TO_EXTENSION.refreshServers); });
   document.getElementById('server-intro-ssh-default').addEventListener('click', addSshDefaultExtension);
   updateSshDefaultUi();
   document.getElementById('server-intro-close').addEventListener('click', function() {
       state.ui.localIntroDismissed = true;
       updateLocalIntro();
-      sendToExtension({ cmd: 'dismissLocalIntro' });
+      sendToExtension(TO_EXTENSION.dismissLocalIntro);
     });
 }
 
-export { closeRemoteMenu, showRemoteMenu, renderServers };
+function showServers({ hosts, error }) {
+    state.data.serverRows = hosts || [];
+    state.data.serverError = error || '';
+    state.data.serversLoaded = true;
+    renderServers();
+  }
+
+function showRemoteFolders({ host, folders }) {
+    if (state.ui.remoteMenuHost === host) showRemoteMenu(folders || []);
+  }
+
+function finishRemoteWindowAction({ host }) {
+    if (state.ui.remoteMenuHost === host) closeRemoteMenu();
+  }
+
+export { closeRemoteMenu, renderServers, showServers, showRemoteFolders, finishRemoteWindowAction };

@@ -1,13 +1,15 @@
 import { state } from "./state.mjs";
 import { sendToExtension, tr } from './ui.mjs';
+import { TO_EXTENSION } from './protocol.mjs';
+import { LOCAL_DEVICE_ID, deviceHost, isLocalDeviceId, isSshDeviceId } from './device-id.mjs';
 import { updateDeviceScrollbar, updateTopbarLayout, updateResponsiveLayout } from "./layout.mjs";
-import { closeRemoteMenu, renderServers, showRemoteMenu } from "./servers.mjs";
+import { closeRemoteMenu } from "./servers.mjs";
 import { setChartActivity, updateSparkAnimation } from "./charts.mjs";
-import { updateSshDefaultUi } from "./settings.mjs";
 import { localizeError } from "./i18n.mjs";
 import { renderGpuUsers, hideInfoPopover, resetMonitorView } from "./performance.mjs";
 import { showProcessPage } from "./processes.mjs";
 
+let activePage = 'perf';
 let localLinux, previousNavigationState, pointerDrag, suppressDeviceClick, serverTabButton, deviceStrip, topbar, connectionRetryButton, connectionState, connectionError, connectionRetryAfter, retryPending, retryCountdownTimer;
 
 function hasSamplingFailure() {
@@ -24,7 +26,7 @@ function retryButtonState(connection, pending, isPaused, retryAfter, now, langua
 
 function refreshConnectionRetryButton() {
     if (retryCountdownTimer) { clearTimeout(retryCountdownTimer); retryCountdownTimer = null; }
-    var sshDevice = !!state.ui.deviceId && state.ui.deviceId.startsWith('ssh:');
+    var sshDevice = isSshDeviceId(state.ui.deviceId);
     var now = Date.now();
     var collecting = state.data.status?.collecting === true;
     var buttonState = retryButtonState(connectionState, retryPending || collecting, state.ui.paused, connectionRetryAfter, now, state.locale.language);
@@ -98,7 +100,7 @@ function reorderDeviceTab(draggedId, targetIndex) {
     state.ui.navigation = Object.assign({}, state.ui.navigation, { tabs: reordered });
     renderDeviceTabs();
     storeNavigation();
-    sendToExtension({ cmd: 'reorderDevices', tabs: reordered });
+    sendToExtension(TO_EXTENSION.reorderDevices, { tabs: reordered });
   }
 
 function updateDeviceTabsPresentation() {
@@ -129,22 +131,22 @@ function renderDeviceTabs() {
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', state.ui.navigation.selected === id && state.ui.navigation.page !== 'servers' ? 'true' : 'false');
       var name = document.createElement('span');
-      name.textContent = id === 'local' ? (tr("local")) : id.slice(4);
+      name.textContent = isLocalDeviceId(id) ? tr("local") : deviceHost(id);
       tab.appendChild(name);
       tab.title = name.textContent;
       tab.addEventListener('click', function(event) {
         if (suppressDeviceClick) { event.preventDefault(); suppressDeviceClick = false; return; }
-        sendToExtension({ cmd: 'switchDevice', id: id });
+        sendToExtension(TO_EXTENSION.switchDevice, { id });
       });
       tab.addEventListener('keydown', function(event) {
         if (event.target !== tab || (event.key !== 'Enter' && event.key !== ' ')) return;
         event.preventDefault();
-        sendToExtension({ cmd: 'switchDevice', id: id });
+        sendToExtension(TO_EXTENSION.switchDevice, { id });
       });
       tab.addEventListener('auxclick', function(event) {
-        if (event.button !== 1 || id === 'local') return;
+        if (event.button !== 1 || isLocalDeviceId(id)) return;
         event.preventDefault();
-        sendToExtension({ cmd: 'closeDevice', id: id });
+        sendToExtension(TO_EXTENSION.closeDevice, { id });
       });
       tab.addEventListener('pointerdown', function(event) {
         if (event.button !== 0 || event.target.closest('.device-tab-close')) return;
@@ -177,14 +179,14 @@ function renderDeviceTabs() {
         if (pointerDrag && pointerDrag.pointerId === event.pointerId) clearTabDrag();
       });
       tab.dataset.deviceId = id;
-      if (id !== 'local') {
+      if (!isLocalDeviceId(id)) {
         var close = document.createElement('button');
         close.type = 'button';
         close.className = 'device-tab-close';
         close.textContent = '×';
         close.title = tr("closeDevice");
         close.setAttribute('aria-label', close.title);
-        close.addEventListener('click', function(event) { event.stopPropagation(); sendToExtension({ cmd: 'closeDevice', id: id }); });
+        close.addEventListener('click', function(event) { event.stopPropagation(); sendToExtension(TO_EXTENSION.closeDevice, { id }); });
         tab.appendChild(close);
       }
       deviceStrip.appendChild(tab);
@@ -211,7 +213,7 @@ function showNavigation(nextNavigation) {
       connectionError = null;
       connectionRetryAfter = null;
       retryPending = false;
-      setChartActivity(state.ui.paused, nextDeviceId === 'local');
+      setChartActivity(state.ui.paused, isLocalDeviceId(nextDeviceId));
       refreshConnectionRetryButton();
       resetMonitorView();
     }
@@ -250,36 +252,16 @@ function refreshConnectionBanner() {
     state.elements.connectionBanner.classList.toggle('show', !!text && !state.elements.serverPage.classList.contains('active'));
   }
 
-function handleNavigationMessage(data, presentSnapshot) {
-    if (data.cmd === 'retryConnectionResult' && (state.environment.localMode ? data.deviceId === state.ui.deviceId : data.deviceId === 'local')) {
-      retryPending = false;
-      if (data.error && connectionState === 'disconnected') connectionError = data.error;
-      refreshConnectionBanner();
-      return true;
-    }
-    if (data.cmd === 'sshDefaultExtensions') {
-      state.config.sshDefaultInstalled = data.installed === true;
-      state.ui.installPending = false;
-      updateSshDefaultUi(data.error);
-      return true;
-    }
-    if (!state.environment.localMode) return false;
-    if (data.cmd === 'navigation') showNavigation(data.state);
-    else if (data.cmd === 'localIntroDismissed') { state.ui.localIntroDismissed = true; updateLocalIntro(); }
-    else if (data.cmd === 'deviceState') {
-      showNavigation(data.state);
-      presentSnapshot(data, true);
-    }
-    else if (data.cmd === 'servers') {
-      state.data.serverRows = data.hosts || [];
-      state.data.serverError = data.error || '';
-      state.data.serversLoaded = true;
-      renderServers();
-    }
-    else if (data.cmd === 'remoteFolders' && state.ui.remoteMenuHost === data.host) showRemoteMenu(data.folders || []);
-    else if (data.cmd === 'remoteWindowActionDone' && state.ui.remoteMenuHost === data.host) closeRemoteMenu();
-    else return false;
-    return true;
+function showRetryConnectionResult({ deviceId, error }) {
+    if (deviceId !== (state.environment.localMode ? state.ui.deviceId : LOCAL_DEVICE_ID)) return;
+    retryPending = false;
+    if (error && connectionState === 'disconnected') connectionError = error;
+    refreshConnectionBanner();
+  }
+
+function dismissLocalIntro() {
+    state.ui.localIntroDismissed = true;
+    updateLocalIntro();
   }
 
 export function initializeNavigation() {
@@ -311,17 +293,17 @@ export function initializeNavigation() {
   retryCountdownTimer = null;
   connectionRetryButton.addEventListener('click', function() {
       if (retryPending) return;
-      var reconnect = connectionState === 'disconnected' && state.ui.deviceId && state.ui.deviceId.startsWith('ssh:');
+      var reconnect = connectionState === 'disconnected' && isSshDeviceId(state.ui.deviceId);
       if (!reconnect && !hasSamplingFailure()) return;
       retryPending = true;
       refreshConnectionRetryButton();
-      if (reconnect) sendToExtension({ cmd: 'retryConnection', deviceId: state.ui.deviceId });
-      else sendToExtension({ cmd: 'retrySampling', deviceId: state.ui.deviceId || 'local' });
+      if (reconnect) sendToExtension(TO_EXTENSION.retryConnection, { deviceId: state.ui.deviceId });
+      else sendToExtension(TO_EXTENSION.retrySampling, { deviceId: state.ui.deviceId || LOCAL_DEVICE_ID });
     });
 
 }
 
-export { retryButtonState, refreshConnectionRetryButton, updateLocalIntro, showNavigation, showConnection, handleNavigationMessage };
+export { retryButtonState, refreshConnectionRetryButton, updateLocalIntro, showNavigation, showConnection, showRetryConnectionResult, dismissLocalIntro };
 
 function switchTab(name, notify) {
     if (state.environment.editorMode && name === 'servers') return;
@@ -333,12 +315,13 @@ function switchTab(name, notify) {
       state.elements.connectionBanner.classList.toggle('show', !!state.elements.connectionBannerText.textContent && name !== 'servers');
       closeRemoteMenu();
       storeNavigation();
-      sendToExtension({cmd:'switchPage',page:name});
+      sendToExtension(TO_EXTENSION.switchPage, { page: name });
     }
     if (notify !== false && !state.environment.localMode) {
       state.bridge.setState(Object.assign({}, state.bridge.getState() || {}, {page:name}));
-      sendToExtension({cmd:'switchPage',page:name});
+      sendToExtension(TO_EXTENSION.switchPage, { page: name });
     }
+    activePage = name;
     hideInfoPopover();
     document.querySelectorAll('.tab-content').forEach(function(d){d.classList.remove('active');});
     document.getElementById('tab-'+name).classList.add('active');
@@ -361,4 +344,8 @@ function showMonitorStatus(status) {
   }
 
 
-export { switchTab, showMonitorStatus };
+function currentPage() {
+    return activePage;
+  }
+
+export { switchTab, showMonitorStatus, currentPage };

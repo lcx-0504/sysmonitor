@@ -1,5 +1,6 @@
 import { state } from "./state.mjs";
 import { sendToExtension, tr } from "./ui.mjs";
+import { TO_EXTENSION } from "./protocol.mjs";
 let updateLocalIntro, applyCharts, applyGroupVisibility, applyTabularNums, closeRemoteMenu, renderServers;
 
 let modalBody, modalScrollbar, modalScrollbarThumb, modalDragOffset;
@@ -25,7 +26,7 @@ function changeConfig(key, change) {
   const before = structuredClone(state.config[key]);
   change();
   const changes = fieldChanges(before, state.config[key]);
-  if (changes.length) sendToExtension({ cmd: 'setConfig', key, changes });
+  if (changes.length) sendToExtension(TO_EXTENSION.setConfig, { key, changes });
 }
 
 function updateModalScrollbar() {
@@ -483,7 +484,7 @@ function updateSshDefaultUi(error) {
 function addSshDefaultExtension(event) {
   if(state.config.sshDefaultInstalled || state.ui.installPending)return;
   state.ui.installPending=true;updateSshDefaultUi();
-  sendToExtension({cmd:'addSshDefaultExtension',dismissIntro:event?.currentTarget?.id==='server-intro-ssh-default'});
+  sendToExtension(TO_EXTENSION.addSshDefaultExtension, { dismissIntro: event?.currentTarget?.id==='server-intro-ssh-default' });
 }
 
 function openModal() {
@@ -518,11 +519,11 @@ export function initializeSettings(effects) {
   document.getElementById('timeout-toggle').addEventListener('click',()=>{
     changeConfig('collection', () => { state.config.collection.custom=!state.config.collection.custom; }); renderSettings();
   });
-  document.getElementById('config-save-retry').addEventListener('click', () => sendToExtension({cmd:'retryConfigSave'}));
+  document.getElementById('config-save-retry').addEventListener('click', () => sendToExtension(TO_EXTENSION.retryConfigSave));
   showConfigSaveState(state.initial.saveState);
   document.getElementById('settings-btn').addEventListener('click',openModal);
   document.getElementById('modal-close').addEventListener('click',closeModal);
-  document.getElementById('open-vsc-settings').addEventListener('click',()=>sendToExtension({cmd:'openSettings'}));
+  document.getElementById('open-vsc-settings').addEventListener('click',()=>sendToExtension(TO_EXTENSION.openSettings));
   modalScrollbar.addEventListener('pointerdown',event=>{
     if(modalScrollbar.hidden)return;
     event.preventDefault();
@@ -540,7 +541,7 @@ export function initializeSettings(effects) {
   document.addEventListener('click',event=>{
     if(state.ui.settingsMenu&&!state.ui.settingsMenu.contains(event.target)&&!settingMenuTrigger?.contains(event.target))closeSettingMenu();
     const link=event.target.closest('a[href]');
-    if(link){event.preventDefault();sendToExtension({cmd:'openLink',url:link.href});}
+    if(link){event.preventDefault();sendToExtension(TO_EXTENSION.openLink, { url: link.href });}
   });
   document.addEventListener('keydown',event=>{if(event.key==='Escape')closeSettingMenu();});
 }
@@ -553,7 +554,13 @@ export function showConfigSaveState(saveState = {status:'saved',error:null}) {
   if (state.ui.settingsOpen) requestAnimationFrame(updateModalScrollbar);
 }
 
-export { renderSettings, updateSshDefaultUi, addSshDefaultExtension };
+function showSshDefaultExtensions({ installed, error }) {
+  state.config.sshDefaultInstalled = installed === true;
+  state.ui.installPending = false;
+  updateSshDefaultUi(error);
+}
+
+export { renderSettings, updateSshDefaultUi, addSshDefaultExtension, showSshDefaultExtensions };
 
 export function refreshGpuAvailability() {
   const row = rows.get('gpu-cards');

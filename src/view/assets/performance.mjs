@@ -4,6 +4,7 @@ import { initializeChartState } from "./chart-state.mjs";
 import { colorClass, copyText, setBar, tagColorClass, tr } from "./ui.mjs";
 import { focusGpuProcesses, renderProcessSnapshot, resetProcessView } from "./processes.mjs";
 import { updateTopbarLayout } from "./layout.mjs";
+import { LOCAL_DEVICE_ID } from "./device-id.mjs";
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -556,7 +557,7 @@ function resetCopyButton() {
   }
 
 function gpuSelectionKey() {
-    return state.ui.deviceId || 'local';
+    return state.ui.deviceId || LOCAL_DEVICE_ID;
   }
 
 function storeGpuSelection() {

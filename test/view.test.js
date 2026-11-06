@@ -115,8 +115,8 @@ test('performance and process rows are sent as one snapshot', async () => {
   assert.equal(messages[0].cmd, 'snapshot');
   assert.deepEqual(messages[0].viewModel, { performance: { cpu: { usagePercent: 12 } }, processes });
   const script = readWebviewScript();
-  assert.match(script, /data\.cmd !== 'snapshot'/);
-  assert.doesNotMatch(script, /cmd:'needProcs'|data\.cmd === 'procs'|data\.cmd !== 'update'/);
+  assert.match(script, /\[TO_WEBVIEW\.snapshot\]: receiveSnapshot/);
+  assert.doesNotMatch(script, /needProcs|TO_WEBVIEW\.procs\b|TO_WEBVIEW\.update\b/);
 });
 
 test('Webview waits for its ready handshake before receiving the latest snapshot', async () => {

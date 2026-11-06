@@ -1,14 +1,15 @@
 import { state } from "./state.mjs";
 import { updateTopbarLayout } from "./layout.mjs";
 import { normalizeProcessDisplay, refreshProcTable } from "./processes.mjs";
-import { switchTab, showMonitorStatus, handleNavigationMessage, refreshConnectionRetryButton, showConnection, showNavigation } from "./navigation.mjs";
+import { switchTab, showMonitorStatus, refreshConnectionRetryButton, showConnection, showNavigation, showRetryConnectionResult, dismissLocalIntro, currentPage } from "./navigation.mjs";
 import { setChartActivity, updateSparkAnimation } from "./charts.mjs";
 import { applySamples } from './chart-state.mjs';
-import { renderSettings, updateSshDefaultUi, refreshGpuAvailability, showConfigSaveState } from "./settings.mjs";
+import { renderSettings, updateSshDefaultUi, refreshGpuAvailability, showConfigSaveState, showSshDefaultExtensions } from "./settings.mjs";
 import { sendToExtension, tr } from './ui.mjs';
-import { renderServers } from "./servers.mjs";
+import { renderServers, showServers, showRemoteFolders, finishRemoteWindowAction } from "./servers.mjs";
 import { applyCharts, applyGroupVisibility, applyTabularNums, renderMonitorSnapshot, restoreGpuSelection } from "./performance.mjs";
 import { catalogs, resolveLanguage } from "./i18n.mjs";
+import { TO_EXTENSION, TO_WEBVIEW } from "./protocol.mjs";
 
 function setPaused(paused) {
     setChartActivity(paused, state.ui.canAnimate);
@@ -31,59 +32,82 @@ function presentSnapshot(data, restoring = false) {
   if (data.connection) showConnection(data.connection);
 }
 
+function navigatePage(data) {
+  if (data.page !== 'perf' && data.page !== 'proc') return;
+  if (!state.environment.localMode) state.bridge.setState(Object.assign({}, state.bridge.getState() || {}, { page: data.page }));
+  switchTab(data.page, false);
+}
+
+function applyUiState(data) {
+  if (data.processDisplay) {
+    state.ui.processDisplay = normalizeProcessDisplay(data.processDisplay);
+    refreshProcTable();
+  }
+  if (typeof data.paused === 'boolean') setPaused(data.paused);
+}
+
+function applyConfig(data) {
+  if (data.barCfg) state.config.statusBar = data.barCfg;
+  if (data.diskCfg) state.config.disk = data.diskCfg;
+  if (data.collection) state.config.collection = data.collection;
+  state.config.display = data.displayCfg || state.config.display;
+  if (data.serversCfg) state.config.servers = data.serversCfg;
+  if (state.environment.localMode && data.serversCfg) renderServers();
+  state.charts.windowMilliseconds = (state.config.display.sparkMinutes || 5) * 60 * 1000;
+  applyTabularNums();
+  applyCharts();
+  applyGroupVisibility();
+  state.config.refreshInterval = data.interval || state.config.refreshInterval;
+  if (typeof data.sshDefaultInstalled === 'boolean') {
+    state.config.sshDefaultInstalled = data.sshDefaultInstalled;
+    state.ui.installPending = false;
+    updateSshDefaultUi();
+  }
+  if (state.ui.settingsOpen) renderSettings();
+  if (data.saveState) showConfigSaveState(data.saveState);
+}
+
+function receiveSnapshot(data) {
+  if (state.environment.localMode && data.deviceId && data.deviceId !== state.ui.deviceId) return;
+  presentSnapshot(data);
+}
+
+function showDeviceState(data) {
+  showNavigation(data.state);
+  presentSnapshot(data, true);
+}
+
+const localModeOnly = (handler) => (data) => {
+  if (state.environment.localMode) handler(data);
+};
+
+const messageHandlers = {
+  [TO_WEBVIEW.config]: applyConfig,
+  [TO_WEBVIEW.configSaveState]: showConfigSaveState,
+  [TO_WEBVIEW.uiState]: applyUiState,
+  [TO_WEBVIEW.snapshot]: receiveSnapshot,
+  [TO_WEBVIEW.navigatePage]: navigatePage,
+  [TO_WEBVIEW.retryConnectionResult]: showRetryConnectionResult,
+  [TO_WEBVIEW.sshDefaultExtensions]: showSshDefaultExtensions,
+  [TO_WEBVIEW.deviceState]: localModeOnly(showDeviceState),
+  [TO_WEBVIEW.navigation]: localModeOnly((data) => showNavigation(data.state)),
+  [TO_WEBVIEW.servers]: localModeOnly(showServers),
+  [TO_WEBVIEW.localIntroDismissed]: localModeOnly(dismissLocalIntro),
+  [TO_WEBVIEW.remoteFolders]: localModeOnly(showRemoteFolders),
+  [TO_WEBVIEW.remoteWindowActionDone]: localModeOnly(finishRemoteWindowAction),
+};
+
 export function initializeApp() {
-  window.addEventListener('message', function(evt) {
-      var data = evt.data;
-      if (!data) return;
-      if (handleNavigationMessage(data, presentSnapshot)) return;
-      if (data.cmd === 'navigatePage' && (data.page === 'perf' || data.page === 'proc')) {
-        if (!state.environment.localMode) state.bridge.setState(Object.assign({}, state.bridge.getState() || {}, { page: data.page }));
-        switchTab(data.page, false);
-        return;
-      }
-      if (data.cmd === 'uiState') {
-        if (data.processDisplay) {
-          state.ui.processDisplay = normalizeProcessDisplay(data.processDisplay);
-          refreshProcTable();
-        }
-        if (typeof data.paused === 'boolean') setPaused(data.paused);
-        return;
-      }
-      if (data.cmd === 'config') {
-        if (data.barCfg) state.config.statusBar = data.barCfg;
-        if (data.diskCfg) state.config.disk = data.diskCfg;
-        if (data.collection) state.config.collection = data.collection;
-        state.config.display = data.displayCfg || state.config.display;
-        if (data.serversCfg) state.config.servers = data.serversCfg;
-        if (state.environment.localMode && data.serversCfg) renderServers();
-        state.charts.windowMilliseconds = (state.config.display.sparkMinutes || 5) * 60 * 1000;
-        applyTabularNums();
-        applyCharts();
-        applyGroupVisibility();
-        state.config.refreshInterval = data.interval || state.config.refreshInterval;
-        if (typeof data.sshDefaultInstalled === 'boolean') {
-          state.config.sshDefaultInstalled = data.sshDefaultInstalled;
-          state.ui.installPending = false;
-          updateSshDefaultUi();
-        }
-        if (state.ui.settingsOpen) renderSettings();
-        if (data.saveState) showConfigSaveState(data.saveState);
-        return;
-      }
-      if (data.cmd === 'configSaveState') {
-        showConfigSaveState(data);
-        return;
-      }
-      if (data.cmd !== 'snapshot') return;
-      if (state.environment.localMode && data.deviceId && data.deviceId !== state.ui.deviceId) return;
-      presentSnapshot(data);
-    });
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (data && Object.hasOwn(messageHandlers, data.cmd)) messageHandlers[data.cmd](data);
+  });
   document.getElementById('tab-perf-btn').addEventListener('click',function(){switchTab('perf');});
   document.getElementById('tab-proc-btn').addEventListener('click',function(){switchTab('proc');});
   document.getElementById('tab-servers-btn').addEventListener('click',function(){switchTab('servers');});
   document.getElementById('pause-btn').addEventListener('click',function(){
       setPaused(!state.ui.paused);
-      sendToExtension({cmd:'pause',value:state.ui.paused});
+      sendToExtension(TO_EXTENSION.pause, { value: state.ui.paused });
     });
   document.addEventListener('visibilitychange', updateSparkAnimation);
   state.charts.windowMilliseconds = (state.config.display.sparkMinutes || 5) * 60 * 1000;
@@ -96,7 +120,7 @@ export function initializeApp() {
     }
     applyGroupVisibility();
     updateTopbarLayout();
-    sendToExtension({cmd:'ready',page:document.querySelector('.tab-content.active').id.slice(4)});
+    sendToExtension(TO_EXTENSION.ready, { page: currentPage() });
     updateSparkAnimation();
 }
 
