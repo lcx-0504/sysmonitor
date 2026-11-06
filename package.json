@@ -234,53 +234,53 @@
         "sysmonitor.refreshInterval": {
           "scope": "application",
           "type": "number",
-          "default": 2,
           "minimum": 1,
           "maximum": 60,
+          "default": 2,
           "description": "%cfgRefreshInterval%"
         },
-        "sysmonitor.timeouts": {
+        "sysmonitor.collection": {
           "scope": "application",
           "type": "object",
           "properties": {
-            "enabled": {
+            "custom": {
               "type": "boolean",
-              "description": "%cfgTimeoutEnabled%"
+              "description": "%cfgCollectionCustom%"
             },
-            "connection": {
+            "connectionTimeout": {
               "type": "integer",
               "minimum": 5,
               "maximum": 120,
-              "description": "%cfgTimeoutConnection%"
+              "description": "%cfgCollectionConnectionTimeout%"
             },
-            "standard": {
+            "standardTimeout": {
               "type": "integer",
               "minimum": 5,
               "maximum": 120,
-              "description": "%cfgTimeoutStandard%"
+              "description": "%cfgCollectionStandardTimeout%"
             },
-            "extended": {
+            "extendedTimeout": {
               "type": "integer",
               "minimum": 5,
               "maximum": 120,
-              "description": "%cfgTimeoutExtended%"
+              "description": "%cfgCollectionExtendedTimeout%"
             },
             "sshPoolSize": {
               "type": "integer",
               "minimum": 1,
               "maximum": 8,
-              "description": "%cfgSshPoolSize%"
+              "description": "%cfgCollectionSshPoolSize%"
             }
           },
           "additionalProperties": false,
           "default": {
-            "enabled": false,
-            "connection": 15,
-            "standard": 10,
-            "extended": 30,
+            "custom": false,
+            "connectionTimeout": 15,
+            "standardTimeout": 10,
+            "extendedTimeout": 30,
             "sshPoolSize": 4
           },
-          "description": "%cfgTimeouts%"
+          "description": "%cfgCollection%"
         },
         "sysmonitor.servers": {
           "scope": "application",

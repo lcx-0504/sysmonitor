@@ -406,6 +406,45 @@ test('network and disk I/O collectors calculate rates only after a valid baselin
   assert.equal(disk.accept(diskReads.shift(),now).readBytesPerSecond, 1024);
 });
 
+test('counter rates mark decreasing counters and reversed clocks for reset in every rate collector', async () => {
+  const { counterRates } = require('../src/utils/counter-rates');
+  const fields = { readBytesPerSecond: 'readBytes' };
+  assert.deepEqual(counterRates(null, { sampledAt: 1000, readBytes: 10 }, fields), { rates: { readBytesPerSecond: null }, resetFields: [], clockReversed: false });
+  assert.deepEqual(counterRates({ sampledAt: 1000, readBytes: 10 }, { sampledAt: 3000, readBytes: 30 }, fields).rates, { readBytesPerSecond: 10 });
+  assert.deepEqual(counterRates({ sampledAt: 1000, readBytes: 10 }, { sampledAt: 1000, readBytes: 30 }, fields).resetFields, []);
+  assert.deepEqual(counterRates({ sampledAt: 1000, readBytes: 10 }, { sampledAt: 3000, readBytes: 5 }, fields),
+    { rates: { readBytesPerSecond: null }, resetFields: ['readBytesPerSecond'], clockReversed: false });
+  assert.equal(counterRates({ sampledAt: 3000, readBytes: 10 }, { sampledAt: 1000, readBytes: 30 }, fields).clockReversed, true);
+
+  const stats = (read, write) => `8 0 sda 0 0 ${read} 0 0 0 ${write} 0 0 0 0\n`;
+  const disk = new DiskIoCollector();
+  disk.accept(stats(10, 20), 0);
+  assert.deepEqual(disk.accept(stats(14, 28), 2000), { readBytesPerSecond: 1024, writeBytesPerSecond: 2048, resetFields: [], sampleIdentity: '["8:0:sda"]' });
+  assert.deepEqual(disk.accept(stats(1, 30), 3000).resetFields, ['readBytesPerSecond', 'writeBytesPerSecond']);
+
+  const route = 'Iface Destination Gateway Flags\neth0 00000000 0 0003\n';
+  const devices = (received, sent) => `Inter-| Receive | Transmit\n face |x\neth0: ${received} 0 0 0 0 0 0 0 ${sent} 0 0 0 0 0 0 0\n`;
+  const network = new NetworkCollector();
+  network.accept(devices(100, 200), route, 2000);
+  const reversed = network.accept(devices(300, 400), route, 1000);
+  assert.deepEqual([reversed.receiveBytesPerSecond, reversed.transmitBytesPerSecond], [null, null]);
+  assert.deepEqual(reversed.resetFields, ['receiveBytesPerSecond', 'transmitBytesPerSecond']);
+
+  let seconds = 5, sent = 100;
+  const ssh = new SshTrafficCollector({ isSsh: true,
+    connectionInfo: () => ({ serverIp: '10.0.0.2', serverPort: 22, clientIp: '10.0.0.1', clientPort: 50000 }),
+    commandRunner: { async execFile() {
+      return { stdout: timedSshOutput(`0 0 10.0.0.2:22 10.0.0.1:50000\n cubic rtt:2/1 bytes_sent:${sent} bytes_received:50`, seconds) };
+    } } });
+  await ssh.collect();
+  seconds = 6; sent = 300;
+  assert.equal((await ssh.collect()).clientDownloadBytesPerSecond, 200);
+  sent = 100;
+  assert.deepEqual((await ssh.collect()).resetFields, ['clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond']);
+  seconds = 4;
+  assert.deepEqual((await ssh.collect()).resetFields, ['clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond', 'latencyMilliseconds']);
+});
+
 test('process and disk topology collectors use async command adapters', async () => {
   const processCollector = new ProcessCollector({ commandRunner: { execFile: async () => ({ stdout: '__SYSMON_PROCESSES__ 1 0\n7 root 1.0 2048 Sun Jul 13 12:34:56 2026 /bin/test --flag\n__SYSMON_SESSIONS__\n' }) }, osModule: { totalmem: () => 1024 * 1024 * 1024, cpus:() => [0,1,2,3] } });
   assert.equal((await processCollector.collect()).rows[0].processName, 'test');

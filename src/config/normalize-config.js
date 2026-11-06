@@ -1,34 +1,50 @@
 'use strict';
 
-const { DEFAULT_CONFIG } = require('./default-config');
-const { CONFIGURATION_SCHEMA } = require('./config-schema');
-const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const { SETTINGS } = require('./config-schema');
 
-function normalizeValue(value, definition, fallback) {
-  if (definition.type === 'object') {
-    const raw = isObject(value) ? value : {};
-    const result = definition.additionalProperties === false ? {} : { ...raw };
-    for (const [key, field] of Object.entries(definition.properties)) {
-      if (Object.hasOwn(raw, key) || Object.hasOwn(fallback || {}, key)) result[key] = normalizeValue(raw[key], field, fallback?.[key]);
-    }
-    return result;
+const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isNumberType = type => type === 'number' || type === 'integer';
+
+function acceptsValue(value, definition) {
+  if (isNumberType(definition.type)) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+    if (definition.type === 'integer' && !Number.isInteger(value)) return false;
+    return value >= (definition.minimum ?? -Infinity) && value <= (definition.maximum ?? Infinity);
   }
-  if (definition.type === 'array') {
-    const values = Array.isArray(value) ? value : fallback;
-    return [...new Set(values.filter(item => Number.isInteger(item) && item >= definition.items.minimum))].sort((a, b) => a - b);
+  return typeof value === definition.type && (!definition.enum || definition.enum.includes(value));
+}
+
+function normalizeObject(value, definition) {
+  const raw = isObject(value) ? value : {};
+  const result = {};
+  for (const [key, child] of Object.entries(definition.properties)) {
+    if (child.optional && !Object.hasOwn(raw, key)) continue;
+    result[key] = normalizeValue(raw[key], child);
   }
-  if (definition.type === 'number' || definition.type === 'integer') {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-    const bounded = Math.min(definition.maximum ?? Infinity, Math.max(definition.minimum ?? -Infinity, value));
-    return definition.type === 'integer' ? Math.round(bounded) : bounded;
-  }
-  if (typeof value !== definition.type || definition.enum && !definition.enum.includes(value)) return fallback ?? (definition.type === 'string' ? '' : fallback);
-  return value;
+  return result;
+}
+
+function normalizeArray(value, definition) {
+  const items = (Array.isArray(value) ? value : definition.default).filter(item => acceptsValue(item, definition.items));
+  const unique = definition.uniqueItems ? [...new Set(items)] : items;
+  return definition.sorted ? unique.sort((left, right) => left - right) : unique;
+}
+
+function normalizeNumber(value, definition) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return definition.default;
+  const bounded = Math.min(definition.maximum ?? Infinity, Math.max(definition.minimum ?? -Infinity, value));
+  return definition.type === 'integer' ? Math.round(bounded) : bounded;
+}
+
+function normalizeValue(value, definition) {
+  if (definition.type === 'object') return normalizeObject(value, definition);
+  if (definition.type === 'array') return normalizeArray(value, definition);
+  if (isNumberType(definition.type)) return normalizeNumber(value, definition);
+  return acceptsValue(value, definition) ? value : definition.default;
 }
 
 function normalizeConfig(value = {}) {
-  const raw = isObject(value) ? value : {};
-  return { ...raw, ...Object.fromEntries(Object.entries(CONFIGURATION_SCHEMA).map(([key, definition]) => [key, normalizeValue(raw[key], definition, DEFAULT_CONFIG[key])])) };
+  return normalizeObject(value, { type: 'object', properties: SETTINGS });
 }
 
 module.exports = { normalizeConfig };

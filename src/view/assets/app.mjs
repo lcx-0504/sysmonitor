@@ -52,7 +52,7 @@ export function initializeApp() {
       if (data.cmd === 'config') {
         if (data.barCfg) state.config.statusBar = data.barCfg;
         if (data.diskCfg) state.config.disk = data.diskCfg;
-        if (data.timeouts) state.config.timeouts = data.timeouts;
+        if (data.collection) state.config.collection = data.collection;
         state.config.display = data.displayCfg || state.config.display;
         if (data.serversCfg) state.config.servers = data.serversCfg;
         if (state.environment.localMode && data.serversCfg) renderServers();
@@ -110,7 +110,7 @@ export function initializeState() {
   state.ui.paused = state.initial.paused === true;
   state.ui.canAnimate = true;
   state.config.statusBar = state.initial.barCfg || {};
-  state.config.timeouts = Object.assign({ enabled: false, ...Object.fromEntries(state.initial.collectionFields.map(field => [field.key, field.default])) }, state.initial.timeouts);
+  state.config.collection = Object.assign({ custom: false, ...Object.fromEntries(state.initial.collectionFields.map(field => [field.key, field.default])) }, state.initial.collection);
   state.config.disk = state.initial.diskCfg || {};
   state.config.display = state.initial.displayCfg || {};
   state.config.servers = state.initial.serversCfg || { visibleOnly: false, restoreTabs: true };

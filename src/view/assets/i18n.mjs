@@ -205,7 +205,7 @@ var catalogs = {
   "thisRemoteIsNotLinuxSystemMonitorRequires": ({ process }) => ('This remote is not Linux (' + process.platform + '). System Monitor requires Linux. Use a Linux server, WSL, Linux container, or local Linux.'),
   "copyPIDs": 'Copy PIDs',
   "remotePerformanceCollectionHasTimedOutRepeatedlyServer": ({ host, pids }) => (`Remote performance collection has timed out repeatedly. Server “${host}” has ${pids.length} collection processes that have not exited after a timeout or disconnection. Monitoring has been paused automatically. These processes will usually exit on their own after a while, but you should still inspect them and clean them up if needed. If the server has limited performance and this happens frequently, consider increasing the refresh interval in Settings. PIDs: ${pids.join(', ')}`),
-  "manifest": {"cfgSshPoolSize":"Maximum SSH monitoring connections per server in local windows (1–8)","cfgTimeoutEnabled":"Enable custom collection policy","cfgTimeouts":"Custom collection policy: SSH pool size and connection and collection timeouts","cfgTimeoutConnection":"SSH connection and handshake timeout","cfgTimeoutStandard":"CPU, memory, network, disk I/O, and SSH metrics timeout","cfgTimeoutExtended":"Disk capacity, process list, and GPU collection timeout","displayName":"System Monitor","description":"Monitor Linux locally, over SSH, or in a remote window — CPU / GPU / RAM / Network","viewTitle":"System Monitor","viewName":"System Monitor","cmdOpen":"System Monitor: Open Panel","cmdOpenEditor":"System Monitor: Move to Editor","cmdOpenWindow":"System Monitor: Move to New Window","cmdCopyToEditor":"System Monitor: Open in Editor","cmdCopyToWindow":"System Monitor: Open in New Window","cmdOpenTerminal":"System Monitor: Open SSH Terminal","cmdOpenRemoteWindow":"System Monitor: Open Remote Window","cmdEditorReturnSidebar":"System Monitor: Return to Sidebar","cmdEditorMoveWindow":"System Monitor: Move to New Window","cfgRefreshInterval":"Refresh interval in seconds","cfgStatusBar":"Status bar display configuration","cfgDisk":"Disk monitoring settings","cfgDisplay":"Display settings","cfgServers":"Server monitoring, session restoration, and action button visibility settings"}
+  "manifest": {"cfgCollectionSshPoolSize":"Maximum SSH monitoring connections per server in local windows (1–8)","cfgCollectionCustom":"Enable custom collection policy","cfgCollection":"Custom collection policy: SSH pool size and connection and collection timeouts","cfgCollectionConnectionTimeout":"SSH connection and handshake timeout","cfgCollectionStandardTimeout":"CPU, memory, network, disk I/O, and SSH metrics timeout","cfgCollectionExtendedTimeout":"Disk capacity, process list, and GPU collection timeout","displayName":"System Monitor","description":"Monitor Linux locally, over SSH, or in a remote window — CPU / GPU / RAM / Network","viewTitle":"System Monitor","viewName":"System Monitor","cmdOpen":"System Monitor: Open Panel","cmdOpenEditor":"System Monitor: Move to Editor","cmdOpenWindow":"System Monitor: Move to New Window","cmdCopyToEditor":"System Monitor: Open in Editor","cmdCopyToWindow":"System Monitor: Open in New Window","cmdOpenTerminal":"System Monitor: Open SSH Terminal","cmdOpenRemoteWindow":"System Monitor: Open Remote Window","cmdEditorReturnSidebar":"System Monitor: Return to Sidebar","cmdEditorMoveWindow":"System Monitor: Move to New Window","cfgRefreshInterval":"Refresh interval in seconds","cfgStatusBar":"Status bar display configuration","cfgDisk":"Disk monitoring settings","cfgDisplay":"Display settings","cfgServers":"Server monitoring, session restoration, and action button visibility settings"}
 },
   'zh-CN': {
   "configUpgradeFailed": "设置升级未能保存，监控将继续使用转换后的设置。请检查用户设置是否可写，并在修复后重载窗口重试。",
@@ -409,7 +409,7 @@ var catalogs = {
   "thisRemoteIsNotLinuxSystemMonitorRequires": ({ process }) => ('当前远程环境不是 Linux（' + process.platform + '），本扩展无法采集系统指标。请在 Linux 服务器、WSL、Linux 容器或本地 Linux 中使用。'),
   "copyPIDs": '复制 PID',
   "remotePerformanceCollectionHasTimedOutRepeatedlyServer": ({ host, pids }) => (`远程服务器性能采集多次超时，服务器「${host}」有 ${pids.length} 个采集进程在超时或连接断开后仍未退出。监控已自动暂停，通常等待一段时间后这些采集进程会自动退出，但仍建议检查这些进程并按需清理。若服务器性能较低、频繁出现此类问题，建议增加刷新时间间隔（设置->刷新时间）。 PID：${pids.join(', ')}`),
-  "manifest": {"cfgSshPoolSize":"本地窗口监控时，每台服务器的 SSH 连接池上限（1～8）","cfgTimeoutEnabled":"启用自定义采集策略","cfgTimeouts":"自定义采集策略：SSH 连接池与连接、采集超时","cfgTimeoutConnection":"SSH 连接与握手超时","cfgTimeoutStandard":"CPU、内存、网络、磁盘读写和 SSH 指标采集超时","cfgTimeoutExtended":"磁盘容量、进程列表与 GPU 采集超时","displayName":"系统监控","description":"本机、SSH 或远程窗口中的 Linux 系统监控 — CPU / GPU / RAM / Network","viewTitle":"系统监控","viewName":"系统监控","cmdOpen":"系统监控: 打开面板","cmdOpenEditor":"系统监控: 移到编辑器","cmdOpenWindow":"系统监控: 移到新窗口","cmdCopyToEditor":"系统监控: 在编辑器中打开","cmdCopyToWindow":"系统监控: 在新窗口打开","cmdOpenTerminal":"系统监控: 打开 SSH 终端","cmdOpenRemoteWindow":"系统监控: 打开远程窗口","cmdEditorReturnSidebar":"系统监控: 放回侧边栏","cmdEditorMoveWindow":"系统监控: 移到新窗口","cfgRefreshInterval":"刷新间隔（秒）","cfgStatusBar":"状态栏显示设置","cfgDisk":"磁盘监控设置","cfgDisplay":"显示设置","cfgServers":"服务器监控、标签页恢复和操作按钮显示设置"}
+  "manifest": {"cfgCollectionSshPoolSize":"本地窗口监控时，每台服务器的 SSH 连接池上限（1～8）","cfgCollectionCustom":"启用自定义采集策略","cfgCollection":"自定义采集策略：SSH 连接池与连接、采集超时","cfgCollectionConnectionTimeout":"SSH 连接与握手超时","cfgCollectionStandardTimeout":"CPU、内存、网络、磁盘读写和 SSH 指标采集超时","cfgCollectionExtendedTimeout":"磁盘容量、进程列表与 GPU 采集超时","displayName":"系统监控","description":"本机、SSH 或远程窗口中的 Linux 系统监控 — CPU / GPU / RAM / Network","viewTitle":"系统监控","viewName":"系统监控","cmdOpen":"系统监控: 打开面板","cmdOpenEditor":"系统监控: 移到编辑器","cmdOpenWindow":"系统监控: 移到新窗口","cmdCopyToEditor":"系统监控: 在编辑器中打开","cmdCopyToWindow":"系统监控: 在新窗口打开","cmdOpenTerminal":"系统监控: 打开 SSH 终端","cmdOpenRemoteWindow":"系统监控: 打开远程窗口","cmdEditorReturnSidebar":"系统监控: 放回侧边栏","cmdEditorMoveWindow":"系统监控: 移到新窗口","cfgRefreshInterval":"刷新间隔（秒）","cfgStatusBar":"状态栏显示设置","cfgDisk":"磁盘监控设置","cfgDisplay":"显示设置","cfgServers":"服务器监控、标签页恢复和操作按钮显示设置"}
 },
   'zh-TW': {
   "configUpgradeFailed": "設定升級未能儲存，監控將繼續使用轉換後的設定。請檢查使用者設定是否可寫入，並在修復後重新載入視窗重試。",
@@ -613,7 +613,7 @@ var catalogs = {
   "thisRemoteIsNotLinuxSystemMonitorRequires": ({ process }) => ('當前遠端環境不是 Linux（' + process.platform + '），本擴展無法採集系統指標。請在 Linux 伺服器、WSL、Linux 容器或本地 Linux 中使用。'),
   "copyPIDs": '複製 PID',
   "remotePerformanceCollectionHasTimedOutRepeatedlyServer": ({ host, pids }) => (`遠端伺服器性能採集多次超時，伺服器「${host}」有 ${pids.length} 個採集程序在超時或連接斷開後仍未退出。監控已自動暫停，通常等待一段時間後這些採集程序會自動退出，但仍建議檢查這些程序並按需清理。若伺服器性能較低、頻繁出現此類問題，建議增加重新整理時間間隔（設定->重新整理時間）。 PID：${pids.join(', ')}`),
-  "manifest": {"cfgSshPoolSize":"本機視窗監控時，每台伺服器的 SSH 連線池上限（1～8）","cfgTimeoutEnabled":"啟用自訂採集策略","cfgTimeouts":"自訂採集策略：SSH 連線池與連線、採集逾時","cfgTimeoutConnection":"SSH 連線與交握逾時","cfgTimeoutStandard":"CPU、記憶體、網路、磁碟讀寫和 SSH 指標採集逾時","cfgTimeoutExtended":"磁碟容量、程序列表與 GPU 採集逾時","displayName":"系統監控","description":"本機、SSH 或遠端視窗中的 Linux 系統監控 — CPU / GPU / RAM / Network","viewTitle":"系統監控","viewName":"系統監控","cmdOpen":"系統監控: 打開面板","cmdOpenEditor":"系統監控: 移到編輯器","cmdOpenWindow":"系統監控: 移到新視窗","cmdCopyToEditor":"系統監控: 在編輯器中打開","cmdCopyToWindow":"系統監控: 在新視窗打開","cmdOpenTerminal":"系統監控: 打開 SSH 終端","cmdOpenRemoteWindow":"系統監控: 打開遠端視窗","cmdEditorReturnSidebar":"系統監控: 放回側邊欄","cmdEditorMoveWindow":"系統監控: 移到新視窗","cfgRefreshInterval":"重新整理間隔（秒）","cfgStatusBar":"狀態欄顯示設定","cfgDisk":"磁碟監控設定","cfgDisplay":"顯示設定","cfgServers":"伺服器監控、標籤頁恢復和操作按鈕顯示設定"}
+  "manifest": {"cfgCollectionSshPoolSize":"本機視窗監控時，每台伺服器的 SSH 連線池上限（1～8）","cfgCollectionCustom":"啟用自訂採集策略","cfgCollection":"自訂採集策略：SSH 連線池與連線、採集逾時","cfgCollectionConnectionTimeout":"SSH 連線與交握逾時","cfgCollectionStandardTimeout":"CPU、記憶體、網路、磁碟讀寫和 SSH 指標採集逾時","cfgCollectionExtendedTimeout":"磁碟容量、程序列表與 GPU 採集逾時","displayName":"系統監控","description":"本機、SSH 或遠端視窗中的 Linux 系統監控 — CPU / GPU / RAM / Network","viewTitle":"系統監控","viewName":"系統監控","cmdOpen":"系統監控: 打開面板","cmdOpenEditor":"系統監控: 移到編輯器","cmdOpenWindow":"系統監控: 移到新視窗","cmdCopyToEditor":"系統監控: 在編輯器中打開","cmdCopyToWindow":"系統監控: 在新視窗打開","cmdOpenTerminal":"系統監控: 打開 SSH 終端","cmdOpenRemoteWindow":"系統監控: 打開遠端視窗","cmdEditorReturnSidebar":"系統監控: 放回側邊欄","cmdEditorMoveWindow":"系統監控: 移到新視窗","cfgRefreshInterval":"重新整理間隔（秒）","cfgStatusBar":"狀態欄顯示設定","cfgDisk":"磁碟監控設定","cfgDisplay":"顯示設定","cfgServers":"伺服器監控、標籤頁恢復和操作按鈕顯示設定"}
 }
 };
 
@@ -624,6 +624,21 @@ return module.exports;
 })({ exports: {} });
 const { catalogs, resolveLanguage, createTranslator, localizeError } = ((module, require) => {
 'use strict';
+
+const catalogs = require('./catalogs');
+
+const ERROR_KEYS = Object.freeze({
+  ETIMEDOUT: 'collectionTimeout',
+  EBUSY: 'collectionBusy',
+  EINCOMPLETE: 'collectionIncomplete',
+  EREMOTE: 'remoteCommandFailed',
+  EPLATFORM: 'remoteNotLinux',
+  EMAXBUFFER: 'commandOutputTooLarge',
+  ENOENT: 'commandNotFound',
+  PS_UNSUPPORTED: 'psUnsupported',
+  GPU_OCCUPANCY_UNAVAILABLE: 'gpuOccupancyUnavailable',
+  GPU_IDENTITY_UNAVAILABLE: 'gpuIdentityUnavailable',
+});
 
 function resolveLanguage(language) {
   const code = String(language || 'en').toLowerCase();
@@ -643,15 +658,13 @@ function createTranslator(language) {
 
 function localizeError(error, language) {
   if (!error) return '';
-  const keys = { ETIMEDOUT:'collectionTimeout', EBUSY:'collectionBusy', EINCOMPLETE:'collectionIncomplete',
-    EREMOTE:'remoteCommandFailed', EPLATFORM:'remoteNotLinux', EMAXBUFFER:'commandOutputTooLarge', ENOENT:'commandNotFound', PS_UNSUPPORTED:'psUnsupported',
-    GPU_OCCUPANCY_UNAVAILABLE:'gpuOccupancyUnavailable', GPU_IDENTITY_UNAVAILABLE:'gpuIdentityUnavailable' };
-  const key = typeof error === 'object' && keys[error.code];
-  return key ? createTranslator(language)(key, { message: String(error.message || '').trim() }) : String(typeof error === 'object' ? error.message || '' : error);
+  if (typeof error !== 'object') return String(error);
+  const key = Object.hasOwn(ERROR_KEYS, error.code) ? ERROR_KEYS[error.code] : null;
+  if (!key) return String(error.message || '');
+  return createTranslator(language)(key, { message: String(error.message || '').trim() });
 }
 
-if (typeof module !== 'undefined') var catalogs = require('./catalogs');
-if (typeof module !== 'undefined') module.exports = { catalogs, resolveLanguage, createTranslator, localizeError };
+module.exports = { catalogs, resolveLanguage, createTranslator, localizeError };
 
 return module.exports;
 })({ exports: {} }, name => {

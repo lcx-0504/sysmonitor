@@ -8,10 +8,18 @@ function createSessionFixture({ id = 'local', remote = false, paused = false, ch
   const store = new SnapshotStore();
   let publish;
   const transport = remote ? {
-    onState() {},
+    stateListeners: new Set(),
+    onDidChangeState(listener) {
+      this.stateListeners.add(listener);
+      return { dispose: () => this.stateListeners.delete(listener) };
+    },
+    emitState(state, error) {
+      for (const listener of this.stateListeners) listener(state, error);
+    },
     setIdle(idle) { this.idle = idle; },
-    async connect() { this.onState('connected'); },
+    async connect() { this.emitState('connected'); },
     async retryNow() { return this.connect(); },
+    updateOptions() {},
     dispose() {},
   } : null;
   const session = new MonitorSession({ id, host: remote ? id.slice(4) : null, transport, configStore, chartClock,

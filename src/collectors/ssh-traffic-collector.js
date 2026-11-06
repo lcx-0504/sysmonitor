@@ -1,5 +1,7 @@
 'use strict';
 
+const { counterRates } = require('../utils/counter-rates');
+
 const SSH_SAMPLE_COMMAND = [
   'read -r started ignored < /proc/uptime || exit 1',
   'printf "__SYSMON_SSH_SAMPLE_START__ %s\\n" "$started"',
@@ -9,6 +11,8 @@ const SSH_SAMPLE_COMMAND = [
   'printf "__SYSMON_SSH_SAMPLE_END__ %s\\n" "$finished"',
   'exit "$result"',
 ].join('\n');
+
+const asList = (value) => Array.isArray(value) ? value : [value];
 
 function normalizeIp(ip) { return String(ip).replace(/^\[|\]$/g, '').replace(/^::ffff:(?=\d+\.)/i, '').toLowerCase(); }
 
@@ -28,7 +32,8 @@ function readSocketRecords(raw) {
       if (record) records.set(JSON.stringify(endpoints.map((endpoint) => [endpoint.ip, endpoint.port])), record);
     }
     if (!record) continue;
-    const sent = line.match(/bytes_sent:(\d+)/); const received = line.match(/bytes_received:(\d+)/);
+    const sent = line.match(/bytes_sent:(\d+)/);
+    const received = line.match(/bytes_received:(\d+)/);
     const rtt = line.match(/\brtt:([\d.]+)(?:\/|\s|$)/);
     if (sent) record.sent = Number(sent[1]);
     if (received) record.received = Number(received[1]);
@@ -42,8 +47,7 @@ const exactMatch = (record, connection) => record.local.ip === normalizeIp(conne
 const portMatch = (record, connection) => record.local.port === connection.serverPort && record.peer.ip === normalizeIp(connection.clientIp);
 
 function readSshSocketCounters(raw, clientIpOrConnection) {
-  const connections = clientIpOrConnection && typeof clientIpOrConnection === 'object'
-    ? (Array.isArray(clientIpOrConnection) ? clientIpOrConnection : [clientIpOrConnection]) : null;
+  const connections = clientIpOrConnection && typeof clientIpOrConnection === 'object' ? asList(clientIpOrConnection) : null;
   const records = [...readSocketRecords(raw)];
   let matches = connections
     ? connections.map((connection) => records.filter(([, record]) => exactMatch(record, connection)))
@@ -57,14 +61,29 @@ function readSshSocketCounters(raw, clientIpOrConnection) {
   const selected = new Map(matches.flat());
   const samples = [...selected.values()];
   const latencies = samples.map((sample) => sample.latency).filter(Number.isFinite);
+  const counted = samples.every((sample) => sample.sent !== null || sample.received !== null);
   return {
     serverSentBytes: samples.reduce((sum, sample) => sum + (sample.sent || 0), 0),
     serverReceivedBytes: samples.reduce((sum, sample) => sum + (sample.received || 0), 0),
     latencyMilliseconds: latencies.length ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : null,
-    complete: samples.length > 0 && matches.every((matched) => matched.length > 0) && samples.every((sample) => sample.sent !== null || sample.received !== null),
+    complete: samples.length > 0 && matches.every((matched) => matched.length > 0) && counted,
     connectionKey: JSON.stringify([...selected.keys()].sort()),
     fallback,
   };
+}
+
+const SSH_RATES = Object.freeze({ clientUploadBytesPerSecond: 'serverReceivedBytes', clientDownloadBytesPerSecond: 'serverSentBytes' });
+const EMPTY_RATES = Object.freeze({ clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null });
+
+function connectionIdentity(connection) {
+  const endpoints = asList(connection).map((item) => [normalizeIp(item.serverIp), item.serverPort, normalizeIp(item.clientIp), item.clientPort]);
+  return JSON.stringify(endpoints.sort());
+}
+
+function sampleWindow(stdout) {
+  const start = stdout.match(/^__SYSMON_SSH_SAMPLE_START__ ([\d.]+)$/m);
+  const end = stdout.match(/^__SYSMON_SSH_SAMPLE_END__ ([\d.]+)$/m);
+  return { startedAt: start ? Number(start[1]) * 1000 : NaN, finishedAt: end ? Number(end[1]) * 1000 : NaN };
 }
 
 class SshTrafficCollector {
@@ -72,15 +91,21 @@ class SshTrafficCollector {
     Object.assign(this, { commandRunner, isSsh, clientIp, connectionInfo, onLog });
     this.previous = null;
     this.fallback = false;
+    this.sampleIdentity = undefined;
   }
-  reset() { this.previous = null; this.sampleIdentity = undefined; }
+
+  reset() {
+    this.previous = null;
+    this.sampleIdentity = undefined;
+  }
+
   async collect() {
-    if (!this.isSsh) return { isSsh: false, clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: null };
+    if (!this.isSsh) return { isSsh: false, ...EMPTY_RATES, latencyMilliseconds: null };
     const connection = this.connectionInfo ? this.connectionInfo() : null;
-    const expectedIdentity = connection ? JSON.stringify((Array.isArray(connection) ? connection : [connection]).map((item) => [normalizeIp(item.serverIp), item.serverPort, normalizeIp(item.clientIp), item.clientPort]).sort()) : null;
+    const expectedIdentity = connection ? connectionIdentity(connection) : null;
     if (this.connectionInfo && (!connection || Array.isArray(connection) && !connection.length)) {
       this.previous = null;
-      return { isSsh: true, sampleIdentity: 'unconnected', clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: null };
+      return { isSsh: true, sampleIdentity: 'unconnected', ...EMPTY_RATES, latencyMilliseconds: null };
     }
     const { stdout } = await this.commandRunner.execFile('sh', ['-c', SSH_SAMPLE_COMMAND]);
     const counters = readSshSocketCounters(stdout, connection || this.clientIp);
@@ -91,26 +116,17 @@ class SshTrafficCollector {
     }
     const sampleIdentity = expectedIdentity || (counters.connectionKey !== '[]' ? counters.connectionKey : this.sampleIdentity);
     this.sampleIdentity = sampleIdentity;
-    const start = stdout.match(/^__SYSMON_SSH_SAMPLE_START__ ([\d.]+)$/m);
-    const end = stdout.match(/^__SYSMON_SSH_SAMPLE_END__ ([\d.]+)$/m);
-    const startedAt = start ? Number(start[1]) * 1000 : NaN;
-    const finishedAt = end ? Number(end[1]) * 1000 : NaN;
+    const latencyMilliseconds = counters.latencyMilliseconds;
+    const { startedAt, finishedAt } = sampleWindow(stdout);
     if (!counters.complete || !Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || finishedAt < startedAt) {
-      return { isSsh: true, sampleIdentity, clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: counters.latencyMilliseconds };
+      return { isSsh: true, sampleIdentity, ...EMPTY_RATES, latencyMilliseconds };
     }
-    const sampledAt = (startedAt + finishedAt) / 2;
-    const connectionKey = counters.connectionKey;
-    let clientUploadBytesPerSecond = null; let clientDownloadBytesPerSecond = null;
-    let resetFields = [];
-    if (this.previous && this.previous.connectionKey === connectionKey) {
-      const seconds = (sampledAt - this.previous.sampledAt) / 1000;
-      const uploadDelta = counters.serverReceivedBytes - this.previous.serverReceivedBytes;
-      const downloadDelta = counters.serverSentBytes - this.previous.serverSentBytes;
-      if (seconds > 0 && uploadDelta >= 0 && downloadDelta >= 0) { clientUploadBytesPerSecond = uploadDelta / seconds; clientDownloadBytesPerSecond = downloadDelta / seconds; }
-      else if (seconds < 0 || uploadDelta < 0 || downloadDelta < 0) resetFields = seconds < 0 ? ['clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond', 'latencyMilliseconds'] : ['clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond'];
-    }
-    this.previous = { ...counters, sampledAt, connectionKey };
-    return { isSsh: true, sampleIdentity, resetFields, clientUploadBytesPerSecond, clientDownloadBytesPerSecond, latencyMilliseconds: counters.latencyMilliseconds };
+    const current = { ...counters, sampledAt: (startedAt + finishedAt) / 2 };
+    const comparable = this.previous && this.previous.connectionKey === current.connectionKey;
+    const { rates, resetFields, clockReversed } = counterRates(comparable ? this.previous : null, current, SSH_RATES);
+    this.previous = current;
+    const reset = clockReversed ? [...resetFields, 'latencyMilliseconds'] : resetFields;
+    return { isSsh: true, sampleIdentity, resetFields: reset, ...rates, latencyMilliseconds };
   }
 }
 module.exports = { SshTrafficCollector };

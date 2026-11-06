@@ -107,7 +107,12 @@ class SshProcessGuard {
     }
   }
 
-  dispose() { this.closed = true; clearTimeout(this.timer); this.timer = null; this.records.clear(); }
+  dispose() {
+    this.closed = true;
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.records.clear();
+  }
 }
 
 module.exports = { SshProcessGuard };

@@ -57,16 +57,16 @@ test('remote timeout reports a timeout and leaves the same channel available', a
     await transport.connect();
     const channel = [...transport.channels][0];
     if (!channel.timeoutAvailable) return;
-    await assert.rejects(channel.execFile(50, 'sleep', ['1'], 1000, false, undefined, 50), { code: 'ETIMEDOUT' });
+    await assert.rejects(channel.execFile({ id: 50, command: 'sleep', args: ['1'], limit: 1000, trackProcess: false, timeoutMilliseconds: 50 }), { code: 'ETIMEDOUT' });
     assert.equal(channel.closed, false);
-    assert.equal((await channel.execFile(51, 'printf', ['alive'], 1000)).stdout, 'alive');
+    assert.equal((await channel.execFile({ id: 51, command: 'printf', args: ['alive'], limit: 1000 })).stdout, 'alive');
   } finally { transport.dispose(); }
 });
 
 test('a timeout before the process START header remains a timeout and preserves the channel', async () => {
   const channel = new SshChannel({ onClose() { assert.fail('A valid timeout response must not close the channel'); } });
   channel.ready = true; channel.timeoutAvailable = true; channel.child = { stdin: { write() {} } };
-  const result = assert.rejects(channel.execFile(1, 'sleep', ['1'], 1000, false, undefined, 1), { code: 'ETIMEDOUT' });
+  const result = assert.rejects(channel.execFile({ id: 1, command: 'sleep', args: ['1'], limit: 1000, trackProcess: false, timeoutMilliseconds: 1 }), { code: 'ETIMEDOUT' });
   for (const char of '\n' + channel.prefix + 'END 1 124\n') channel.receive('stdout', char);
   channel.receive('stderr', '\n' + channel.prefix + 'END 1 124\n');
   await result; assert.equal(channel.closed, false); assert.equal(channel.request, null);
@@ -93,9 +93,9 @@ test('remote timeout terminates a signal-ignoring test command after its tool-ma
   try {
     await transport.connect(); const channel = [...transport.channels][0];
     if (!channel.timeoutAvailable) return;
-    await assert.rejects(channel.execFile(60, 'sh', ['-c', 'trap "" TERM; exec sleep 3'], 1000, false, undefined, 100), { code: 'ETIMEDOUT' });
+    await assert.rejects(channel.execFile({ id: 60, command: 'sh', args: ['-c', 'trap "" TERM; exec sleep 3'], limit: 1000, trackProcess: false, timeoutMilliseconds: 100 }), { code: 'ETIMEDOUT' });
     assert.equal(channel.closed, false);
-    assert.equal((await channel.execFile(61, 'true', [], 1000)).stdout, '');
+    assert.equal((await channel.execFile({ id: 61, command: 'true', limit: 1000 })).stdout, '');
   } finally { transport.dispose(); }
 });
 
@@ -186,6 +186,25 @@ test('SSH pool grows on demand to its limit and reuses established channels', as
   } finally { transport.dispose(); }
 });
 
+test('SSH transport options accept only the declared pool range and state listeners can unsubscribe', () => {
+  const states = [];
+  assert.throws(() => new SshTransport({ host: 'fixture', maxConnections: 0 }), /Invalid SSH pool size/);
+  const transport = new SshTransport({ host: 'fixture', onState: (state) => states.push('initial:' + state) });
+  try {
+    assert.equal(transport.maxConnections, 4);
+    assert.equal(transport.connectionTimeoutMilliseconds, 15000);
+    assert.throws(() => transport.updateOptions({ maxConnections: 9 }), /Invalid SSH pool size/);
+    transport.updateOptions({ connectionTimeoutMilliseconds: 20000, maxConnections: 8 });
+    assert.equal(transport.connectionTimeoutMilliseconds, 20000);
+    assert.equal(transport.connectionLimit, 8);
+    const subscription = transport.onDidChangeState((state) => states.push('session:' + state));
+    transport.emitState('connecting');
+    subscription.dispose();
+    transport.emitState('connected');
+    assert.deepEqual(states, ['initial:connecting', 'session:connecting', 'initial:connected']);
+  } finally { transport.dispose(); }
+});
+
 test('changing the SSH pool limit retires idle channels and lets active commands finish', async () => {
   const transport = new SshTransport({ host: 'fixture', requireLinux: false,
     spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
@@ -193,13 +212,13 @@ test('changing the SSH pool limit retires idle channels and lets active commands
   try {
     const commands = Array.from({ length: 4 }, () => transport.execFile('sh', ['-c', 'sleep 0.2; printf done']));
     await waitFor(() => [...transport.channels].filter(channel => channel.request).length === 4);
-    transport.setMaxConnections(1);
+    transport.updateOptions({ maxConnections: 1 });
     assert.deepEqual(await Promise.all(commands), Array(4).fill({ stdout: 'done', stderr: '' }));
     await waitFor(() => transport.channels.size === 1);
     assert.equal(transport.ready, true);
     await Promise.all(Array.from({ length: 3 }, () => transport.execFile('true')));
     assert.equal(transport.channels.size, 1);
-    transport.setMaxConnections(3);
+    transport.updateOptions({ maxConnections: 3 });
     await Promise.all(Array.from({ length: 3 }, () => transport.execFile('sleep', ['0.1'])));
     assert.equal(transport.channels.size, 3);
   } finally { transport.dispose(); }
@@ -328,7 +347,7 @@ test('SSH channel assembles split response markers and waits for both streams', 
   channel.ready = true;
   channel.child = { stdin: { write: (text) => writes.push(text) } };
   let finished = false;
-  const result = channel.execFile(1, 'true', [], 100).then((value) => { finished = true; return value; });
+  const result = channel.execFile({ id: 1, command: 'true', limit: 100 }).then((value) => { finished = true; return value; });
   const frame = '\n' + channel.prefix + 'END 1 0\n';
   for (const char of channel.prefix + 'START 1 123 456 aaaa-bbbb\ndata\n' + frame) channel.receive('stdout', char);
   assert.deepEqual(channel.request.remoteProcess, { pid: 123, startTime: '456', bootId: 'aaaa-bbbb' });
@@ -598,7 +617,7 @@ test('an SSH channel settles output that arrives after exit and reports diagnost
   child.stderr.write('Warning: Permanently added fixture to the list of known hosts.\n');
   child.stdout.write(channel.prefix + 'READY 1 10.0.0.1 50000 10.0.0.2 22\n');
   await connected;
-  const result = channel.execFile(1, 'printf', ['done'], 1000);
+  const result = channel.execFile({ id: 1, command: 'printf', args: ['done'], limit: 1000 });
   child.stdout.write(channel.prefix + 'START 1 - - -\ndone');
   await flush();
   child.exitCode = 255;
@@ -631,9 +650,9 @@ test('an invalid remote timeout budget fails only its request and the dispatcher
   try {
     await transport.connect();
     const channel = [...transport.channels][0];
-    await assert.rejects(channel.execFile(80, 'true', [], 1000, false, undefined, NaN), { code: 'EREMOTE', message: /Invalid timeout budget/ });
+    await assert.rejects(channel.execFile({ id: 80, command: 'true', limit: 1000, trackProcess: false, timeoutMilliseconds: NaN }), { code: 'EREMOTE', message: /Invalid timeout budget/ });
     assert.equal(channel.closed, false);
-    assert.equal((await channel.execFile(81, 'printf', ['alive'], 1000)).stdout, 'alive');
+    assert.equal((await channel.execFile({ id: 81, command: 'printf', args: ['alive'], limit: 1000 })).stdout, 'alive');
   } finally { transport.dispose(); }
 });
 

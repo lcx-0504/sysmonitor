@@ -17,6 +17,11 @@ const createPartition = (status = 'loading') => Object.freeze({
   lastError: null,
 });
 
+function failureStatus(hasValue, isUnavailable) {
+  if (hasValue) return 'stale';
+  return isUnavailable ? 'unavailable' : 'loading';
+}
+
 class SnapshotStore {
   constructor() {
     this.sequence = 0;
@@ -50,7 +55,7 @@ class SnapshotStore {
     const hasValue = previous.value !== null;
     this.replace(key, Object.freeze({
       ...previous,
-      status: isUnavailable && !hasValue ? 'unavailable' : hasValue ? 'stale' : 'loading',
+      status: failureStatus(hasValue, isUnavailable),
       attemptedAt,
       failureCount: previous.failureCount + 1,
       failureSequence: this.sequence + 1,

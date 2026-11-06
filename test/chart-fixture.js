@@ -42,7 +42,7 @@ function harness(t, minutes = 5) {
   function stop(at, gap = true) { time(at); history.stop(now, { gap }); publish(); data.setSparkActivity(true, true); }
   function resume(at) { time(at); history.resume(now); publish(); data.setSparkActivity(false, true); }
   function interval(value, at) {
-    time(at); history.setInterval(value * 1000, now); state.config.refreshInterval = value; publish();
+    time(at); history.setSampleInterval(value * 1000, now); state.config.refreshInterval = value; publish();
   }
   return { history, model, time, record, fail, restore, stop, resume, interval, publish, wall: value => { wall = value; } };
 }

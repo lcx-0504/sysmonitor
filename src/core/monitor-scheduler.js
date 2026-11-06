@@ -11,6 +11,7 @@ class MonitorScheduler {
     this.isCollectingOnce = false;
     this.oneShot = null;
     this.oneShotStarted = false;
+    this.oneShotGeneration = null;
     this.refreshes = new Map();
     this.generation = 0;
     this.runnerChanges = new AbortController();
@@ -73,7 +74,10 @@ class MonitorScheduler {
 
   queueRefresh(runner, refresh = true) {
     this.signalRunnerChange();
-    if (runner.enabled === false || !refresh) { this.refreshes.delete(runner); return Promise.resolve(); }
+    if (runner.enabled === false || !refresh) {
+      this.refreshes.delete(runner);
+      return Promise.resolve();
+    }
     const request = {};
     this.refreshes.set(runner, request);
     request.promise = Promise.resolve().then(() => runner.whenIdle()).then(() => {

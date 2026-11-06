@@ -18,9 +18,15 @@ function metricValues(model, key) {
   }
 }
 
+function hasFiniteValues(key, values) {
+  if (key === 'accelerators') return values.gpus.some(gpu => Number.isFinite(gpu.value));
+  return Object.values(values).some(Number.isFinite);
+}
+
+// Owns the retained chart samples; other modules read them through retainedSamples().
 class MetricHistory {
-  constructor(samples = [], intervalMilliseconds = REFRESH_SETTING.default * 1000) {
-    this.samples = samples;
+  constructor(intervalMilliseconds = REFRESH_SETTING.default * 1000) {
+    this.samples = [];
     this.lastTimes = new Map();
     this.segment = 0;
     this.lastSegments = new Map();
@@ -55,7 +61,9 @@ class MetricHistory {
     return displayPosition(this.playback.get(source), now);
   }
 
-  setInterval(intervalMilliseconds, now) {
+  retainedSamples() { return this.samples.slice(); }
+
+  setSampleInterval(intervalMilliseconds, now) {
     if (this.intervalMilliseconds === intervalMilliseconds) return;
     for (const [source, playback] of this.playback) {
       const current = this.displayTime(source, now);
@@ -101,62 +109,94 @@ class MetricHistory {
     const updates = [];
     const updatedPlots = new Map();
     for (const now of times) {
-      const sequence = ++this.frameSequence;
+      const frame = { now, sequence: ++this.frameSequence, final: now === times.at(-1), updatedPlots };
       for (const key of METRIC_SOURCES) {
-        const source = model.sources[key];
-        if (source.state !== 'ready') continue;
-        const segment = this.segment + ':' + (this.sourceEpochs.get(key) || 0);
-        const last = this.lastTimes.get(key);
-        const reset = last !== undefined && now < last;
-        if (reset) {
-          for (let index = this.samples.length - 1; index >= 0; index--) if (this.samples[index].source === key) this.samples.splice(index, 1);
-          for (const plot of this.playback.keys()) if (plot === key || key === 'accelerators' && plot.startsWith('gpu:')) this.playback.delete(plot);
-          this.lastSegments.delete(key);
-        }
-        const values = metricValues(model, key);
-        const hasValues = key === 'accelerators' ? values.gpus.some(gpu => Number.isFinite(gpu.value)) : Object.values(values).some(Number.isFinite);
-        if (!hasValues && now !== times.at(-1)) continue;
-        const inventoryCleared = key === 'accelerators' && !values.gpus.length && this.gpuGenerations.size > 0;
-        if (key === 'accelerators') {
-          const generations = new Map();
-          for (const gpu of values.gpus) {
-            const identity = gpu.deviceKey || String(gpu.idx);
-            // Carry the appearance boundary even after value-less inventory events are trimmed.
-            gpu.generation = reset ? sequence : this.gpuGenerations.get(identity) ?? sequence;
-            generations.set(identity, gpu.generation);
-          }
-          this.gpuGenerations = generations;
-        }
-        const sample = { source: key, sequence, t:now,
-          segment, gapBefore: hasValues && this.lastSegments.has(key) && this.lastSegments.get(key) !== segment, reset, values };
-        if (hasValues) {
-          const plots = new Set(metricEntries(sample).filter(([, value]) => Number.isFinite(value)).map(([metric]) => plotKey(key, metric)));
-          for (const plot of plots) updatedPlots.set(plot, now);
-          this.lastSegments.set(key, segment);
-        }
-        if (key === 'accelerators') {
-          const present = new Set(values.gpus.map(gpu => plotKey(key, gpu.deviceKey || String(gpu.idx))));
-          for (const plot of this.playback.keys()) if (plot.startsWith('gpu:') && !present.has(plot)) this.playback.delete(plot);
-        }
-        this.lastTimes.set(key, now);
-        // Keep only the latest value-less event (it can carry a changed GPU inventory).
-        const empty = this.emptySamples.get(key);
-        if (empty) {
-          const index = this.samples.indexOf(empty);
-          if (index >= 0) this.samples.splice(index, 1);
-          this.emptySamples.delete(key);
-        }
-        if (key === 'accelerators' && !values.gpus.length) {
-          if (inventoryCleared) for (let index = this.samples.length - 1; index >= 0; index--) if (this.samples[index].source === key) this.samples.splice(index, 1);
-          this.lastSegments.delete(key);
-        }
-        if (!hasValues) this.emptySamples.set(key, sample);
-        this.samples.push(sample);
-        updates.push(sample);
+        if (model.sources[key].state !== 'ready') continue;
+        const sample = this.recordSource(key, metricValues(model, key), frame);
+        if (sample) updates.push(sample);
       }
     }
     for (const [plot, sampledAt] of updatedPlots) this.advance(plot, sampledAt, readyAt);
-    const predecessors = new Map(), latestEvents = new Map(), retained = new Set();
+    this.trimSamples(readyAt, windowMilliseconds);
+    return updates;
+  }
+
+  recordSource(key, values, { now, sequence, final, updatedPlots }) {
+    const last = this.lastTimes.get(key);
+    const reset = last !== undefined && now < last;
+    if (reset) this.clearSource(key);
+    const hasValues = hasFiniteValues(key, values);
+    if (!hasValues && !final) return null;
+    const accelerators = key === 'accelerators';
+    const inventoryCleared = accelerators && this.assignGpuGenerations(values.gpus, reset, sequence);
+    const segment = this.segment + ':' + (this.sourceEpochs.get(key) || 0);
+    const gapBefore = hasValues && this.lastSegments.has(key) && this.lastSegments.get(key) !== segment;
+    const sample = { source: key, sequence, t: now, segment, gapBefore, reset, values };
+    if (hasValues) {
+      for (const [metric, value] of metricEntries(sample)) {
+        if (Number.isFinite(value)) updatedPlots.set(plotKey(key, metric), now);
+      }
+      this.lastSegments.set(key, segment);
+    }
+    this.lastTimes.set(key, now);
+    this.dropEmptySample(key);
+    if (accelerators) this.reconcileGpuInventory(values.gpus, inventoryCleared);
+    if (!hasValues) this.emptySamples.set(key, sample);
+    this.samples.push(sample);
+    return sample;
+  }
+
+  clearSource(key) {
+    this.removeSamples(key);
+    for (const plot of this.playback.keys()) {
+      if (plot === key || key === 'accelerators' && plot.startsWith('gpu:')) this.playback.delete(plot);
+    }
+    this.lastSegments.delete(key);
+  }
+
+  removeSamples(source) {
+    for (let index = this.samples.length - 1; index >= 0; index--) {
+      if (this.samples[index].source === source) this.samples.splice(index, 1);
+    }
+  }
+
+  // Keeps only the latest value-less event of a source; it can carry a changed GPU inventory.
+  dropEmptySample(key) {
+    const empty = this.emptySamples.get(key);
+    if (!empty) return;
+    const index = this.samples.indexOf(empty);
+    if (index >= 0) this.samples.splice(index, 1);
+    this.emptySamples.delete(key);
+  }
+
+  // Assigns each GPU the frame in which it appeared and reports whether the inventory has just become empty.
+  assignGpuGenerations(gpus, reset, sequence) {
+    const inventoryCleared = !gpus.length && this.gpuGenerations.size > 0;
+    const generations = new Map();
+    for (const gpu of gpus) {
+      const identity = gpu.deviceKey || String(gpu.idx);
+      // Carry the appearance boundary even after value-less inventory events are trimmed.
+      gpu.generation = reset ? sequence : this.gpuGenerations.get(identity) ?? sequence;
+      generations.set(identity, gpu.generation);
+    }
+    this.gpuGenerations = generations;
+    return inventoryCleared;
+  }
+
+  reconcileGpuInventory(gpus, inventoryCleared) {
+    const present = new Set(gpus.map(gpu => plotKey('accelerators', gpu.deviceKey || String(gpu.idx))));
+    for (const plot of this.playback.keys()) {
+      if (plot.startsWith('gpu:') && !present.has(plot)) this.playback.delete(plot);
+    }
+    if (gpus.length) return;
+    if (inventoryCleared) this.removeSamples('accelerators');
+    this.lastSegments.delete('accelerators');
+  }
+
+  trimSamples(readyAt, windowMilliseconds) {
+    const predecessors = new Map();
+    const latestEvents = new Map();
+    const retained = new Set();
     const cutoffs = new Map([...this.playback.keys()].map(plot => [plot, this.displayTime(plot, readyAt) - windowMilliseconds]));
     for (const sample of this.samples) {
       latestEvents.set(sample.source, sample);
@@ -171,7 +211,6 @@ class MetricHistory {
     for (let index = this.samples.length - 1; index >= 0; index--) {
       if (!retained.has(this.samples[index])) this.samples.splice(index, 1);
     }
-    return updates;
   }
 
   advance(source, sampledAt, now) {

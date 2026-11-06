@@ -90,7 +90,7 @@ test('regular publication uses the current snapshot at fixed ticks without await
     onSnapshot: snapshot => published.push({ at: Date.now(), snapshot }) });
   t.after(() => service.dispose());
   for (const runner of service.runners) {
-    runner.timeoutMilliseconds = 2500;
+    runner.configure({ timeoutMilliseconds: 2500 });
     runner.collector = { collect() {
       calls.set(runner.key, (calls.get(runner.key) || 0) + 1);
       return new Promise(resolve => pending.set(runner.key, resolve));

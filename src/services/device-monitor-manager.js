@@ -3,7 +3,7 @@
 const { MonitorSession } = require('./monitor-session');
 const { SshTransport } = require('../ssh/ssh-transport');
 const { RemoteSystemInfo } = require('../ssh/remote-system-info');
-const { effectiveTimeouts } = require('./collection-policy');
+const { sshTransportOptions } = require('./collection-policy');
 
 class DeviceMonitorManager {
   constructor({ configStore, localLinux, configFile = null, onUpdate = () => {}, onLog = () => {},
@@ -22,8 +22,7 @@ class DeviceMonitorManager {
     const remote = id !== 'local';
     const host = remote ? id.slice(4) : null;
     const transport = remote ? new SshTransport({ host, configFile: this.configFile,
-      connectionTimeoutMilliseconds: effectiveTimeouts(this.configStore.getCurrent()).connection * 1000,
-      maxConnections: effectiveTimeouts(this.configStore.getCurrent()).sshPoolSize,
+      ...sshTransportOptions(this.configStore.getCurrent()),
       onLog: (message) => this.onLog(id + ': ' + message),
       onWarning: (key) => this.onWarning(host, key),
       onResidualProcesses: (pids, acknowledge) => {
@@ -67,7 +66,9 @@ class DeviceMonitorManager {
     if (this.localLinux) wanted.add('local');
     for (const id of wanted) if (id === 'local' || id.startsWith('ssh:')) this.open(id);
     for (const [id, device] of this.devices) {
-      if (!wanted.has(id)) { device.dispose(); this.devices.delete(id); }
+      if (wanted.has(id)) continue;
+      device.dispose();
+      this.devices.delete(id);
     }
     this.applyVisibility();
   }

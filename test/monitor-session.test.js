@@ -13,7 +13,7 @@ test('paused one-shot samples are acknowledged without consuming the resume gap'
   now = 2000; fixture.values.memory.usagePercent = 50; fixture.commit(['memory']);
   now = 10000; fixture.session.setPaused(false); fixture.commit(['cpu']);
   now = 11000; fixture.values.memory.usagePercent = 60; fixture.commit(['memory']); captureFrame(fixture.session);
-  assert.deepEqual(fixture.session.history.filter(sample => sample.source === 'memory').map(sample => [sample.t, sample.gapBefore]), [[0, false], [10000, true], [11000, false]]);
+  assert.deepEqual(fixture.session.chartSamples().filter(sample => sample.source === 'memory').map(sample => [sample.t, sample.gapBefore]), [[0, false], [10000, true], [11000, false]]);
 });
 
 const { MonitorService } = require('../src/services/monitor-service');
@@ -134,7 +134,7 @@ for (const remote of [false, true]) {
     assert.equal(fixture.session.ready, true);
     assert.equal(updates.at(-1).viewModel.performance.cpu.usagePercent, 12);
     assert.deepEqual(updates.at(-1).viewModel.performance.gpus, []);
-    assert.equal(fixture.session.history.filter(sample => sample.source === 'cpu').length, 1);
+    assert.equal(fixture.session.chartSamples().filter(sample => sample.source === 'cpu').length, 1);
   });
 }
 
@@ -155,11 +155,11 @@ test('disconnection freezes history until a complete sample from the new connect
   session.setConnection('connected');
   fixture.commit();
   const model = session.model;
-  const history = session.history.slice();
+  const history = session.chartSamples();
   session.setConnection('disconnected', new Error('connection lost'));
   fixture.commit();
   assert.equal(session.model, model);
-  assert.deepEqual(session.history, history);
+  assert.deepEqual(session.chartSamples(), history);
   session.setConnection('connected');
   for (const key of ['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology', 'accelerators']) {
     fixture.store.commit(key, fixture.values[key], session.requiredSince - 1);
@@ -189,7 +189,7 @@ test('paused retry updates once, preserves history, and deduplicates simultaneou
   t.after(() => session.dispose());
   await fixture.transport.connect();
   fixture.commit();
-  const history = session.history.slice();
+  const history = session.chartSamples();
   session.setPaused(true);
   session.setConnection('disconnected', new Error('lost'));
   let attempts = 0;
@@ -201,7 +201,7 @@ test('paused retry updates once, preserves history, and deduplicates simultaneou
   await Promise.all([first, second]);
   assert.equal(attempts, 1);
   assert.equal(session.service.scheduler.isPaused, true);
-  assert.deepEqual(session.history, history);
+  assert.deepEqual(session.chartSamples(), history);
   assert.deepEqual(session.snapshotMessage().samples, []);
 });
 
@@ -314,6 +314,24 @@ test('failed initial CPU and memory queries remain unknown rather than zero', (t
   assert.equal(fixture.session.model.performance.memory.usedText, '--');
 });
 
+test('collection settings reach the SSH transport and the session stops following it once disposed', async () => {
+  let config = normalizeConfig({});
+  const fixture = createSessionFixture({ remote: true, id: 'ssh:lab', configStore: { getCurrent: () => config } });
+  const options = [];
+  fixture.transport.updateOptions = (value) => options.push(value);
+  config = normalizeConfig({ collection: { custom: true, connectionTimeout: 20, sshPoolSize: 2 } });
+  fixture.session.updateConfig();
+  config = normalizeConfig({ collection: { custom: false, connectionTimeout: 20, sshPoolSize: 2 } });
+  fixture.session.updateConfig();
+  assert.deepEqual(options, [{ connectionTimeoutMilliseconds: 20000, maxConnections: 2 }, { connectionTimeoutMilliseconds: 15000, maxConnections: 4 }]);
+  await fixture.transport.connect();
+  assert.equal(fixture.session.state, 'connected');
+  fixture.session.dispose();
+  assert.equal(fixture.transport.stateListeners.size, 0);
+  fixture.transport.emitState('disconnected', new Error('lost'));
+  assert.equal(fixture.session.state, 'connected');
+});
+
 test('manual reconnection performs one requested round before restarting periodic collection', async (t) => {
   const fixture = createSessionFixture({ remote: true });
   t.after(() => fixture.session.dispose());
@@ -330,7 +348,7 @@ test('manual reconnection performs one requested round before restarting periodi
 
 test('first display follows the configured collection budget and waits for a settled result', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
-  const fixture = createSessionFixture({ configStore: { getCurrent: () => normalizeConfig({ timeouts: { enabled: true, extended: 120 } }) } });
+  const fixture = createSessionFixture({ configStore: { getCurrent: () => normalizeConfig({ collection: { custom: true, extendedTimeout: 120 } }) } });
   t.after(() => fixture.session.dispose());
   fixture.session.start();
   fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);
@@ -365,17 +383,17 @@ test('a long pause preserves the chart history when monitoring resumes', (t) => 
   now += 3600000;
   fixture.session.setPaused(false);
   fixture.commit();
-  assert.deepEqual(fixture.session.history.filter(sample => sample.source === 'cpu').map(sample => sample.t), [1000, 3000, 3603000]);
-  assert.equal(fixture.session.history.filter(sample => sample.source === 'cpu').at(-1).gapBefore, true);
+  assert.deepEqual(fixture.session.chartSamples().filter(sample => sample.source === 'cpu').map(sample => sample.t), [1000, 3000, 3603000]);
+  assert.equal(fixture.session.chartSamples().filter(sample => sample.source === 'cpu').at(-1).gapBefore, true);
 });
 
 test('display-only settings retain the running chart clock and only interval edits restart it', t => {
   let config = normalizeConfig({});
   const fixture = createSessionFixture({ configStore:{ getCurrent:() => config } }); t.after(() => fixture.session.dispose());
   fixture.commit(); fixture.session.start();
-  const timer = fixture.session.frameClock.timer, length = fixture.session.history.length;
+  const timer = fixture.session.frameClock.timer, length = fixture.session.chartSamples().length;
   config = normalizeConfig({ display:{ charts:false } }); fixture.session.updateConfig();
-  assert.equal(fixture.session.frameClock.timer, timer); assert.equal(fixture.session.history.length, length);
+  assert.equal(fixture.session.frameClock.timer, timer); assert.equal(fixture.session.chartSamples().length, length);
   config = normalizeConfig({ refreshInterval:5 }); fixture.session.updateConfig();
   assert.notEqual(fixture.session.frameClock.timer, timer); assert.equal(fixture.session.metricHistory.intervalMilliseconds, 5000);
 });
@@ -388,7 +406,7 @@ test('an interval edit sends the new starting frame to live views and history to
   now=1000; config=normalizeConfig({refreshInterval:5}); fixture.session.updateConfig();
   assert.equal(messages.length,1);
   assert.deepEqual(messages.flatMap(message=>message.samples.filter(sample=>sample.source==='cpu').map(sample=>sample.t)),[1000]);
-  assert.deepEqual(fixture.session.history.filter(sample=>sample.source==='cpu').map(sample=>sample.t),[0,1000]);
+  assert.deepEqual(fixture.session.chartSamples().filter(sample=>sample.source==='cpu').map(sample=>sample.t),[0,1000]);
 });
 
 test('an existing complete frame accepts early reconnect sources while a new list opening still waits', async t => {
@@ -442,7 +460,7 @@ test('real service completion publishes the complete first snapshot before the n
   assert.ok(Number.isFinite(session.model.performance.network.receiveBytesPerSecond));
   assert.ok(Number.isFinite(session.model.performance.diskIo.readBytesPerSecond));
   assert.deepEqual(session.model.performance.disks.map((disk) => disk.mount), ['/', '/data', '/nfs-one', '/nfs-two']);
-  assert.ok(session.history.length > 0);
+  assert.ok(session.chartSamples().length > 0);
 });
 
 test('re-enabling process demand hides earlier rows until the next process sample publishes', t => {

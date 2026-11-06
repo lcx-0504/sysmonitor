@@ -54,7 +54,7 @@ test('residual threshold uses the existing global pause for every device', () =>
 test('paused one-shot metrics reach the view without adding a trend point', () => {
   const id = 'ssh:fixture';
   const { session: device } = createSessionFixture({ id, paused: true });
-  Object.assign(device, { ready: true, model: { performance: {} }, modelAt: 500, history: [{ t: 100 }] });
+  Object.assign(device, { ready: true, model: { performance: {} }, modelAt: 500 });
   const provider = new MultiMonitorViewProvider({
     vscode: { workspace: { getConfiguration: () => ({ get: () => null }) } },
     manager: { paused: true, get: () => device, sync() {}, setConfigFile() {} },
@@ -69,7 +69,7 @@ test('paused one-shot metrics reach the view without adding a trend point', () =
   assert.equal(update.viewModel, device.model);
   assert.equal(update.sampleTime, 500);
   assert.deepEqual(update.samples, []);
-  assert.deepEqual(device.history, [{ t: 100 }]);
+  assert.deepEqual(device.chartSamples(), []);
   provider.dispose();
   device.dispose();
 });
@@ -217,7 +217,7 @@ test('page switches retain the current snapshot while device switches hydrate at
   const model = { performance: { cpu: { usagePercent: 12 } }, processes: [] };
   const device = (id) => {
     const { session } = createSessionFixture({ id });
-    Object.assign(session, { ready: true, model, modelAt: 1, history: [{ t: 1, cpu: 12 }] });
+    Object.assign(session, { ready: true, model, modelAt: 1, chartSamples: () => [{ t: 1, cpu: 12 }] });
     return session;
   };
   const devices = new Map([['ssh:campus', device('ssh:campus')], ['ssh:lab007', device('ssh:lab007')]]);

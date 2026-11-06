@@ -3,6 +3,7 @@ const { CpuCollector } = require('./cpu-collector');
 const { parseMemoryInfo } = require('../domain/linux-parsers');
 const { NetworkCollector } = require('./network-collector');
 const { DiskIoCollector } = require('./disk-io-collector');
+const { incompleteError } = require('../utils/errors');
 
 const RESOURCE_INPUTS = {
   cpu: ['/proc/stat', '/proc/loadavg'], memory: ['/proc/meminfo'],
@@ -10,7 +11,7 @@ const RESOURCE_INPUTS = {
 };
 const OPTIONAL_FILES = new Set(['/proc/net/route']);
 const marker = index => `__SYSMON_RESOURCE_${index}__\n`;
-const incomplete = () => Object.assign(new Error('Incomplete resource sample'), { code: 'EINCOMPLETE' });
+const incomplete = () => incompleteError('Incomplete resource sample');
 const resourceCommand = files => [
   'read -r started ignored < /proc/uptime || exit 1',
   ...files.map((file, index) =>

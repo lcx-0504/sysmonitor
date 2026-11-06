@@ -13,8 +13,12 @@ function retainFields(previous, incoming, paths) {
   const value = { ...incoming };
   for (const path of paths) {
     if (Number.isFinite(at(incoming, path)) || (incoming.resetFields || []).includes(path) || !Number.isFinite(at(previous, path))) continue;
-    const keys = path.split('.'); let target = value;
-    for (const key of keys.slice(0, -1)) { target[key] = { ...(target[key] || {}) }; target = target[key]; }
+    const keys = path.split('.');
+    let target = value;
+    for (const key of keys.slice(0, -1)) {
+      target[key] = { ...(target[key] || {}) };
+      target = target[key];
+    }
     target[keys.at(-1)] = at(previous, path);
   }
   return value;
