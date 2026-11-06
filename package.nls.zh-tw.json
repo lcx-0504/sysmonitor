@@ -9,7 +9,6 @@
   "description": "本機、SSH 或遠端視窗中的 Linux 系統監控 — CPU / GPU / RAM / Network",
   "viewTitle": "系統監控",
   "viewName": "系統監控",
-  "procsName": "程序",
   "cmdOpen": "系統監控: 打開面板",
   "cmdOpenEditor": "系統監控: 移到編輯器",
   "cmdOpenWindow": "系統監控: 移到新視窗",

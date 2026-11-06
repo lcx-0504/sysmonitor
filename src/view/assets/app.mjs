@@ -1,52 +1,28 @@
 import { state } from "./state.mjs";
-import { updateResponsiveLayout, updateTopbarLayout } from "./layout.mjs";
-import { renderProcTable, renderProcToolbar } from "./processes.mjs";
+import { updateTopbarLayout } from "./layout.mjs";
+import { normalizeProcessDisplay, refreshProcTable } from "./processes.mjs";
 import { switchTab, showMonitorStatus, handleNavigationMessage, refreshConnectionRetryButton, showConnection, showNavigation } from "./navigation.mjs";
-import { animateSparks } from "./charts.mjs";
-import { applySamples, setSparkActivity } from './chart-state.mjs';
+import { setChartActivity, updateSparkAnimation } from "./charts.mjs";
+import { applySamples } from './chart-state.mjs';
 import { renderSettings, updateSshDefaultUi, refreshGpuAvailability, showConfigSaveState } from "./settings.mjs";
 import { sendToExtension, tr } from './ui.mjs';
 import { renderServers } from "./servers.mjs";
-import { applyCharts, applyGroupVisibility, applyTabularNums, renderMonitorSnapshot } from "./performance.mjs";
+import { applyCharts, applyGroupVisibility, applyTabularNums, renderMonitorSnapshot, restoreGpuSelection } from "./performance.mjs";
 import { catalogs, resolveLanguage } from "./i18n.mjs";
 
-function setLang(lang) {
-    state.locale.language = resolveLanguage(lang);
-    document.documentElement.lang = state.locale.language;
-    state.locale.messages = catalogs[state.locale.language];
-    document.getElementById('l-1m').textContent = '1' + state.locale.messages.min;
-    document.getElementById('l-5m').textContent = '5' + state.locale.messages.min;
-    document.getElementById('l-15m').textContent = '15' + state.locale.messages.min;
-    document.getElementById('l-used').textContent = state.locale.messages.used;
-    document.getElementById('l-avail').textContent = state.locale.messages.avail;
-    document.getElementById('l-total').textContent = state.locale.messages.total;
-    document.getElementById('net-title').textContent = state.locale.messages.srvNet;
-    document.getElementById('ssh-label').textContent = state.locale.messages.localSSH;
-    ['net-up-label', 'ssh-up-label'].forEach(function(id) { document.getElementById(id).textContent = state.locale.messages.up; });
-    ['net-down-label', 'ssh-down-label'].forEach(function(id) { document.getElementById(id).textContent = state.locale.messages.down; });
-    document.getElementById('disk-label').textContent = state.locale.messages.diskLabel;
-    document.getElementById('select-all-btn').textContent = state.locale.messages.selAll;
-    document.getElementById('clear-btn').textContent = state.locale.messages.clear;
-    document.getElementById('copy-btn').textContent = state.locale.messages.copyEnv;
-    document.getElementById('tab-perf-btn').textContent = state.locale.messages.perfTab;
-    document.getElementById('tab-proc-btn').textContent = state.locale.messages.procTab;
-    document.getElementById('tab-servers-btn').textContent = state.locale.messages.serversTab;
-    document.getElementById('topbar-server-refresh').textContent = tr("refreshList");
-    document.getElementById('settings-btn').textContent = state.locale.messages.settBtn;
-    document.getElementById('pause-btn').textContent = state.ui.paused ? state.locale.messages.stopped : state.locale.messages.running;
-    document.getElementById('proc-filter').placeholder = state.locale.messages.filterHint || '';
+function setPaused(paused) {
+    setChartActivity(paused, state.ui.canAnimate);
+    refreshConnectionRetryButton();
+    var pauseButton = document.getElementById('pause-btn');
+    pauseButton.textContent = paused ? tr('stopped') : tr('running');
+    pauseButton.classList.toggle('on', !paused);
     updateTopbarLayout();
-    document.getElementById('server-intro-close').textContent = tr('gotIt');
-    updateSshDefaultUi();
-    renderProcToolbar();
   }
 
-export function presentSnapshot(data, restoring = false) {
+function presentSnapshot(data, restoring = false) {
   applySamples(data.samples, { replace: data.replaceSamples === true, timeline: data.timeline });
   if (data.status) showMonitorStatus(data.status);
   if (data.viewModel) {
-    const language = data.viewModel.performance.language;
-    if (language && resolveLanguage(language) !== state.locale.language) setLang(language);
     const previousInventory = state.data.gpus.map(gpu => [gpu.idx, gpu.deviceKey]);
     state.data.viewModel = data.viewModel;
     renderMonitorSnapshot(data.viewModel, restoring || data.instant === true, data.sampleTime);
@@ -66,15 +42,11 @@ export function initializeApp() {
         return;
       }
       if (data.cmd === 'uiState') {
-        if (data.processDisplay) { state.ui.processDisplay = data.processDisplay; renderProcTable(); }
-        if (typeof data.paused === 'boolean') {
-          setSparkActivity(data.paused, state.ui.canAnimate);
-          refreshConnectionRetryButton();
-          var pauseButton = document.getElementById('pause-btn');
-          pauseButton.textContent = state.ui.paused ? state.locale.messages.stopped : state.locale.messages.running;
-          pauseButton.classList.toggle('on', !state.ui.paused);
-          updateTopbarLayout();
+        if (data.processDisplay) {
+          state.ui.processDisplay = normalizeProcessDisplay(data.processDisplay);
+          refreshProcTable();
         }
+        if (typeof data.paused === 'boolean') setPaused(data.paused);
         return;
       }
       if (data.cmd === 'config') {
@@ -89,7 +61,6 @@ export function initializeApp() {
         applyCharts();
         applyGroupVisibility();
         state.config.refreshInterval = data.interval || state.config.refreshInterval;
-        if (typeof data.gpuCount === 'number') state.data.gpuCount = data.gpuCount;
         if (typeof data.sshDefaultInstalled === 'boolean') {
           state.config.sshDefaultInstalled = data.sshDefaultInstalled;
           state.ui.installPending = false;
@@ -111,14 +82,12 @@ export function initializeApp() {
   document.getElementById('tab-proc-btn').addEventListener('click',function(){switchTab('proc');});
   document.getElementById('tab-servers-btn').addEventListener('click',function(){switchTab('servers');});
   document.getElementById('pause-btn').addEventListener('click',function(){
-      setSparkActivity(!state.ui.paused, state.ui.canAnimate);
-      refreshConnectionRetryButton();
-      this.textContent = state.ui.paused ? state.locale.messages.stopped : state.locale.messages.running;
-      this.classList.toggle('on', !state.ui.paused);
+      setPaused(!state.ui.paused);
       sendToExtension({cmd:'pause',value:state.ui.paused});
     });
+  document.addEventListener('visibilitychange', updateSparkAnimation);
   state.charts.windowMilliseconds = (state.config.display.sparkMinutes || 5) * 60 * 1000;
-  setLang(state.initial.language || 'en');
+  restoreGpuSelection();
   if (state.environment.localMode) showNavigation(state.ui.navigation);
   else {
       var persistedPage = state.bridge.getState();
@@ -126,13 +95,10 @@ export function initializeApp() {
       state.bridge.setState(Object.assign({}, persistedPage || {}, {page: (persistedPage && persistedPage.page) || state.initial.page || 'perf'}));
     }
     applyGroupVisibility();
-    document.getElementById('ssh-card').style.display = 'none';
+    updateTopbarLayout();
     sendToExtension({cmd:'ready',page:document.querySelector('.tab-content.active').id.slice(4)});
-    requestAnimationFrame(animateSparks);
-  
+    updateSparkAnimation();
 }
-
-export { setLang };
 
 export function initializeState() {
   state.environment = {}; state.locale = {}; state.config = {}; state.ui = {};
@@ -151,9 +117,7 @@ export function initializeState() {
   state.config.sshDefaultInstalled = state.initial.sshDefaultInstalled === true;
   state.data.gpus = [];
   state.data.status = state.initial.monitorStatus || null;
-  state.ui.processDisplay = state.initial.processDisplay || { cpu: 'core', ram: 'size' };
-  state.ui.expandedColumns = { name: false, cmd: false };
+  state.ui.processDisplay = normalizeProcessDisplay(state.initial.processDisplay);
   state.config.refreshInterval = state.initial.interval || state.initial.refreshSetting.default;
-  state.data.gpuCount = typeof state.initial.gpuCount === 'number' ? state.initial.gpuCount : 0;
   state.ui.settingsOpen = false;
 }

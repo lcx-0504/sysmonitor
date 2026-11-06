@@ -80,7 +80,7 @@ function renderServers() {
     });
     var placeholder = list.querySelector('.server-placeholder');
     if (placeholder) placeholder.remove();
-    if (!state.data.serverRows.length) {
+    if (!state.data.serverRows.length && state.data.serversLoaded) {
       var empty = document.createElement('div');
       empty.className = 'server-placeholder';
       empty.textContent = state.data.serverError || (tr("noHostsFoundInSSHConfig"));
@@ -173,6 +173,7 @@ export function initializeServers({ updateLocalIntro: refreshIntro }) {
   updateLocalIntro = refreshIntro;
   state.data.serverRows = [];
   state.data.serverError = '';
+  state.data.serversLoaded = false;
   serverIcons = {
       editor: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M15 3.5V6.5C15 6.776 14.776 7 14.5 7C14.224 7 14 6.776 14 6.5V3.5C14 2.673 13.327 2 12.5 2H3.5C2.673 2 2 2.673 2 3.5V12.5C2 13.327 2.673 14 3.5 14H6.5C6.776 14 7 14.224 7 14.5C7 14.776 6.776 15 6.5 15H3.5C2.121 15 1 13.879 1 12.5V3.5C1 2.121 2.121 1 3.5 1H12.5C13.879 1 15 2.121 15 3.5ZM15 9.5C15 9.224 14.776 9 14.5 9H9.5C9.224 9 9 9.224 9 9.5V14.5C9 14.776 9.224 15 9.5 15C9.776 15 10 14.776 10 14.5V10.707L14.146 14.853C14.244 14.951 14.372 14.999 14.5 14.999C14.628 14.999 14.756 14.95 14.854 14.853C15.049 14.658 15.049 14.341 14.854 14.146L10.708 10H14.501C14.777 10 15.001 9.776 15.001 9.5H15Z"/></svg>',
       window: '<svg viewBox="0 0 300 300" aria-hidden="true"><path transform="translate(0 300) scale(1 -1)" d="M281 225V75Q281 52 264.5 35.5Q248 19 225 19H75Q52 19 35.5 35.5Q19 52 19 75V136Q27 129 37 124V75Q38 59 48.5 48.5Q59 38 75 38H225Q241 38 252 48.5Q263 59 263 75V206H187L188 216L187 225H263Q263 241 252 252Q241 263 225 263H176Q171 273 164 281H225Q248 281 264.5 264.5Q281 248 281 225ZM0 216Q0 239 11.5 258Q23 277 42 288.5Q61 300 84 300Q107 300 126.5 288.5Q146 277 157.5 258Q169 239 169 216Q169 193 157.5 173.5Q146 154 126.5 142.5Q107 131 84 131Q61 131 42 142.5Q23 154 11.5 173.5Q0 193 0 216ZM28 216Q28 212 31 209Q34 206 38 206H75V169Q75 165 77.5 162Q80 159 84 159Q88 159 91 162Q94 165 94 169V206H131Q135 206 138 209Q141 212 141 216Q141 220 138 222.5Q135 225 131 225H94V263Q94 266 91 269Q88 272 84 272Q80 272 77.5 269Q75 266 75 262V225H38Q34 225 31 222.5Q28 220 28 216Z"/></svg>',
@@ -192,7 +193,6 @@ export function initializeServers({ updateLocalIntro: refreshIntro }) {
   document.getElementById('topbar-server-refresh').addEventListener('click', function() { sendToExtension({cmd:'refreshServers'}); });
   document.getElementById('server-intro-ssh-default').addEventListener('click', addSshDefaultExtension);
   updateSshDefaultUi();
-  document.getElementById('server-intro-close').textContent = tr("gotIt");
   document.getElementById('server-intro-close').addEventListener('click', function() {
       state.ui.localIntroDismissed = true;
       updateLocalIntro();
@@ -200,4 +200,4 @@ export function initializeServers({ updateLocalIntro: refreshIntro }) {
     });
 }
 
-export { closeRemoteMenu, positionRemoteMenu, renderRemoteMenu, showRemoteMenu, activateRemoteWindow, renderServers };
+export { closeRemoteMenu, showRemoteMenu, renderServers };
