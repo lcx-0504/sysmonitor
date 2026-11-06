@@ -8,21 +8,21 @@
 [![GitHub Stars](https://img.shields.io/github/stars/lcx-0504/sysmonitor)](https://github.com/lcx-0504/sysmonitor)
 [![License](https://img.shields.io/github/license/lcx-0504/sysmonitor)](LICENSE)
 
-[中文说明](README.zh-CN.md)
+[简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md)
 
-Monitor Linux servers from VS Code or Cursor: check resource usage, find busy processes, and see which GPUs are available. View several servers side by side without leaving your editor.
+System Monitor is a Linux system monitoring extension for VS Code and compatible editors such as Cursor and Windsurf, with a monitoring panel and status-bar indicators. It supports local Linux machines and remote SSH servers, and runs inside Remote-SSH, WSL, and Linux containers.
 
-Use it on a Linux machine, from a local macOS or Windows window over SSH, or inside a Remote-SSH, WSL, or Dev Container window.
+Connect through SSH from a local Linux, macOS, or Windows window, or monitor the current machine directly in a Linux environment provided by Remote-SSH, WSL, or Dev Containers. Monitoring panels can be displayed in the sidebar, editor tabs, and separate monitoring windows.
 
-Monitor multiple servers over SSH from a local window, with views in the sidebar, editor, or separate windows.
+Monitor the local Linux machine, when available, and multiple connected servers from a local window.
 
-![Monitoring multiple servers over SSH from local windows](screenshots/local-ssh.png)
+![Multiple servers in local SSH monitoring windows](screenshots/local-ssh.png)
 
-Monitor the connected machine inside a Remote-SSH window.
+Monitor the currently connected server from a Remote-SSH window.
 
-![System Monitor in a Remote-SSH window](screenshots/overview.png)
+![Monitoring the current server in a remote window](screenshots/overview.png)
 
-The screenshots show the Chinese UI. The extension follows your VS Code display language.
+The interface follows your editor's theme and display language, with English, Simplified Chinese, and Traditional Chinese support.
 
 ## Get started
 
@@ -50,48 +50,63 @@ To install System Monitor automatically in future Remote-SSH windows, click **Ad
 
 ## Features
 
-### Check resources and recent trends
+### Resource monitoring and trends
 
-The **Performance** page shows CPU usage and load, memory, disk capacity and I/O, network rates, and GPU metrics. Background charts help you spot changes over time. Hide the groups you do not need or turn off charts in Settings.
+The Performance page displays CPU usage and load averages, memory capacity and usage, disk capacity and I/O, network rates, and GPU metrics. CPU, memory, and GPU cards include utilization trends; disk and network cards show rate changes.
 
-Hover over a disk's information icon for its used, reserved, and available space. Disk filters let you focus on the mounts that matter to you, including network storage.
+Chart duration, visible resource groups, and background charts are configurable. Disk information controls show used, reserved, and available space. Disk filters support mount selection and filesystem or path exclusions.
 
-### Find resource-heavy processes
+### GPU monitoring and idle-card selection
 
-The **Processes** page sorts by CPU, memory, or GPU usage. Search by process name, PID, user, or command; use `GPU0` or `#0` to focus on a particular card. The table shows up to 100 matching results.
+GPU cards display utilization, VRAM, temperature, power, and utilization trends. The GPU overview uses occupation-process information to identify idle cards and supports card selection with a copyable `CUDA_VISIBLE_DEVICES` setting.
 
-Expand the command column to inspect how a process was launched, and right-click to copy a PID, cell, or row. CPU usage can be shown relative to a single core or the whole machine; memory can be shown as capacity or a percentage.
+GPU measurements remain visible if the process query fails. When occupancy is unknown, the idle count shows `--` and the affected cards cannot be selected.
 
-### See GPU availability and usage
+GPUs used by the current user have a border in the editor's accent color. User labels show per-user VRAM usage, with the full user list available on hover. User labels and ownership highlighting can be disabled independently.
 
-For NVIDIA GPUs, view utilization, VRAM, temperature, power, and the users occupying memory. Highlight the cards used by your own processes, or choose idle cards and copy a `CUDA_VISIBLE_DEVICES` setting for your next command.
+**View Procs** opens the process list for a GPU. NVIDIA monitoring requires `nvidia-smi` on the monitored machine. An idle GPU has no occupying tasks in the collected compute-process list.
 
-GPU monitoring requires `nvidia-smi` on the monitored machine. Other system metrics remain available on machines without NVIDIA GPUs.
+### Process list
 
-### Multiple servers and windows
+The Processes page supports sorting by CPU, memory, or GPU memory usage and searching by name, PID, user, or command. The server selects the top 100 processes in each ranking and merges them into at most 300 unique candidates. Each view sorts these candidates independently and displays up to 100 results. Search applies to this candidate set; `GPU0`, `GPU 0`, and `#0` filter processes using a specific GPU.
 
-Keep server tabs in the sidebar, open individual monitors in Editor tabs, or put them in separate windows. Title-bar buttons let you move existing views between these locations. Multiple views of one server share the same monitoring data.
+Process names and commands support expanded and collapsed views. The context menu copies a PID, cell, or row. CPU usage supports per-core, whole-machine, or combined display; memory supports capacity, percentage, or both.
 
-The **SSH terminal** shortcut opens a command-line session. **Open Remote Window** uses VS Code's Remote-SSH extension to open a development workspace. In **Settings → Action Buttons**, choose whether that button opens a new workspace, the first recent workspace, or a selection menu. With no recent history, it opens a new remote window without a folder.
+### Multiple-server monitoring
 
-On local or remote Linux, the status bar can keep selected metrics visible while you work. It always represents the Linux machine running the extension; local macOS and Windows windows have no System Monitor status bar.
+In a local window, the server list reads SSH host aliases and displays connection status with CPU, memory, and GPU summaries. Multiple servers can be monitored simultaneously. Device tabs support drag-to-reorder and workspace restoration. Open monitors continue refreshing in the background by default, with an option to refresh visible panels only.
+
+### Multiple windows and quick actions
+
+Supports sidebar views, editor tabs, and separate monitoring windows. Title-bar actions create, switch, and move views. Views of the same server share monitoring data.
+
+Editor, new-window, SSH-terminal, and remote-window shortcuts can be shown or hidden independently. The remote-window action supports new workspaces, recent workspaces, and a menu of recent locations. Settings also provide Remote-SSH auto-install.
+
+### Status-bar monitoring
+
+Local and remote Linux environments support status-bar monitoring, with CPU, memory, disk, network, SSH, and GPU indicators at the bottom of the editor and detailed configuration options. For example, GPU indicators can show summaries, idle card IDs, selected card IDs, or only GPUs used by the current user. Indicators and their position are configurable.
+
+### Themes and interface settings
+
+The interface follows the editor's light or dark theme, using its backgrounds, text, and accent color, with a responsive layout. High utilization uses warning colors. Card layout and top-bar controls adapt to available width, with some actions placed in a **…** menu in narrow views.
+
+### Privacy and runtime requirements
+
+The extension reads system information and displays it in your editor. It has no telemetry and uploads no resource metrics, process lists, usernames, or SSH configuration to a third-party monitoring service. SSH uses your system client and existing authentication configuration. It exchanges no data with servers other than the SSH hosts selected for connection.
+
+Local SSH monitoring needs no agent or monitoring service installed on the server, creates no monitoring temporary files, and requires no Python. In a remote Linux window, monitoring runs through the extension installed there by VS Code.
 
 ## Settings
 
-Open **Settings** in the monitoring view. Changes are saved to VS Code User settings and apply immediately.
+Metrics disabled in both the panel and status bar stop collecting, and their server-list summaries are hidden. Disabling all GPU displays also hides GPU information on the Processes page. Enabling a metric resumes its collection.
 
-| Setting | When it is useful |
-|---|---|
-| Refresh interval | The default is 2 seconds. Increase it when a server is busy or the connection is slow. |
-| Display and charts | Choose visible sections, chart history length, and GPU user labels. |
-| Status bar | Pick the metrics to keep visible, including specific GPUs or only those used by your processes. |
-| Disk filters | Show additional mounts or exclude filesystems and paths you do not need. |
-| Action buttons | Hide unused shortcuts and choose the remote-window button's behavior. |
-| Servers | Restore your tabs on startup, or enable **Refresh visible panels only** to reduce background collection. |
+The default refresh interval is 2 seconds and is configurable in the monitor. Settings also cover chart duration, visible resource groups, the status bar, disk filters, and quick actions.
 
-Open server tabs continue collecting in the background by default. Visible-only collection reduces that work, but switching back may take longer to show fresh data. Sidebar device tabs are remembered per workspace.
+After the first connection or a change to the monitoring connections, SSH latency appears first; upload and download rates become available after the next successful refresh. If settings cannot be saved, the dialog shows the error and provides a retry button.
 
-Click **Running / Paused** to pause or resume all monitoring in the current VS Code window. **Retry** while paused performs one update and leaves monitoring paused.
+**Custom collection policy** in **Connection and collection** provides three timeout settings: 15 seconds for SSH connections; 10 seconds for standard collection of CPU, memory, network, disk I/O, and SSH metrics; and 30 seconds for extended collection of disk capacity, process lists, and GPU metrics. When enabled, each can be set from 5 to 120 seconds. Turning it off uses the defaults and keeps the entered values. Longer timeouts can accommodate slower connections or busy servers. The SSH connection pool limit applies to monitoring from a local window. Each server uses up to 4 connections by default, adjustable from 1 to 8, opened on demand. Turning the custom policy off uses the default pool size and timeouts.
+
+**Refresh visible panels only** reduces background collection, but a monitor needs to reload when brought to the foreground. This option can be useful when monitoring many servers. Settings are saved to VS Code User configuration and apply to all monitoring views.
 
 ## Questions and troubleshooting
 
@@ -119,9 +134,11 @@ The disk bar includes space unavailable to ordinary users, such as filesystem re
 
 Check the network and server load, and try a longer refresh interval. Existing views keep their last available data when collection fails.
 
+Retrying from the collection-error banner keeps the existing errors visible with a “Collecting” indicator. Each error clears when its metric is successfully collected.
+
 When several collection processes are confirmed to remain after interrupted SSH requests, the extension pauses monitoring and displays their PIDs for inspection. Dismissing the notice does not resume monitoring; resume it manually after checking the server.
 
-Local SSH collection uses the system's SSH configuration. It does not install a monitoring service, require Python, or create monitoring temporary files on the server. It also does not automatically clean up remote processes; an interrupted command may continue until it finishes.
+When a usable `timeout` tool is available on the server, remote collection commands run with an execution time limit. System I/O waits can still delay process exit. The extension reports confirmed remaining collection processes for inspection and leaves any process cleanup to you.
 
 ## Feedback
 

@@ -1,21 +1,24 @@
 'use strict';
-const fs = require('node:fs/promises');
-const { performance } = require('node:perf_hooks');
 const { parseDefaultRouteInterfaces, parseNetworkCounters } = require('../domain/linux-parsers');
 
 class NetworkCollector {
-  constructor({ fileReader = fs, monotonicClock = () => performance.now() } = {}) { this.fileReader = fileReader; this.monotonicClock = monotonicClock; this.previous = null; }
-  async collect() {
-    const [deviceRaw, routeRaw] = await Promise.all([
-      this.fileReader.readFile('/proc/net/dev', 'utf8'),
-      this.fileReader.readFile('/proc/net/route', 'utf8').catch(() => ''),
-    ]);
+  needsWarmup(value) { return value.interfaces.length > 0 && (!Number.isFinite(value.receiveBytesPerSecond) || !Number.isFinite(value.transmitBytesPerSecond)); }
+  constructor() { this.previous = null; }
+
+  accept(deviceRaw, routeRaw, sampledAt) {
     const defaultRouteInterfaces = parseDefaultRouteInterfaces(routeRaw);
-    const counters = parseNetworkCounters(deviceRaw, defaultRouteInterfaces);
-    const sampledAt = this.monotonicClock();
+    let counters = parseNetworkCounters(deviceRaw, defaultRouteInterfaces);
+    let interfaces = [...defaultRouteInterfaces].filter(name => counters.availableInterfaces.includes(name));
+    const usedFallbackInterfaces = interfaces.length === 0;
+    if (usedFallbackInterfaces) {
+      if (defaultRouteInterfaces.size) counters = parseNetworkCounters(deviceRaw);
+      interfaces = counters.availableInterfaces;
+    }
+    const sampleIdentity = JSON.stringify(interfaces.slice().sort());
     let receiveBytesPerSecond = null;
     let transmitBytesPerSecond = null;
-    if (this.previous) {
+    let resetFields = [];
+    if (this.previous && this.previous.sampleIdentity === sampleIdentity && interfaces.length) {
       const elapsedSeconds = (sampledAt - this.previous.sampledAt) / 1000;
       const receiveDelta = counters.receiveBytes - this.previous.receiveBytes;
       const transmitDelta = counters.transmitBytes - this.previous.transmitBytes;
@@ -23,9 +26,10 @@ class NetworkCollector {
         receiveBytesPerSecond = receiveDelta / elapsedSeconds;
         transmitBytesPerSecond = transmitDelta / elapsedSeconds;
       }
+      else if (receiveDelta < 0 || transmitDelta < 0) resetFields = ['receiveBytesPerSecond', 'transmitBytesPerSecond'];
     }
-    this.previous = { ...counters, sampledAt };
-    return { receiveBytesPerSecond, transmitBytesPerSecond, interfaces: defaultRouteInterfaces.size ? [...defaultRouteInterfaces] : counters.availableInterfaces, usedFallbackInterfaces: defaultRouteInterfaces.size === 0 };
+    this.previous = { ...counters, sampledAt, sampleIdentity };
+    return { receiveBytesPerSecond, transmitBytesPerSecond, sampleIdentity, resetFields, interfaces, usedFallbackInterfaces };
   }
 }
 module.exports = { NetworkCollector };

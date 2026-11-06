@@ -1,4 +1,10 @@
 {
+  "cfgSshPoolSize": "Maximum SSH monitoring connections per server in local windows (1–8)",
+  "cfgTimeoutEnabled": "Enable custom collection policy",
+  "cfgTimeouts": "Custom collection policy: SSH pool size and connection and collection timeouts",
+  "cfgTimeoutConnection": "SSH connection and handshake timeout",
+  "cfgTimeoutStandard": "CPU, memory, network, disk I/O, and SSH metrics timeout",
+  "cfgTimeoutExtended": "Disk capacity, process list, and GPU collection timeout",
   "displayName": "System Monitor",
   "description": "Monitor Linux locally, over SSH, or in a remote window — CPU / GPU / RAM / Network",
   "viewTitle": "System Monitor",
@@ -12,5 +18,10 @@
   "cmdOpenTerminal": "System Monitor: Open SSH Terminal",
   "cmdOpenRemoteWindow": "System Monitor: Open Remote Window",
   "cmdEditorReturnSidebar": "System Monitor: Return to Sidebar",
-  "cmdEditorMoveWindow": "System Monitor: Move to New Window"
+  "cmdEditorMoveWindow": "System Monitor: Move to New Window",
+  "cfgRefreshInterval": "Refresh interval in seconds",
+  "cfgStatusBar": "Status bar display configuration",
+  "cfgDisk": "Disk monitoring settings",
+  "cfgDisplay": "Display settings",
+  "cfgServers": "Server monitoring, session restoration, and action button visibility settings"
 }

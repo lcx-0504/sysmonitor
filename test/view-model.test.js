@@ -17,6 +17,43 @@ test('status bar consumes shared idle decisions instead of recomputing threshold
   assert.equal(text, '$(circuit-board) 1/2 (0)');
 });
 
+test('status bar reports an unknown idle total while GPU occupancy is unavailable', () => {
+  const text=formatStatusBarText({gpu:{summary:true,showIdleIds:true,mode:'off'}},{gpus:[
+    {idx:0,isIdle:true,availability:'idle'},{idx:1,isIdle:false,availability:'unknown'},
+  ]});
+  assert.equal(text,'$(circuit-board) --/2 (0)');
+});
+
+test('GPU availability follows occupation processes independently of utilization and user lookup', () => {
+  const { SnapshotStore } = require('../src/core/snapshot-store');
+  const { parseNvidiaCards } = require('../src/accelerators/nvidia-provider');
+  const store = new SnapshotStore();
+  const devices = parseNvidiaCards('0, A100, 99, 70000, 80000, 45, 50, 250, GPU-A\n1, A100, 0, 1, 80000, 45, 50, 250, GPU-B');
+  store.commit('accelerators', { devices, usagesByPid: new Map([[7, [{ deviceKey: 'nvidia:GPU-B', nativeIndex: 1, memoryUsedBytes: 0, memoryTotalBytes: 80000 * 1024 * 1024 }]]]), currentUserDeviceKeys: [] });
+  let gpus = buildMonitorViewModel(store.read(), 'en').performance.gpus;
+  assert.equal(gpus[0].isIdle, true);
+  assert.equal(gpus[1].isIdle, false);
+  assert.deepEqual(gpus[1].users, []);
+  assert.match(formatStatusBarText({ gpu: { summary: true, showIdleIds: true, mode: 'all', metric: 'util', skipIdle: true } }, { gpus }), /1\/2 \(0\)/);
+  assert.doesNotMatch(formatStatusBarText({ gpu: { summary: true, showIdleIds: true, mode: 'all', metric: 'util', skipIdle: true } }, { gpus }), /#0/);
+  assert.match(formatStatusBarText({ gpu: { summary: true, showIdleIds: true, mode: 'all', metric: 'util', skipIdle: true } }, { gpus }), /#1/);
+  store.fail('accelerators', new Error('process query timeout'));
+  gpus = buildMonitorViewModel(store.read(), 'en').performance.gpus;
+  assert.ok(gpus.every((gpu) => gpu.availability === 'unknown' && !gpu.isIdle));
+});
+
+test('process rendering revision remains stable when unrelated resource metrics update', () => {
+  const { SnapshotStore } = require('../src/core/snapshot-store');
+  const store = new SnapshotStore();
+  const cpu = { usagePercent: 10, coreCount: 8, loadAverage: { oneMinute: 1, fiveMinutes: 2, fifteenMinutes: 3 } };
+  store.commit('cpu', cpu);
+  const first = buildMonitorViewModel(store.read(), 'en').processRevision;
+  store.commit('cpu', { ...cpu, usagePercent: 20 });
+  assert.equal(buildMonitorViewModel(store.read(), 'en').processRevision, first);
+  store.commit('processes', { rows: [], totalCount: 0 });
+  assert.notEqual(buildMonitorViewModel(store.read(), 'en').processRevision, first);
+});
+
 test('status bar uses client-perspective SSH upload and download strings consistently', () => {
   const text = formatStatusBarText({ cpu: false, ram: false, disk: false, diskIO: 'off', net: 'off', ssh: true, gpu: { summary: false, mode: 'off' } }, {
     sshTraffic: { isSsh: true, uploadText: '2 KB/s', downloadText: '3 KB/s' }, gpus: [],
@@ -42,13 +79,13 @@ test('view model combines GPU users, CPU denominator and SSH latency', () => {
   const gib = 1024 ** 3;
   const device = { nativeIndex: 0, name: 'NVIDIA H100 80GB HBM3', providerDeviceId: 'uuid', deviceKey: 'nvidia:uuid', utilizationPercent: 70, memory: { usedBytes: 3 * gib, totalBytes: 80 * gib }, temperatureCelsius: 45, power: null };
   const processes = [
-    { pid: 7, processKey: '7:1', userName: 'alice', processName: 'python', commandLine: 'python train.py', cpuUsagePercent: 200, memoryUsedBytes: 2 * gib, memoryUsagePercent: 12.5 },
-    { pid: 8, processKey: '8:1', userName: 'bob', processName: 'python', commandLine: 'python eval.py', cpuUsagePercent: 5, memoryUsedBytes: gib, memoryUsagePercent: 6.25 },
+    { pid: 7, processKey: '7:1', userName: 'alice', processName: 'python', commandLine: 'python train.py', cpuUsagePercent: 200, cpuWhole:12.5, memoryUsedBytes: 2 * gib, memoryUsagePercent: 12.5 },
+    { pid: 8, processKey: '8:1', userName: 'bob', processName: 'python', commandLine: 'python eval.py', cpuUsagePercent: 5, cpuWhole:0.3125, memoryUsedBytes: gib, memoryUsagePercent: 6.25 },
   ];
   const snapshot = {
     cpu: { value: { usagePercent: 10, coreCount: 16, loadAverage: { oneMinute: 1.24, fiveMinutes: 2.56, fifteenMinutes: 3.96 } } },
     memory: { value: { usagePercent: 20, usedBytes: 4 * gib, availableBytes: 16 * gib, totalBytes: 20 * gib } },
-    processes: { value: processes },
+    processes: { value: { rows: processes, totalCount: processes.length } },
     sshTraffic: { value: { isSsh: true, clientUploadBytesPerSecond: 1024, clientDownloadBytesPerSecond: 0, latencyMilliseconds: 12.25 } },
     accelerators: { value: { devices: [device], usagesByPid: new Map([[7, [{ nativeIndex: 0, deviceKey: 'nvidia:uuid', memoryUsedBytes: 2 * gib, memoryTotalBytes: 80 * gib, processKey: '7:1' }]], [8, [{ nativeIndex: 0, deviceKey: 'nvidia:uuid', memoryUsedBytes: gib, memoryTotalBytes: 80 * gib, processKey: '8:1' }]]]), currentUserDeviceKeys: ['nvidia:uuid'] } },
   };
@@ -79,6 +116,19 @@ test('mount filtering is applied once before both views consume a snapshot', () 
   assert.deepEqual(buildMonitorViewModel(snapshot, 'en', { hideParentMounts: false }).performance.disks.map((disk) => disk.mount), ['/', '/data', '/data/child']);
 });
 
+test('the latest mount selection immediately projects cached capacity without modifying its snapshot', () => {
+  const { SnapshotStore } = require('../src/core/snapshot-store'); const store = new SnapshotStore();
+  const topology = [['/', 'ext4'], ['/nfs', 'nfs4'], ['/data', 'xfs'], ['/tmp', 'tmpfs']].map(([mountPath, fileSystemType]) =>
+    ({ mountPath, fileSystemType, usedBytes: 40, availableBytes: 60, totalBytes: 100 }));
+  store.commit('diskTopology', topology); const snapshot = store.read();
+  const before = buildMonitorViewModel(snapshot, 'en', { mountFilter: 'all', hideParentMounts: false });
+  const projected = buildMonitorViewModel(snapshot, 'en', { mountFilter: 'custom', customPathExclude: '/nfs', hideVirtualFs: true, hideParentMounts: false });
+  assert.deepEqual(before.performance.disks.map(disk => disk.mount), ['/', '/nfs', '/data', '/tmp']);
+  assert.deepEqual(projected.performance.disks.map(disk => disk.mount), ['/', '/data']);
+  assert.equal(projected.sources.diskTopology.revision, before.sources.diskTopology.revision);
+  assert.equal(store.read().diskTopology.value, topology); assert.equal(projected.performance.disks[1].occupiedPct, 40);
+});
+
 test('disk breakdown, occupied ratio and bar segments use the same capacity snapshot', () => {
   const gib = 1024 ** 3;
   const snapshot = {
@@ -105,7 +155,7 @@ test('GPU card, process tag and user capsule use the same rounded memory percent
   const totalBytes = 80 * gib;
   const snapshot = {
     cpu: { value: { usagePercent: 0, coreCount: 8, loadAverage: { oneMinute: 0, fiveMinutes: 0, fifteenMinutes: 0 } } },
-    processes: { value: [{ pid: 6, processKey: '6:1', userName: 'alice', processName: 'python', commandLine: 'python', cpuUsagePercent: 1, memoryUsedBytes: gib, memoryUsagePercent: 1 }] },
+    processes: { value: { rows: [{ pid: 6, processKey: '6:1', userName: 'alice', processName: 'python', commandLine: 'python', cpuUsagePercent: 1, memoryUsedBytes: gib, memoryUsagePercent: 1 }], totalCount: 1 } },
     accelerators: { status: 'ready', value: {
       devices: [{ nativeIndex: 6, deviceKey: 'gpu:6', name: 'A100', memory: { usedBytes, totalBytes }, utilizationPercent: 0 }],
       usagesByPid: new Map([[6, [{ nativeIndex: 6, deviceKey: 'gpu:6', processKey: '6:1', memoryUsedBytes: usedBytes, memoryTotalBytes: totalBytes }]]]),

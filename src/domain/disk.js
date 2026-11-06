@@ -1,20 +1,25 @@
 'use strict';
 
 const VIRTUAL_FILE_SYSTEMS = new Set(['tmpfs', 'devtmpfs', 'sysfs', 'proc', 'efivarfs', 'squashfs', 'cgroup', 'cgroup2', 'configfs', 'debugfs', 'devpts', 'fusectl', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'binfmt_misc', 'autofs', 'tracefs', 'ramfs', 'bpf']);
-const DEFAULT_EXCLUSIONS = 'vfat,/proc,/sys,/run,/snap,/usr,/etc,/dev,/init';
+const DISK_PRESETS = Object.freeze({
+  default: Object.freeze({ customFsExclude: 'vfat', customPathExclude: '/proc,/sys,/run,/snap,/usr,/etc,/dev,/init', hideVirtualFs: true }),
+  more: Object.freeze({ customFsExclude: '', customPathExclude: '', hideVirtualFs: true }),
+  all: Object.freeze({ customFsExclude: '', customPathExclude: '', hideVirtualFs: false }),
+});
+const DEFAULT_EXCLUSIONS = [DISK_PRESETS.default.customFsExclude, DISK_PRESETS.default.customPathExclude].join(',');
 
 function normalizeMountRules(diskConfig) {
-  const filter = typeof diskConfig === 'string' ? diskConfig : diskConfig.mountFilter || 'default';
+  const filter = diskConfig.mountFilter || 'default';
   if (filter === 'default') return DEFAULT_EXCLUSIONS;
   if (filter === 'more') return '';
   if (filter === 'all') return null;
   if (filter === 'custom') return [diskConfig.customFsExclude, diskConfig.customPathExclude].filter(Boolean).join(',');
-  return filter || DEFAULT_EXCLUSIONS;
+  return DEFAULT_EXCLUSIONS;
 }
 
 function parseRules(rawRules) {
   const fileSystemTypes = []; const pathPrefixes = [];
-  for (const rule of (rawRules || '').split(',').map((value) => value.trim()).filter(Boolean)) {
+  for (const rule of (rawRules || '').split(/[,\r\n]+/).map((value) => value.trim()).filter(Boolean)) {
     if (rule.startsWith('/')) pathPrefixes.push(rule); else fileSystemTypes.push(rule);
   }
   return { fileSystemTypes, pathPrefixes };
@@ -23,7 +28,7 @@ function parseRules(rawRules) {
 function shouldExclude(fileSystemType, mountPath, diskConfig) {
   const normalized = normalizeMountRules(diskConfig);
   if (normalized === null) return false;
-  const showVirtual = diskConfig.mountFilter === 'custom' && diskConfig.showVirtualFs;
+  const showVirtual = diskConfig.mountFilter === 'custom' && diskConfig.hideVirtualFs === false;
   if (!showVirtual && VIRTUAL_FILE_SYSTEMS.has(fileSystemType)) return true;
   const { fileSystemTypes, pathPrefixes } = parseRules(normalized);
   return fileSystemTypes.includes(fileSystemType) || pathPrefixes.some((prefix) => mountPath === prefix || mountPath.startsWith(`${prefix.replace(/\/$/, '')}/`));
@@ -48,9 +53,16 @@ function parseFindmntOutput(raw, diskConfig) {
   }, []);
 }
 
+function diskSelectionSignature(config) {
+  const rules = normalizeMountRules(config);
+  return JSON.stringify({ rules, virtual: rules === null || config.mountFilter === 'custom' && config.hideVirtualFs === false });
+}
+
 function parseDfOutput(raw, diskConfig) {
   if (!raw.trim()) throw Object.assign(new Error('Empty df output'), { code: 'EINCOMPLETE' });
-  return raw.trim().split('\n').slice(1).reduce((mounts, line) => {
+  const lines = raw.trim().split('\n');
+  if (lines.length < 2 || !/^Filesystem\s+Type\s+/.test(lines[0])) throw Object.assign(new Error('Incomplete df output'), { code: 'EINCOMPLETE' });
+  return lines.slice(1).reduce((mounts, line) => {
     const fields = line.trim().split(/\s+/);
     if (fields.length < 7) throw Object.assign(new Error('Incomplete df output'), { code: 'EINCOMPLETE' });
     const [source, fileSystemType, blocks, used, available, percent, ...mountParts] = fields;
@@ -63,4 +75,18 @@ function parseDfOutput(raw, diskConfig) {
   }, []);
 }
 
-module.exports = { normalizeMountRules, parseDfOutput, parseFindmntOutput, parseRules, shouldExclude };
+function parseMountInfo(raw, diskConfig) {
+  if (!raw.trim()) throw Object.assign(new Error('Empty mount table'), { code: 'EINCOMPLETE' });
+  const decode = (value) => value.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
+  const mounts = raw.trim().split('\n').filter(Boolean).map((line) => {
+    const [mount, filesystem] = line.split(' - ');
+    const fields = mount.split(' '); const fsFields = (filesystem || '').split(' ');
+    if (fields.length < 6 || fsFields.length < 3) throw Object.assign(new Error('Incomplete mount table'), { code: 'EINCOMPLETE' });
+    // Capacity lookup needs the mount identifiers and paths, not large overlay superblock options.
+    const mountInfo = fields.slice(0, 6).join(' ') + ' - ' + fsFields.slice(0, 2).join(' ') + ' rw';
+    return { mountPath: decode(fields[4]), fileSystemType: fsFields[0], mountInfo };
+  });
+  return [...new Map(mounts.map((mount) => [mount.mountPath, mount])).values()].filter((mount) => !shouldExclude(mount.fileSystemType, mount.mountPath, diskConfig));
+}
+
+module.exports = { DISK_PRESETS, normalizeMountRules, parseDfOutput, parseFindmntOutput, parseMountInfo, parseRules, shouldExclude, diskSelectionSignature };

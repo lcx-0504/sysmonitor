@@ -1,15 +1,21 @@
 'use strict';
+const { DEFAULT_CONFIG } = require('../config/default-config');
 
 const COLLECTION_POLICY = Object.freeze({
-  cpu: { timeoutMilliseconds: 10000 },
-  memory: { timeoutMilliseconds: 10000 },
-  network: { timeoutMilliseconds: 10000 },
-  diskIo: { timeoutMilliseconds: 10000 },
-  sshTraffic: { timeoutMilliseconds: 10000 },
-  processes: { timeoutMilliseconds: 20000 },
-  accelerators: { timeoutMilliseconds: 32000 },
-  diskTopology: { timeoutMilliseconds: 10000, cadenceMilliseconds: 10000 },
+  resources: { budget: 'standard', resultKeys:['cpu','memory','network','diskIo'] },
+  sshTraffic: { budget: 'standard' },
+  processes: { budget: 'extended' },
+  accelerators: { budget: 'extended' },
+  diskTopology: { budget: 'extended', cadenceMilliseconds: 10000 },
 });
 
-const INITIAL_SAMPLE_TIMEOUT_MS = 45000;
-module.exports = { COLLECTION_POLICY, INITIAL_SAMPLE_TIMEOUT_MS };
+function effectiveTimeouts(config) {
+  return config.timeouts?.enabled === false ? DEFAULT_CONFIG.timeouts : { ...DEFAULT_CONFIG.timeouts, ...config.timeouts };
+}
+function collectionPolicy(config) {
+  const timeouts = effectiveTimeouts(config);
+  return Object.fromEntries(Object.entries(COLLECTION_POLICY).map(([key, { budget, ...policy }]) => [key, {
+    ...policy, timeoutMilliseconds: timeouts[budget] * 1000,
+  }]));
+}
+module.exports = { COLLECTION_POLICY, collectionPolicy, effectiveTimeouts };

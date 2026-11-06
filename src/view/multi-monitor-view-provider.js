@@ -1,4 +1,6 @@
 'use strict';
+const { createTranslator } = require('../i18n');
+const { isSshDefaultExtension, addSshDefaultExtension } = require('../config/ssh-default-extensions');
 
 const crypto = require('node:crypto');
 const { getWebviewHtml } = require('./webview-html');
@@ -6,12 +8,11 @@ const { setMonitorPanelIcon, createMonitorEditorPanel, moveMonitorPanelToNewWind
 const { setActionVisibilityContexts } = require('./action-visibility');
 const { ServerDirectory } = require('./server-directory');
 const { CONFIGURATION_KEYS } = require('../config/config-store');
+const { webviewConfig } = require('../config/webview-config');
 const { openSshTerminal } = require('./ssh-terminal');
-const pkg = require('../../package.json');
 
 const STATE_KEY = 'sysmonitor.sidebarDevices';
 const CONFIG_KEYS = new Set(CONFIGURATION_KEYS);
-const EXTENSION_ID = `${pkg.publisher}.${pkg.name}`;
 
 function normalizeNavigation(raw, localLinux) {
   const source = raw && typeof raw === 'object' ? raw : {};
@@ -62,8 +63,7 @@ class MultiMonitorViewProvider {
   refreshHosts() { return this.serverDirectory.refresh(); }
 
   isSshDefaultExtension() {
-    const values = this.vscode.workspace.getConfiguration('remote.SSH').get('defaultExtensions');
-    return Array.isArray(values) && values.some((value) => typeof value === 'string' && value.toLowerCase() === EXTENSION_ID.toLowerCase());
+    return isSshDefaultExtension(this.vscode);
   }
 
   serverRows() { return this.serverDirectory.rows(); }
@@ -91,24 +91,22 @@ class MultiMonitorViewProvider {
   }
 
   deviceTitle(id) {
-    return id === 'local' ? (String(this.vscode.env.language || '').startsWith('zh') ? '本机' : 'Local') : id.slice(4);
+    return id === 'local' ? createTranslator(this.vscode.env.language)('local') : id.slice(4);
   }
 
-  async buildHtml(state, { sidebar = false } = {}) {
-    const config = this.configStore.getCurrent();
+  async buildHtml(state, { sidebar = false, webview = null } = {}) {
     const device = this.manager.get(state.selected);
     const acceleratorValue = device ? device.service.readSnapshot().accelerators.value : null;
     return getWebviewHtml({
+      webview, vscode: this.vscode,
       initConfig: {
+        ...webviewConfig(this.configStore, this.vscode),
         localMode: true, localLinux: this.localLinux,
         monitorStatus: device ? device.viewState() : null,
         surface: sidebar ? 'sidebar' : 'editor',
         showLocalIntro: sidebar && !(this.uiStateStore && this.uiStateStore.get('sysmonitor.localIntroDismissed', false)),
-        sshDefaultInstalled: this.isSshDefaultExtension(),
         language: this.vscode.env.language,
         navigation: state,
-        interval: config.refreshInterval,
-        barCfg: config.statusBar, diskCfg: config.disk, displayCfg: config.display, serversCfg: config.servers,
         gpuCount: acceleratorValue ? acceleratorValue.devices.length : null,
         processDisplay: state.processDisplay,
         paused: this.manager.paused,
@@ -124,7 +122,7 @@ class MultiMonitorViewProvider {
     view.webview.onDidReceiveMessage((message) => this.handleMessage(message, source));
     view.onDidDispose(() => { if (this.sidebar === source) this.sidebar = null; this.refreshReferences(); });
     if (view.onDidChangeVisibility) view.onDidChangeVisibility(() => this.refreshReferences());
-    const html = await this.buildHtml(source.state, { sidebar: true });
+    const html = await this.buildHtml(source.state, { sidebar: true, webview: view.webview });
     if (this.sidebar !== source) return;
     view.webview.html = html;
     this.refreshReferences();
@@ -151,7 +149,7 @@ class MultiMonitorViewProvider {
       this.updateEditorTitleActions();
       this.refreshReferences();
     });
-    const html = await this.buildHtml(state);
+    const html = await this.buildHtml(state, { webview: panel.webview });
     if (this.editors.get(panel) !== source) return;
     panel.webview.html = html;
     this.updateEditorTitleActions();
@@ -292,8 +290,7 @@ class MultiMonitorViewProvider {
   }
 
   pushConfig() {
-    const config = this.configStore.getCurrent();
-    this.broadcast({ cmd: 'config', interval: config.refreshInterval, barCfg: config.statusBar, diskCfg: config.disk, displayCfg: config.display, serversCfg: config.servers, sshDefaultInstalled: this.isSshDefaultExtension() });
+    this.broadcast({ cmd: 'config', ...webviewConfig(this.configStore, this.vscode) });
   }
 
   async openRemoteWindow(host, folderIndex) {
@@ -311,7 +308,7 @@ class MultiMonitorViewProvider {
   async openRemoteWindowPicker(host) {
     const folders = await this.serverDirectory.refreshRemoteFolders(host);
     const choices = [
-      { label: this.vscode.env.language.startsWith('zh') ? '连接主机' : 'Connect to host' },
+      { label: createTranslator(this.vscode.env.language)('connectToHost') },
       ...folders.map((folder) => ({ label: folder.folder, folderIndex: folder.index })),
     ];
     const picked = await this.vscode.window.showQuickPick(choices, { placeHolder: `SSH: ${host}` });
@@ -381,6 +378,7 @@ class MultiMonitorViewProvider {
     const state = source.state;
     if (message.cmd === 'ready') {
       source.ready = true;
+      source.target.webview.postMessage({ cmd: 'config', ...webviewConfig(this.configStore, this.vscode) });
       source.target.webview.postMessage({ cmd: 'navigation', state });
       if (source.sidebar) source.target.webview.postMessage({ cmd: 'servers', hosts: this.serverRows() });
       source.target.webview.postMessage({ cmd: 'uiState', processDisplay: state.processDisplay, paused: this.manager.paused });
@@ -391,12 +389,7 @@ class MultiMonitorViewProvider {
     else if (message.cmd === 'openRemoteWindow' && source.sidebar && typeof message.host === 'string') await this.openRemoteWindow(message.host, message.folderIndex);
     else if (message.cmd === 'addSshDefaultExtension') {
       try {
-        const configuration = this.vscode.workspace.getConfiguration('remote.SSH');
-        const current = configuration.get('defaultExtensions');
-        const entries = Array.isArray(current) ? current.slice() : [];
-        if (!entries.some((value) => typeof value === 'string' && value.toLowerCase() === EXTENSION_ID.toLowerCase())) {
-          await configuration.update('defaultExtensions', [...entries, EXTENSION_ID], true);
-        }
+        await addSshDefaultExtension(this.vscode);
         if (message.dismissIntro === true && this.uiStateStore) {
           try {
             await this.uiStateStore.update('sysmonitor.localIntroDismissed', true);
@@ -450,10 +443,9 @@ class MultiMonitorViewProvider {
       source.state = { ...state, processDisplay: { ...state.processDisplay, [message.key]: message.value } };
       this.persist(source);
     } else if (message.cmd === 'setConfig' && CONFIG_KEYS.has(message.key)) {
-      this.configStore.update(message.key, message.value);
-      this.manager.updateConfig();
-      if (message.key === 'servers') this.updateActionVisibility();
-      this.pushConfig();
+      try { this.configStore.update(message.key, message.changes); } catch (error) { this.logger(error.message); }
+    } else if (message.cmd === 'retryConfigSave') {
+      this.configStore.flush().catch(() => {});
     } else if (message.cmd === 'getConfig') this.pushConfig();
     else if (message.cmd === 'openSettings') this.vscode.commands.executeCommand('workbench.action.openSettings', 'sysmonitor');
     else if (message.cmd === 'openLink' && typeof message.url === 'string' && /^https:\/\//.test(message.url)) this.vscode.env.openExternal(this.vscode.Uri.parse(message.url));
@@ -463,12 +455,10 @@ class MultiMonitorViewProvider {
   }
 
   async notifyResidualProcesses(host, pids, acknowledge) {
-    const zh = (this.vscode.env.language || '').startsWith('zh');
-    const copy = zh ? '复制 PID' : 'Copy PIDs';
-    const understood = zh ? '我知道了' : 'Got it';
-    const message = zh
-      ? `远程服务器性能采集多次超时，服务器「${host}」有 ${pids.length} 个采集进程在超时或连接断开后仍未退出。监控已自动暂停，通常等待一段时间后这些采集进程会自动退出，但仍建议检查这些进程并按需清理。若服务器性能较低、频繁出现此类问题，建议增加刷新时间间隔（设置->刷新时间）。 PID：${pids.join(', ')}`
-      : `Remote performance collection has timed out repeatedly. Server “${host}” has ${pids.length} collection processes that have not exited after a timeout or disconnection. Monitoring has been paused automatically. These processes will usually exit on their own after a while, but you should still inspect them and clean them up if needed. If the server has limited performance and this happens frequently, consider increasing the refresh interval in Settings. PIDs: ${pids.join(', ')}`;
+    const t = createTranslator(this.vscode.env.language);
+    const copy = t("copyPIDs");
+    const understood = t("gotIt");
+    const message = t("remotePerformanceCollectionHasTimedOutRepeatedlyServer", { host, pids });
     for (;;) {
       const choice = await this.vscode.window.showWarningMessage(message, copy, understood);
       if (choice === understood) { acknowledge(); return; }

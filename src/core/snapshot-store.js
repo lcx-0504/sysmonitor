@@ -1,13 +1,14 @@
 'use strict';
+const { mergeSampleValue } = require('./sample-value');
 
 const PARTITIONS = Object.freeze([
   'cpu', 'memory', 'network', 'diskIo', 'diskTopology',
   'sshTraffic', 'processes', 'accelerators',
 ]);
 
-const createPartition = () => Object.freeze({
+const createPartition = (status = 'loading') => Object.freeze({
   value: null,
-  status: 'loading',
+  status,
   attemptedAt: null,
   collectedAt: null,
   collectedSequence: 0,
@@ -24,11 +25,14 @@ class SnapshotStore {
 
   read() { return this.snapshot; }
 
+  reset(key, status = 'loading') { this.replace(key, createPartition(status)); }
+
   markAttempted(key, attemptedAt) {
     this.replace(key, { ...this.snapshot[key], attemptedAt });
   }
 
   commit(key, value, collectedAt = Date.now()) {
+    value = mergeSampleValue(key, this.snapshot[key].value, value);
     this.replace(key, Object.freeze({
       value,
       status: 'fresh',

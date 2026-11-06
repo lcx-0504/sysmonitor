@@ -18,6 +18,8 @@
     "vscode": "^1.70.0"
   },
   "scripts": {
+    "pretest": "node scripts/build-assets.js",
+    "vscode:prepublish": "node scripts/build-assets.js",
     "test": "node --test test/*.test.js",
     "check": "node scripts/check-syntax.js && npm test",
     "package": "node scripts/package.js"
@@ -32,14 +34,27 @@
     "monitor",
     "cpu",
     "gpu",
-    "remote"
+    "remote",
+    "server",
+    "server monitor",
+    "linux",
+    "ssh",
+    "nvidia",
+    "memory",
+    "disk",
+    "network",
+    "performance",
+    "resource",
+    "monitoring"
   ],
   "activationEvents": [
     "onStartupFinished",
     "onWebviewPanel:sysmonitor.editor"
   ],
   "main": "./extension.js",
-  "extensionKind": ["workspace"],
+  "extensionKind": [
+    "workspace"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -117,22 +132,68 @@
     ],
     "menus": {
       "commandPalette": [
-        { "command": "sysmonitor.openEditor", "when": "sysmonitor.sidebarSshActive" },
-        { "command": "sysmonitor.openWindow", "when": "sysmonitor.sidebarSshActive" },
-        { "command": "sysmonitor.copyToEditor", "when": "sysmonitor.sidebarFixedActive" },
-        { "command": "sysmonitor.copyToWindow", "when": "sysmonitor.sidebarFixedActive" },
-        { "command": "sysmonitor.openTerminal", "when": "sysmonitor.sidebarSshActive" },
-        { "command": "sysmonitor.openRemoteWindow", "when": "sysmonitor.sidebarSshActive" },
-        { "command": "sysmonitor.editorReturnSidebar", "when": "activeWebviewPanelId == sysmonitor.editor" },
-        { "command": "sysmonitor.editorMoveWindow", "when": "activeWebviewPanelId == sysmonitor.editor" },
-        { "command": "sysmonitor.editorTerminal", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive" },
-        { "command": "sysmonitor.editorRemoteWindow", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive" }
+        {
+          "command": "sysmonitor.openEditor",
+          "when": "sysmonitor.sidebarSshActive"
+        },
+        {
+          "command": "sysmonitor.openWindow",
+          "when": "sysmonitor.sidebarSshActive"
+        },
+        {
+          "command": "sysmonitor.copyToEditor",
+          "when": "sysmonitor.sidebarFixedActive"
+        },
+        {
+          "command": "sysmonitor.copyToWindow",
+          "when": "sysmonitor.sidebarFixedActive"
+        },
+        {
+          "command": "sysmonitor.openTerminal",
+          "when": "sysmonitor.sidebarSshActive"
+        },
+        {
+          "command": "sysmonitor.openRemoteWindow",
+          "when": "sysmonitor.sidebarSshActive"
+        },
+        {
+          "command": "sysmonitor.editorReturnSidebar",
+          "when": "activeWebviewPanelId == sysmonitor.editor"
+        },
+        {
+          "command": "sysmonitor.editorMoveWindow",
+          "when": "activeWebviewPanelId == sysmonitor.editor"
+        },
+        {
+          "command": "sysmonitor.editorTerminal",
+          "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive"
+        },
+        {
+          "command": "sysmonitor.editorRemoteWindow",
+          "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive"
+        }
       ],
       "editor/title": [
-        { "command": "sysmonitor.editorReturnSidebar", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionEditorVisible", "group": "navigation@1" },
-        { "command": "sysmonitor.editorMoveWindow", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionWindowVisible", "group": "navigation@2" },
-        { "command": "sysmonitor.editorTerminal", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive && sysmonitor.actionTerminalVisible", "group": "navigation@3" },
-        { "command": "sysmonitor.editorRemoteWindow", "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive && sysmonitor.actionRemoteWindowVisible", "group": "navigation@4" }
+        {
+          "command": "sysmonitor.editorReturnSidebar",
+          "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionEditorVisible",
+          "group": "navigation@1"
+        },
+        {
+          "command": "sysmonitor.editorMoveWindow",
+          "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.actionWindowVisible",
+          "group": "navigation@2"
+        },
+        {
+          "command": "sysmonitor.editorTerminal",
+          "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive && sysmonitor.actionTerminalVisible",
+          "group": "navigation@3"
+        },
+        {
+          "command": "sysmonitor.editorRemoteWindow",
+          "when": "activeWebviewPanelId == sysmonitor.editor && sysmonitor.editorSshActive && sysmonitor.actionRemoteWindowVisible",
+          "group": "navigation@4"
+        }
       ],
       "view/title": [
         {
@@ -171,14 +232,202 @@
       "title": "System Monitor",
       "properties": {
         "sysmonitor.refreshInterval": {
+          "scope": "application",
           "type": "number",
           "default": 2,
           "minimum": 1,
-          "maximum": 30,
-          "description": "Refresh interval in seconds"
+          "maximum": 60,
+          "description": "%cfgRefreshInterval%"
+        },
+        "sysmonitor.timeouts": {
+          "scope": "application",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "%cfgTimeoutEnabled%"
+            },
+            "connection": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 120,
+              "description": "%cfgTimeoutConnection%"
+            },
+            "standard": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 120,
+              "description": "%cfgTimeoutStandard%"
+            },
+            "extended": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 120,
+              "description": "%cfgTimeoutExtended%"
+            },
+            "sshPoolSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8,
+              "description": "%cfgSshPoolSize%"
+            }
+          },
+          "additionalProperties": false,
+          "default": {
+            "enabled": false,
+            "connection": 15,
+            "standard": 10,
+            "extended": 30,
+            "sshPoolSize": 4
+          },
+          "description": "%cfgTimeouts%"
+        },
+        "sysmonitor.servers": {
+          "scope": "application",
+          "type": "object",
+          "properties": {
+            "visibleOnly": {
+              "type": "boolean"
+            },
+            "restoreTabs": {
+              "type": "boolean"
+            },
+            "remoteWindowMode": {
+              "type": "string",
+              "enum": [
+                "new",
+                "recent",
+                "menu"
+              ]
+            },
+            "actions": {
+              "type": "object",
+              "properties": {
+                "editor": {
+                  "type": "boolean"
+                },
+                "window": {
+                  "type": "boolean"
+                },
+                "terminal": {
+                  "type": "boolean"
+                },
+                "remoteWindow": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "default": {
+            "visibleOnly": false,
+            "restoreTabs": true,
+            "remoteWindowMode": "menu",
+            "actions": {
+              "editor": true,
+              "window": true,
+              "terminal": true,
+              "remoteWindow": true
+            }
+          },
+          "description": "%cfgServers%"
         },
         "sysmonitor.statusBar": {
+          "scope": "application",
           "type": "object",
+          "properties": {
+            "barEnabled": {
+              "type": "boolean"
+            },
+            "alignment": {
+              "type": "string",
+              "enum": [
+                "left",
+                "right"
+              ]
+            },
+            "priority": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cpu": {
+              "type": "boolean"
+            },
+            "ram": {
+              "type": "boolean"
+            },
+            "disk": {
+              "type": "boolean"
+            },
+            "diskIO": {
+              "type": "string",
+              "enum": [
+                "off",
+                "read",
+                "write",
+                "both",
+                "combined"
+              ]
+            },
+            "net": {
+              "type": "string",
+              "enum": [
+                "off",
+                "up",
+                "down",
+                "both",
+                "combined"
+              ]
+            },
+            "ssh": {
+              "type": "boolean"
+            },
+            "gpu": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "type": "boolean"
+                },
+                "showIdleIds": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "all",
+                    "first",
+                    "specify",
+                    "my"
+                  ]
+                },
+                "cards": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "uniqueItems": true
+                },
+                "firstN": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1024
+                },
+                "metric": {
+                  "type": "string",
+                  "enum": [
+                    "util",
+                    "vram",
+                    "both"
+                  ]
+                },
+                "skipIdle": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
           "default": {
             "barEnabled": true,
             "alignment": "left",
@@ -199,18 +448,89 @@
               "skipIdle": false
             }
           },
-          "description": "Status bar display configuration"
+          "description": "%cfgStatusBar%"
         },
         "sysmonitor.disk": {
+          "scope": "application",
           "type": "object",
+          "properties": {
+            "mountFilter": {
+              "type": "string",
+              "enum": [
+                "default",
+                "more",
+                "all",
+                "custom"
+              ]
+            },
+            "hideVirtualFs": {
+              "type": "boolean"
+            },
+            "hideParentMounts": {
+              "type": "boolean"
+            },
+            "customFsExclude": {
+              "type": "string"
+            },
+            "customPathExclude": {
+              "type": "string"
+            }
+          },
           "default": {
             "mountFilter": "default",
+            "hideVirtualFs": true,
             "hideParentMounts": true
           },
-          "description": "Disk monitoring settings"
+          "description": "%cfgDisk%"
         },
         "sysmonitor.display": {
+          "scope": "application",
           "type": "object",
+          "properties": {
+            "charts": {
+              "type": "boolean"
+            },
+            "sparkMinutes": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 30
+            },
+            "tabularNums": {
+              "type": "boolean"
+            },
+            "hiddenGroups": {
+              "type": "object",
+              "properties": {
+                "cpu": {
+                  "type": "boolean"
+                },
+                "memory": {
+                  "type": "boolean"
+                },
+                "disk": {
+                  "type": "boolean"
+                },
+                "network": {
+                  "type": "boolean"
+                },
+                "gpuSummary": {
+                  "type": "boolean"
+                },
+                "gpuCards": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "highlightMyGpus": {
+              "type": "boolean"
+            },
+            "showGpuPicker": {
+              "type": "boolean"
+            },
+            "showGpuUsers": {
+              "type": "boolean"
+            }
+          },
           "default": {
             "charts": true,
             "sparkMinutes": 5,
@@ -227,22 +547,7 @@
             "showGpuPicker": true,
             "showGpuUsers": true
           },
-          "description": "Display settings"
-        },
-        "sysmonitor.servers": {
-          "type": "object",
-          "default": {
-            "visibleOnly": false,
-            "restoreTabs": true,
-            "remoteWindowMode": "menu",
-            "actions": {
-              "editor": true,
-              "window": true,
-              "terminal": true,
-              "remoteWindow": true
-            }
-          },
-          "description": "Server monitoring, session restoration, and action button visibility settings"
+          "description": "%cfgDisplay%"
         }
       }
     }

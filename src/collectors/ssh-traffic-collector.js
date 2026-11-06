@@ -10,16 +10,19 @@ const SSH_SAMPLE_COMMAND = [
   'exit "$result"',
 ].join('\n');
 
+function normalizeIp(ip) { return String(ip).replace(/^\[|\]$/g, '').replace(/^::ffff:(?=\d+\.)/i, '').toLowerCase(); }
+
 function endpointOf(token) {
   const match = token.match(/^(.*):(\d+)$/);
   if (!match) return null;
-  return { ip: match[1].replace(/^\[|\]$/g, ''), port: Number(match[2]) };
+  return { ip: normalizeIp(match[1]), port: Number(match[2]) };
 }
 
 function matchesConnection(line, connection) {
   const endpoints = line.trim().split(/\s+/).map(endpointOf).filter(Boolean);
-  return endpoints.some((endpoint) => endpoint.ip === connection.serverIp && endpoint.port === connection.serverPort)
-    && endpoints.some((endpoint) => endpoint.ip === connection.clientIp && endpoint.port === connection.clientPort);
+  const [local, peer] = endpoints;
+  return local?.ip === normalizeIp(connection.serverIp) && local.port === connection.serverPort
+    && peer?.ip === normalizeIp(connection.clientIp) && peer.port === connection.clientPort;
 }
 
 function readSshSocketCounters(raw, clientIpOrConnection) {
@@ -32,8 +35,8 @@ function readSshSocketCounters(raw, clientIpOrConnection) {
       record = null;
       const endpoints = line.trim().split(/\s+/).map(endpointOf).filter(Boolean);
       const selected = connections ? connections.some((connection) => matchesConnection(line, connection))
-        : endpoints.some((endpoint) => endpoint.port === 22)
-          && (!clientIpOrConnection || endpoints.some((endpoint) => endpoint.ip === clientIpOrConnection));
+        : endpoints[0]?.port === 22
+          && (!clientIpOrConnection || endpoints[1]?.ip === normalizeIp(clientIpOrConnection));
       if (selected && endpoints.length === 2) {
         const key = JSON.stringify(endpoints.map((endpoint) => [endpoint.ip, endpoint.port]).sort());
         record = { header: line, sent: null, received: null, latency: null };
@@ -42,7 +45,7 @@ function readSshSocketCounters(raw, clientIpOrConnection) {
     }
     if (!record) continue;
     const sent = line.match(/bytes_sent:(\d+)/); const received = line.match(/bytes_received:(\d+)/);
-    const rtt = line.match(/\brtt:([\d.]+)\//);
+    const rtt = line.match(/\brtt:([\d.]+)(?:\/|\s|$)/);
     if (sent) record.sent = Number(sent[1]);
     if (received) record.received = Number(received[1]);
     if (rtt) record.latency = Number(rtt[1]);
@@ -66,37 +69,39 @@ function parseSshByteCounters(raw, clientIpOrConnection) {
 
 class SshTrafficCollector {
   constructor({ commandRunner, isSsh, clientIp, connectionInfo = null, timeoutMilliseconds = 10000 }) { this.commandRunner = commandRunner; this.isSsh = isSsh; this.clientIp = clientIp; this.connectionInfo = connectionInfo; this.timeoutMilliseconds = timeoutMilliseconds; this.previous = null; }
+  reset() { this.previous = null; this.sampleIdentity = undefined; }
   async collect() {
     if (!this.isSsh) return { isSsh: false, clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: null };
     const connection = this.connectionInfo ? this.connectionInfo() : null;
+    const expectedIdentity = connection ? JSON.stringify((Array.isArray(connection) ? connection : [connection]).map((item) => [normalizeIp(item.serverIp), item.serverPort, normalizeIp(item.clientIp), item.clientPort]).sort()) : null;
     if (this.connectionInfo && (!connection || Array.isArray(connection) && !connection.length)) {
       this.previous = null;
-      return { isSsh: false, clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: null };
+      return { isSsh: true, sampleIdentity: 'unconnected', clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: null };
     }
-    let stdout;
-    try {
-      ({ stdout } = await this.commandRunner.execFile('sh', ['-c', SSH_SAMPLE_COMMAND], { timeoutMilliseconds: this.timeoutMilliseconds }));
-    } catch (error) { this.previous = null; throw error; }
+    const { stdout } = await this.commandRunner.execFile('sh', ['-c', SSH_SAMPLE_COMMAND], { timeoutMilliseconds: this.timeoutMilliseconds });
     const counters = readSshSocketCounters(stdout, connection || this.clientIp);
+    const sampleIdentity = expectedIdentity || (counters.connectionKey !== '[]' ? counters.connectionKey : this.sampleIdentity);
+    this.sampleIdentity = sampleIdentity;
     const start = stdout.match(/^__SYSMON_SSH_SAMPLE_START__ ([\d.]+)$/m);
     const end = stdout.match(/^__SYSMON_SSH_SAMPLE_END__ ([\d.]+)$/m);
     const startedAt = start ? Number(start[1]) * 1000 : NaN;
     const finishedAt = end ? Number(end[1]) * 1000 : NaN;
     if (!counters.complete || !Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || finishedAt < startedAt) {
-      this.previous = null;
-      return { isSsh: true, clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: counters.latencyMilliseconds };
+      return { isSsh: true, sampleIdentity, clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null, latencyMilliseconds: counters.latencyMilliseconds };
     }
     const sampledAt = (startedAt + finishedAt) / 2;
     const connectionKey = counters.connectionKey;
     let clientUploadBytesPerSecond = null; let clientDownloadBytesPerSecond = null;
+    let resetFields = [];
     if (this.previous && this.previous.connectionKey === connectionKey) {
       const seconds = (sampledAt - this.previous.sampledAt) / 1000;
       const uploadDelta = counters.serverReceivedBytes - this.previous.serverReceivedBytes;
       const downloadDelta = counters.serverSentBytes - this.previous.serverSentBytes;
       if (seconds > 0 && uploadDelta >= 0 && downloadDelta >= 0) { clientUploadBytesPerSecond = uploadDelta / seconds; clientDownloadBytesPerSecond = downloadDelta / seconds; }
+      else if (seconds < 0 || uploadDelta < 0 || downloadDelta < 0) resetFields = seconds < 0 ? ['clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond', 'latencyMilliseconds'] : ['clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond'];
     }
     this.previous = { ...counters, sampledAt, connectionKey };
-    return { isSsh: true, clientUploadBytesPerSecond, clientDownloadBytesPerSecond, latencyMilliseconds: counters.latencyMilliseconds };
+    return { isSsh: true, sampleIdentity, resetFields, clientUploadBytesPerSecond, clientDownloadBytesPerSecond, latencyMilliseconds: counters.latencyMilliseconds };
   }
 }
 module.exports = { parseSshByteCounters, SshTrafficCollector };

@@ -24,7 +24,7 @@ async function expandInclude(pattern, home = os.homedir(), fileSystem = fs) {
     const matcher = globPattern(part);
     const next = [];
     for (const candidate of candidates) {
-      const entries = await fileSystem.readdir(candidate).catch(() => []);
+      const entries = await fileSystem.readdir(candidate).catch(error => { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return []; throw error; });
       for (const entry of entries.sort()) if (matcher.test(entry)) next.push(path.join(candidate, entry));
     }
     candidates = next;
@@ -46,7 +46,7 @@ function parseWords(raw) {
 async function listSshHosts(configFile, { home = os.homedir(), visited = new Set(), fileSystem = fs } = {}) {
   const file = path.resolve(expandHome(configFile || path.join(home, '.ssh', 'config'), home));
   let canonical;
-  try { canonical = await fileSystem.realpath(file); } catch { return []; }
+  try { canonical = await fileSystem.realpath(file); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return []; throw error; }
   if (visited.has(canonical)) return [];
   visited.add(canonical);
   const contents = await fileSystem.readFile(canonical, 'utf8');

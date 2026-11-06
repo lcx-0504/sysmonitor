@@ -4,6 +4,27 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { execFileSync } = require('node:child_process');
 
+test('CPU utilization counts guest and guest_nice time once', () => {
+  const { CpuCollector } = require('../src/collectors/cpu-collector');
+  const { parseCpuStat } = require('../src/domain/linux-parsers');
+  const info = { coreCount:1, loadAverage:[0,0,0] };
+  for (const counters of ['100 0 0 100 0 0 0 0 100 0', '0 100 0 100 0 0 0 0 0 100']) {
+    const collector = new CpuCollector();
+    collector.accept('cpu 0 0 0 0 0 0 0 0 0 0\n', info);
+    assert.equal(collector.accept('cpu ' + counters + '\n', info).usagePercent, 50);
+  }
+  assert.deepEqual(parseCpuStat('cpu 1 2 3 4 5 6 7 8 9 10\n'), {idle:9,total:36});
+  assert.deepEqual(parseCpuStat('cpu 1 2 3 4\n'), {idle:4,total:10});
+});
+
+test('disk counters include MMC and NVMe whole devices and exclude their partitions', () => {
+  const { parseDiskIoCounters } = require('../src/domain/linux-parsers');
+  const output = ['mmcblk0', 'mmcblk0p1', 'nvme0n1', 'nvme0n1p1'].map((name, index) => `8 ${index} ${name} 0 0 10 0 0 0 20 0 0 0 0`).join('\n');
+  const value = parseDiskIoCounters(output);
+  assert.deepEqual(value.devices, ['8:0:mmcblk0', '8:2:nvme0n1']);
+  assert.equal(value.readBytes, 20 * 512);
+});
+
 const { parseProcessName } = require('../src/domain/process');
 const { getAcceleratorAvailability } = require('../src/domain/accelerator-availability');
 const {
@@ -56,7 +77,8 @@ test('size, rate and duration formatters use consistent binary units and one dec
 });
 
 test('accelerator availability has one shared idle policy and preserves unknown capability', () => {
-  assert.equal(getAcceleratorAvailability({ utilizationPercent: 4, memory: { usedBytes: 9, totalBytes: 100 } }), 'idle');
-  assert.equal(getAcceleratorAvailability({ utilizationPercent: 5, memory: { usedBytes: 0, totalBytes: 100 } }), 'busy');
-  assert.equal(getAcceleratorAvailability({ utilizationPercent: null, memory: { usedBytes: 0, totalBytes: 100 } }), 'unknown');
+  assert.equal(getAcceleratorAvailability(false, true), 'idle');
+  assert.equal(getAcceleratorAvailability(true, true), 'busy');
+  assert.equal(getAcceleratorAvailability(false, false), 'unknown');
+  assert.equal(getAcceleratorAvailability(true, false), 'unknown');
 });

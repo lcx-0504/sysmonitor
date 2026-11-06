@@ -21,12 +21,33 @@ function directoryFixture(t) {
   return { ...fixture, directory, phases, prepared };
 }
 
+test('empty server summaries distinguish disabled metrics, pending samples and failures', () => {
+  const sources={cpu:{state:'disabled'},memory:{state:'disabled'},accelerators:{state:'disabled'}};
+  const device={state:'connected',model:{sources,performance:{cpu:{},memory:{},gpus:[]}}};
+  const directory=new ServerDirectory({vscode:{},manager:{get:()=>device}});directory.hosts=['lab'];
+  assert.deepEqual(directory.rows()[0].metrics,[]);assert.equal(directory.rows()[0].summaryLoading,false);
+  sources.cpu={state:'loading'};assert.equal(directory.rows()[0].summaryLoading,true);
+  sources.cpu.state='error';assert.equal(directory.rows()[0].summaryLoading,false);
+  sources.accelerators={state:'ready'};device.model.performance.gpus=[{availability:'unknown',isIdle:false}];
+  assert.deepEqual(directory.rows()[0].metrics,['GPU --/1']);directory.dispose();
+});
+
+test('server summaries use the published model until the next snapshot update', async t => {
+  const fixture = directoryFixture(t);
+  await fixture.transport.connect(); fixture.commit();
+  const metrics = fixture.directory.rows()[0].metrics;
+  fixture.store.fail('cpu', new Error('collection timed out'));
+  assert.deepEqual(fixture.directory.rows()[0].metrics, metrics);
+  fixture.publish();
+  assert.equal(fixture.directory.rows()[0].metrics.some(value => value.startsWith('CPU')), false);
+});
+
 test('monitor opens after a complete rendered sample, including a valid empty GPU result', async (t) => {
   const fixture = directoryFixture(t);
   let opened = false;
   const action = fixture.directory.runMonitorAction('lab', async () => { opened = true; });
   await new Promise(setImmediate);
-  fixture.commit(['cpu', 'memory', 'diskIo', 'diskTopology']);
+  fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);
   assert.equal(opened, false);
   assert.deepEqual(fixture.phases.slice(0, 2), ['connecting', 'connecting']);
   assert.ok(fixture.phases.includes('loading'));
@@ -49,6 +70,22 @@ test('an existing complete sample opens immediately even when one collector has 
   assert.deepEqual(fixture.phases, []);
 });
 
+test('opening from the server list uses the same settled initial snapshot when a module fails', async (t) => {
+  const fixture = directoryFixture(t);
+  let message = null;
+  const action = fixture.directory.runMonitorAction('lab', async () => { message = fixture.session.snapshotMessage(true); });
+  await new Promise(setImmediate);
+  fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'accelerators']);
+  assert.equal(message, null);
+  assert.equal(fixture.session.snapshotMessage().viewModel, null);
+  fixture.store.fail('diskTopology', new Error('df: /nfs: Input/output error'));
+  fixture.publish();
+  await action;
+  assert.equal(message.status.ready, true);
+  assert.equal(message.viewModel.performance.cpu.usagePercent, 12);
+  assert.equal(message.viewModel.sources.diskTopology.state, 'error');
+});
+
 test('reconnection waits for all required partitions from the new connection', async (t) => {
   const fixture = directoryFixture(t);
   await fixture.transport.connect();
@@ -56,7 +93,7 @@ test('reconnection waits for all required partitions from the new connection', a
   fixture.session.setConnection('disconnected', new Error('lost'));
   const action = fixture.directory.runMonitorAction('lab', async () => { fixture.opened = true; });
   await new Promise(setImmediate);
-  for (const key of ['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators']) {
+  for (const key of ['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology', 'accelerators']) {
     fixture.store.commit(key, fixture.values[key], fixture.session.requiredSince - 1);
   }
   fixture.commit(['cpu']);

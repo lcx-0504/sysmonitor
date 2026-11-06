@@ -10,11 +10,11 @@ const MAX_CONNECTIONS = 4;
 
 class SshTransport {
   constructor({ host, configFile = null, spawnProcess = spawn, onState = () => {}, requireLinux = true,
-    shouldReconnect = () => true, retryDelayMilliseconds = 10000, maxConnections = MAX_CONNECTIONS,
-    onResidualProcesses = () => {}, onLog = () => {} }) {
+    shouldReconnect = () => true, retryDelayMilliseconds = 10000, maxConnections = MAX_CONNECTIONS, connectionTimeoutMilliseconds = 15000,
+    onResidualProcesses = () => {}, onWarning = () => {}, onLog = () => {} }) {
     if (!host || /[\s\0]/.test(host) || host.startsWith('-')) throw new Error('Invalid SSH host alias');
     if (!Number.isInteger(maxConnections) || maxConnections < 1) throw new Error('Invalid SSH pool size');
-    Object.assign(this, { host, spawnProcess, onState, requireLinux, shouldReconnect, retryDelayMilliseconds, maxConnections });
+    Object.assign(this, { host, spawnProcess, onState, onWarning, requireLinux, shouldReconnect, retryDelayMilliseconds, maxConnections, connectionTimeoutMilliseconds });
     this.configFile = configFile ? expandHome(configFile) : null;
     this.channels = new Set();
     this.pending = new Map();
@@ -54,6 +54,7 @@ class SshTransport {
     const generation = this.generation;
     const channel = new SshChannel({
       host: this.host, configFile: this.configFile, spawnProcess: this.spawnProcess, requireLinux: this.requireLinux,
+      connectionTimeoutMilliseconds: this.connectionTimeoutMilliseconds,
       onInterrupted: (process) => { if (!this.closed) this.processGuard.track(process); },
       onExit: (channel) => { this.channels.delete(channel); queueMicrotask(() => this.drain()); },
       onClose: (closed, error, intentional, wasReady) => {
@@ -66,6 +67,10 @@ class SshTransport {
       if (this.closed || channel.closed || generation !== this.generation) throw new Error('SSH connection closed');
       this.lastError = null;
       this.retryAfter = 0;
+      if (!channel.timeoutAvailable && !this.timeoutWarningShown) {
+        this.timeoutWarningShown = true;
+        this.onWarning('remoteTimeoutUnavailable');
+      }
       this.processGuard.schedule();
       if (!this.connected) {
         this.connected = true;
@@ -94,6 +99,12 @@ class SshTransport {
     return this.connect();
   }
 
+  setMaxConnections(maxConnections) {
+    if (!Number.isInteger(maxConnections) || maxConnections < 1 || maxConnections > 8) throw new Error('Invalid SSH pool size');
+    this.maxConnections = maxConnections;
+    this.drain();
+  }
+
   execFile(command, args = [], options = {}) {
     try { options = executionOptions(options); } catch (error) { return Promise.reject(error); }
     if (this.closed) return Promise.reject(new Error('SSH transport disposed'));
@@ -105,7 +116,7 @@ class SshTransport {
       const onPause = () => {
         if (!task.channel) task.finish(options.dispatchSignal.reason || new Error('Monitoring paused'));
       };
-      const task = { id, command, args, limit: options.maxBufferBytes || 4 * 1024 * 1024, trackProcess: options.trackProcess !== false, channel: null,
+      const task = { id, command, args, deadline: Date.now() + timeout, input: options.input, limit: options.maxBufferBytes || 4 * 1024 * 1024, trackProcess: options.trackProcess !== false, channel: null,
         finish: (error, result) => {
           if (!this.pending.delete(id)) return;
           clearTimeout(task.timer);
@@ -141,12 +152,22 @@ class SshTransport {
 
   drain() {
     if (this.closed || Date.now() < this.retryAfter) return;
+    let surplus = [...this.channels].filter(channel => !channel.closed).length - this.maxConnections;
+    for (const channel of this.channels) {
+      if (surplus <= 0) break;
+      if (channel.ready && !channel.request && !channel.closed) {
+        channel.close(new Error('SSH pool size reduced'), true);
+        surplus--;
+      }
+    }
     for (const channel of this.channels) {
       if (!channel.ready || channel.request) continue;
       const task = this.nextQueuedTask();
       if (!task) return;
+      const remaining = task.deadline - Date.now();
+      if (remaining <= 0) { task.finish(timeoutError('Command timed out: ' + task.command)); continue; }
       task.channel = channel;
-      channel.execFile(task.id, task.command, task.args, task.limit, task.trackProcess).then(
+      channel.execFile(task.id, task.command, task.args, task.limit, task.trackProcess, task.input, remaining).then(
         (result) => task.finish(null, result), (error) => task.finish(error));
     }
     if (this.nextQueuedTask() && !this.opening

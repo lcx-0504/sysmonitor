@@ -4,7 +4,9 @@ const { parseProcessName } = require('./process');
 
 function parseCpuStat(raw) {
   const values = raw.split('\n')[0].trim().split(/\s+/).slice(1).map(Number);
-  return { idle: values[3] + (values[4] || 0), total: values.reduce((sum, value) => sum + value, 0) };
+  if (!/^cpu\s/.test(raw) || values.length < 4 || !values.every(Number.isFinite)) throw Object.assign(new Error('Incomplete /proc/stat'), { code: 'EINCOMPLETE' });
+  // Guest time is already included in the user and nice counters.
+  return { idle: values[3] + (values[4] || 0), total: values.slice(0, 8).reduce((sum, value) => sum + value, 0) };
 }
 
 function parseMemoryInfo(raw) {
@@ -14,7 +16,7 @@ function parseMemoryInfo(raw) {
   };
   const totalBytes = readKilobytes('MemTotal');
   const availableBytes = readKilobytes('MemAvailable');
-  if (totalBytes === null || availableBytes === null) throw new Error('Incomplete /proc/meminfo');
+  if (totalBytes === null || availableBytes === null || totalBytes <= 0 || availableBytes > totalBytes) throw new Error('Incomplete /proc/meminfo');
   const usedBytes = totalBytes - availableBytes;
   return { totalBytes, availableBytes, usedBytes, usagePercent: Math.round(usedBytes / totalBytes * 100) };
 }
@@ -31,6 +33,7 @@ function parseDefaultRouteInterfaces(raw) {
 }
 
 function parseNetworkCounters(raw, selectedInterfaces) {
+  if (raw.trim() && raw.split('\n').length < 3) throw Object.assign(new Error('Incomplete /proc/net/dev'), { code: 'EINCOMPLETE' });
   let receiveBytes = 0;
   let transmitBytes = 0;
   const availableInterfaces = [];
@@ -42,8 +45,10 @@ function parseNetworkCounters(raw, selectedInterfaces) {
     availableInterfaces.push(interfaceName);
     if (selectedInterfaces && selectedInterfaces.size > 0 && !selectedInterfaces.has(interfaceName)) continue;
     const counters = countersPart.trim().split(/\s+/);
-    receiveBytes += Number(counters[0]) || 0;
-    transmitBytes += Number(counters[8]) || 0;
+    const received = Number(counters[0]); const transmitted = Number(counters[8]);
+    if (counters.length < 9 || !Number.isFinite(received) || !Number.isFinite(transmitted) || received < 0 || transmitted < 0) throw Object.assign(new Error('Incomplete /proc/net/dev'), { code: 'EINCOMPLETE' });
+    receiveBytes += received;
+    transmitBytes += transmitted;
   }
   return { receiveBytes, transmitBytes, availableInterfaces };
 }
@@ -51,29 +56,40 @@ function parseNetworkCounters(raw, selectedInterfaces) {
 function parseDiskIoCounters(raw) {
   let readSectors = 0;
   let writeSectors = 0;
+  const devices = [];
+  let parsedRows = 0;
   for (const line of raw.split('\n')) {
     const fields = line.trim().split(/\s+/);
     if (fields.length < 14) continue;
+    parsedRows++;
     const deviceName = fields[2];
-    if (/\d$/.test(deviceName) && !/^(nvme|mmc)\d+n\d+$/.test(deviceName)) continue;
+    if (/\d$/.test(deviceName) && !/^(?:nvme\d+n\d+|mmcblk\d+)$/.test(deviceName)) continue;
     if (/^(loop|ram|dm-)/.test(deviceName)) continue;
-    readSectors += Number.parseInt(fields[5], 10) || 0;
-    writeSectors += Number.parseInt(fields[9], 10) || 0;
+    const read = Number(fields[5]); const written = Number(fields[9]);
+    if (!Number.isFinite(read) || !Number.isFinite(written) || read < 0 || written < 0) throw Object.assign(new Error('Incomplete /proc/diskstats'), { code: 'EINCOMPLETE' });
+    devices.push(`${fields[0]}:${fields[1]}:${deviceName}`);
+    readSectors += read;
+    writeSectors += written;
   }
-  return { readBytes: readSectors * 512, writeBytes: writeSectors * 512 };
+  if (raw.trim() && !parsedRows) throw Object.assign(new Error('Incomplete /proc/diskstats'), { code: 'EINCOMPLETE' });
+  return { readBytes: readSectors * 512, writeBytes: writeSectors * 512, devices };
 }
+
+function processStartTime(text) { return Date.parse(text.trim() + ' UTC'); }
 
 function parseProcessOutput(raw, totalMemoryBytes) {
   const processes = [];
+  let parsedRows = 0;
   const linePattern = /^(\d+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(\S+)\s+(\d{4})\s+(.+)$/;
   for (const line of raw.trim().split('\n')) {
     const match = line.trim().match(linePattern);
     if (!match) continue;
+    parsedRows++;
     const pid = Number(match[1]);
     const cpuUsagePercent = Number(match[3]) || 0;
     const memoryUsedBytes = Number(match[4]) * 1024;
     if (memoryUsedBytes <= 1e6 && cpuUsagePercent <= 0) continue;
-    const startedAt = Date.parse(`${match[5]} ${match[6]} ${match[7]} ${match[8]} ${match[9]} UTC`);
+    const startedAt = processStartTime(`${match[5]} ${match[6]} ${match[7]} ${match[8]} ${match[9]}`);
     const commandLine = match[10].trim();
     processes.push({
       pid,
@@ -88,7 +104,8 @@ function parseProcessOutput(raw, totalMemoryBytes) {
       acceleratorUsages: [],
     });
   }
+  if (raw.trim() && !parsedRows) throw Object.assign(new Error('Incomplete process query output'), { code: 'EINCOMPLETE' });
   return processes;
 }
 
-module.exports = { parseCpuStat, parseDefaultRouteInterfaces, parseDiskIoCounters, parseMemoryInfo, parseNetworkCounters, parseProcessOutput };
+module.exports = { parseCpuStat, parseDefaultRouteInterfaces, parseDiskIoCounters, parseMemoryInfo, parseNetworkCounters, parseProcessOutput, processStartTime };

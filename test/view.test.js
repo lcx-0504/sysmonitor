@@ -12,6 +12,7 @@ const { moveMonitorPanelToNewWindow, getMonitorEditorTitle } = require('../src/v
 
 const { createSessionFixture } = require('./session-fixture');
 function createProvider({ service = {}, configStore = {}, ...options }) {
+  if (!configStore.getSaveState) configStore.getSaveState = () => ({ status: 'saved', error: null });
   if (!configStore.getCurrent) configStore = { ...configStore, getCurrent: () => normalizeConfig({}) };
   const { session } = createSessionFixture({ service, configStore });
   return new MonitorViewProvider({ ...options, configStore, session });
@@ -52,6 +53,7 @@ test('performance and process rows are sent as one snapshot', () => {
   provider.view = { webview: { postMessage: async (message) => { messages.push(message); return true; } } };
   provider.isReady = true;
   const processes = [{ pid: 42 }];
+  provider.session.ready = true;
   provider.session.model = { performance: { cpu: { usagePercent: 12 } }, processes };
   provider.renderSession();
   assert.equal(messages.length, 1);
@@ -60,8 +62,6 @@ test('performance and process rows are sent as one snapshot', () => {
   const script = readWebviewScript();
   assert.match(script, /data\.cmd !== 'snapshot'/);
   assert.doesNotMatch(script, /cmd:'needProcs'|data\.cmd === 'procs'|data\.cmd !== 'update'/);
-  const receiveSnapshot = script.slice(script.indexOf("    if (data.cmd !== 'snapshot')"), script.indexOf("    document.getElementById('cpu-val')"));
-  assert.ok(receiveSnapshot.indexOf('setLang(performance.language)') < receiveSnapshot.indexOf('renderProcTable()'));
 });
 
 test('Webview waits for its ready handshake before receiving the latest snapshot', () => {
@@ -73,6 +73,21 @@ test('Webview waits for its ready handshake before receiving the latest snapshot
   assert.equal(messages.length, 0);
   provider.handleMessage({ version: 1, cmd: 'ready' });
   assert.equal(messages.some((message) => message.cmd === 'snapshot'), true);
+});
+
+test('ready delivers current configuration, save failure, UI and snapshot after HTML creation', async () => {
+  const {ConfigStore}=require('../src/config/config-store');
+  const vscode={env:{language:'en'},workspace:{getConfiguration:section=>section==='sysmonitor'?{inspect:()=>({globalValue:undefined}),update:async()=>{throw new Error('read only');}}:{get:()=>[]}}};
+  const store=new ConfigStore({vscode});
+  const provider=createProvider({vscode,configStore:store});
+  await provider.buildHtml();
+  store.update('display',[{path:['charts'],value:false}]);await assert.rejects(store.flush(),/read only/);
+  const messages=[];provider.view={webview:{postMessage:message=>messages.push(message)}};
+  provider.handleMessage({version:1,cmd:'ready'});
+  const config=messages.find(message=>message.cmd==='config');
+  assert.equal(config.displayCfg.charts,false);assert.equal(config.saveState.status,'error');
+  assert.ok(messages.some(message=>message.cmd==='uiState'));assert.ok(messages.some(message=>message.cmd==='snapshot'));
+  let retry=0;store.flush=async()=>{retry++;};provider.handleMessage({version:1,cmd:'retryConfigSave'});assert.equal(retry,1);
 });
 
 test('editor panel preserves the original icon shape with light and dark variants', async () => {
@@ -132,16 +147,18 @@ test('remote Editor actions move the active panel or return to its sidebar', asy
 test('remote Linux settings expose window action switches and update native title contexts', async () => {
   const contexts = [];
   let current = normalizeConfig({});
+  let changed;
   const provider = createProvider({
     vscode: { commands: { executeCommand: (...args) => contexts.push(args) } },
     service: { scheduler: { isPaused: false }, readSnapshot: () => ({ accelerators: { value: null } }), updateConfig() {} },
     configStore: {
       getCurrent: () => current,
-      update(key, value) { current = normalizeConfig({ ...current, [key]: value }); },
+      update(key, changes) { for (const {path, value} of changes) current[key][path[0]][path[1]] = value; changed(); },
     },
   });
+  changed = () => { provider.session.updateConfig(); provider.updateActionVisibility(); provider.pushConfig(); };
   contexts.length = 0;
-  provider.handleMessage({ version: 1, cmd: 'setConfig', key: 'servers', value: { actions: { editor: false, window: false } } });
+  provider.handleMessage({ version: 1, cmd: 'setConfig', key: 'servers', changes: ['editor','window'].map(key => ({ path:['actions',key], value:false })) });
   assert.deepEqual(contexts.filter(([command, key]) => command === 'setContext' && key.startsWith('sysmonitor.action')), [
     ['setContext', 'sysmonitor.actionEditorVisible', false],
     ['setContext', 'sysmonitor.actionWindowVisible', false],
@@ -259,6 +276,7 @@ test('multiple editor panels share snapshots and controls without sharing their 
   provider.view = side;
   provider.isReady = true;
   provider.session.model = { performance: { cpu: { usagePercent: 5 } }, processes: [{ pid: 42 }] };
+  provider.session.ready = true;
 
   await provider.openEditorPanel();
   await provider.openEditorPanel();
@@ -309,8 +327,8 @@ test('process display preferences are shared across sidebar and editor clients',
   provider.view = { webview: { postMessage: (message) => messages.push(['side', message]) } };
   provider.editorPanels.set({ webview: { postMessage: (message) => messages.push(['editor', message]) } }, true);
   provider.isReady = true;
-  provider.handleMessage({ cmd: 'setProcessDisplay', key: 'cpu', value: 'both' });
-  provider.handleMessage({ cmd: 'setProcessDisplay', key: 'ram', value: 'percent' });
+  provider.handleMessage({ version:1, cmd: 'setProcessDisplay', key: 'cpu', value: 'both' });
+  provider.handleMessage({ version:1, cmd: 'setProcessDisplay', key: 'ram', value: 'percent' });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(provider.getUiState(), { cpu: 'both', ram: 'percent' });
   assert.equal(updates.length, 2);

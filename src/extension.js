@@ -6,9 +6,13 @@ const { MonitorViewProvider } = require('./view/monitor-view-provider');
 const { MultiMonitorViewProvider } = require('./view/multi-monitor-view-provider');
 const { DeviceMonitorManager } = require('./services/device-monitor-manager');
 const { StatusBarController } = require('./view/status-bar-controller');
+const { createTranslator } = require('./i18n');
 
 const isSSH = !!(process.env.SSH_CLIENT || process.env.SSH_CONNECTION || process.env.SSH_TTY);
-const sshClientIp = (process.env.SSH_CONNECTION || '').split(/\s+/)[0] || '';
+const sshEndpoint = (process.env.SSH_CONNECTION || '').trim().split(/\s+/);
+const sshClientIp = sshEndpoint[0] || (process.env.SSH_CLIENT || '').split(/\s+/)[0] || '';
+const sshConnectionInfo = () => sshEndpoint.length === 4 && [sshEndpoint[1], sshEndpoint[3]].every(port => /^\d+$/.test(port) && Number(port) > 0 && Number(port) <= 65535)
+  ? { clientIp: sshEndpoint[0], clientPort: Number(sshEndpoint[1]), serverIp: sshEndpoint[2], serverPort: Number(sshEndpoint[3]) } : null;
 let outputChannel = null;
 let currentUserNativeIndices = [];
 function logDebug(msg) { if (outputChannel) outputChannel.appendLine('[' + new Date().toISOString().slice(11, 23) + '] ' + msg); }
@@ -17,22 +21,37 @@ function logDebug(msg) { if (outputChannel) outputChannel.appendLine('[' + new D
 const configStore = new ConfigStore({
   vscode,
   onError: (error) => logDebug('config write failed: ' + (error && error.message ? error.message : error)),
+  onUpgradeError: (error) => {
+    logDebug('config upgrade write failed: ' + error.message);
+    vscode.window.showWarningMessage(createTranslator(vscode.env.language)('configUpgradeFailed'));
+  },
 });
-
-function getConfig() { return configStore.getCurrent(); }
 
 let currentStatusBarViewModel = {};
 let statusBarController = null;
 function updateBar() { if (statusBarController) statusBarController.setViewModel(currentStatusBarViewModel, currentUserNativeIndices); }
 
-function activate(context) {
+function watchConfig(context, provider, updateCollection, other = () => {}) {
+  const apply = () => {
+    updateCollection();
+    provider.updateActionVisibility();
+    provider.pushConfig();
+    if (statusBarController) { statusBarController.recreate(); updateBar(); }
+  };
+  context.subscriptions.push(configStore.onDidChange(apply), configStore.onDidChangeSaveState(state => provider.broadcast({ cmd: 'configSaveState', ...state })), vscode.workspace.onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('sysmonitor')) configStore.refresh();
+    other(event);
+  }));
+}
+
+async function activate(context) {
   outputChannel = vscode.window.createOutputChannel('System Monitor');
   context.subscriptions.push(outputChannel);
   logDebug('activate');
-  configStore.refresh();
+  await configStore.upgrade();
   context.subscriptions.push({ dispose: () => configStore.dispose() });
   const lang = vscode.env.language || '';
-  const zh = lang.startsWith('zh');
+  const t = createTranslator(lang);
   const remoteWindow = !!vscode.env.remoteName;
   const localInRemoteWindow = remoteWindow && context.extension.extensionKind !== vscode.ExtensionKind.Workspace;
 
@@ -46,6 +65,7 @@ function activate(context) {
       localLinux,
       configFile: sshConfigFile,
       onLog: logDebug,
+      onWarning: (host, key) => vscode.window.showWarningMessage(t(key, { host })),
       onUpdate: (id, device) => { if (provider) provider.onDeviceUpdate(id, device); },
       onPauseChange: (paused) => { if (provider) provider.broadcast({ cmd: 'uiState', paused }); },
       onResidualProcesses: (host, pids, acknowledge) => {
@@ -69,17 +89,10 @@ function activate(context) {
       },
     }));
     if (localLinux) statusBarController = new StatusBarController({ vscode, configStore, subscriptions: context.subscriptions });
-    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration('sysmonitor')) {
-        if (!configStore.isWriting) configStore.refresh();
-        manager.updateConfig();
-        provider.updateActionVisibility();
-        provider.pushConfig();
-        if (statusBarController) { statusBarController.recreate(); updateBar(); }
-      }
+    watchConfig(context, provider, () => manager.updateConfig(), event => {
       if (event.affectsConfiguration('remote.SSH.configFile')) provider.refreshHosts();
       if (event.affectsConfiguration('remote.SSH.defaultExtensions')) provider.pushConfig();
-    }));
+    });
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openPanel', () => vscode.commands.executeCommand('workbench.view.extension.sysmonitor-container')));
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openEditor', () => provider.moveSidebarDeviceToEditor()));
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openWindow', () => provider.moveSidebarDeviceToEditor(true)));
@@ -104,15 +117,11 @@ function activate(context) {
         resolveWebviewView(view) {
           const nonce = Math.random().toString(36).slice(2, 18);
           const title = localInRemoteWindow
-            ? (zh ? '请在远程环境中运行扩展' : 'Run the extension in the remote environment')
-            : (zh ? '仅支持 Linux' : 'Linux only');
+            ? (t("runTheExtensionInTheRemoteEnvironment"))
+            : (t("linuxOnly"));
           const body = localInRemoteWindow
-            ? (zh
-              ? 'System Monitor 当前运行在本机。请在扩展页面中将其安装或启用到当前远程环境，然后重新加载窗口。'
-              : 'System Monitor is running locally. Install or enable it in the current remote environment from the Extensions view, then reload the window.')
-            : zh
-            ? '当前远程环境不是 Linux（' + process.platform + '），本扩展无法采集系统指标。请在 Linux 服务器、WSL、Linux 容器或本地 Linux 中使用。'
-            : 'This remote is not Linux (' + process.platform + '). System Monitor requires Linux. Use a Linux server, WSL, Linux container, or local Linux.';
+            ? (t("systemMonitorIsRunningLocallyInstallOrEnable"))
+            : t("thisRemoteIsNotLinuxSystemMonitorRequires", { process });
           view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}';">
 <style nonce="${nonce}">body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);padding:16px;font-size:12px;line-height:1.6}h3{margin:0 0 10px;font-size:13px}p{color:var(--vscode-descriptionForeground);margin:0}</style></head><body>
@@ -145,7 +154,7 @@ function activate(context) {
   const session = new MonitorSession({
     configStore,
     language: vscode.env.language,
-    serviceOptions: { isSsh: isSSH, sshClientIp },
+    serviceOptions: { isSsh: isSSH, sshClientIp, sshConnectionInfo: sshConnectionInfo() ? sshConnectionInfo : null },
     onLog: logDebug,
     onUpdate: (current) => {
       if (provider) provider.renderSession();
@@ -162,7 +171,6 @@ function activate(context) {
     configStore,
     uiStateStore: context.globalState,
     logger: logDebug,
-    onConfigUpdated: () => updateBar(),
   });
   context.subscriptions.push({ dispose: () => session.dispose() });
   context.subscriptions.push(
@@ -173,19 +181,7 @@ function activate(context) {
 
   statusBarController = new StatusBarController({ vscode, configStore, subscriptions: context.subscriptions });
 
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-    if (e.affectsConfiguration('sysmonitor')) {
-      logDebug('onDidChangeConfiguration: selfWriting=' + configStore.isWriting);
-      if (!configStore.isWriting) {
-        configStore.refresh();
-        provider.updateActionVisibility();
-        provider.pushConfig();
-      }
-      session.updateConfig();
-      statusBarController.recreate();
-      updateBar();
-    }
-  }));
+  watchConfig(context, provider, () => session.updateConfig());
 
   context.subscriptions.push(
     vscode.commands.registerCommand('sysmonitor.openPanel', () => {

@@ -15,18 +15,6 @@ class RemoteSystemInfo {
     return value;
   }
 
-  async cpuInfo() {
-    const [loadRaw, coreCount] = await Promise.all([
-      this.fileReader.readFile('/proc/loadavg', 'utf8'),
-      this.cached('cores', 60000, async () => {
-        const raw = await this.fileReader.readFile('/proc/stat', 'utf8');
-        return (raw.match(/^cpu\d+\s/gm) || []).length;
-      }),
-    ]);
-    const loadAverage = loadRaw.trim().split(/\s+/).slice(0, 3).map(Number);
-    return { coreCount, loadAverage };
-  }
-
   async totalMemoryBytes() {
     return this.cached('memory', 60000, async () => {
       const raw = await this.fileReader.readFile('/proc/meminfo', 'utf8');
@@ -35,9 +23,18 @@ class RemoteSystemInfo {
     });
   }
 
+  async coreCount() {
+    return this.cached('cores', 60000, async () => {
+      const stat = await this.fileReader.readFile('/proc/stat', 'utf8');
+      const count = (stat.match(/^cpu\d+\s/gm) || []).length;
+      if (!Number.isInteger(count) || count < 1) throw new Error('Incomplete CPU core count');
+      return count;
+    });
+  }
+
   async userId() {
     return this.cached('uid', 60000, async () => {
-      const { stdout } = await this.commandRunner.execFile('id', ['-u'], { timeoutMilliseconds: 5000 });
+      const { stdout } = await this.commandRunner.execFile('id', ['-u']);
       return Number.parseInt(stdout, 10);
     });
   }

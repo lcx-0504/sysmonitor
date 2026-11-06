@@ -1,10 +1,27 @@
 'use strict';
 const { withCollectionContext, timeoutError } = require('./collection-context');
+const { setTimeout: delay } = require('node:timers/promises');
+
+// Counter-derived metrics need a second observation before their first publication.
+const COUNTER_WARMUP_INTERVAL_MS = 100;
+
+async function collectReadyValue(collector, signal, onPartial) {
+  let value = await collector.collect({ onPartial });
+  while (collector.needsWarmup?.(value)) {
+    await delay(COUNTER_WARMUP_INTERVAL_MS, undefined, { signal });
+    value = await collector.collect({ onPartial });
+  }
+  return value;
+}
 
 class CollectorRunner {
-  constructor({ key, collector, snapshotStore, cadenceMilliseconds, timeoutMilliseconds, clock = () => Date.now(), onStatusChange = () => {}, onSettled = () => {} }) {
+  constructor({ key, resultKeys = [key], grouped = resultKeys.length > 1, collector, snapshotStore, cadenceMilliseconds, timeoutMilliseconds, clock = () => Date.now(), onStatusChange = () => {}, onSettled = () => {} }) {
     this.key = key;
     this.collector = collector;
+    this.resultKeys = resultKeys;
+    this.grouped = grouped;
+    this.enabled = true;
+    this.resetOnNextRun = false;
     this.snapshotStore = snapshotStore;
     this.cadenceMilliseconds = cadenceMilliseconds;
     this.timeoutMilliseconds = timeoutMilliseconds;
@@ -19,7 +36,31 @@ class CollectorRunner {
     this.generation = 0;
   }
 
-  setCadence(cadenceMilliseconds) { this.cadenceMilliseconds = cadenceMilliseconds; }
+  setCadence(cadenceMilliseconds) {
+    if (this.nextDueAt) this.nextDueAt += cadenceMilliseconds - this.cadenceMilliseconds;
+    this.cadenceMilliseconds = cadenceMilliseconds;
+  }
+  setDemand(resultKeys) {
+    const previous = this.enabled ? this.resultKeys : [];
+    if (previous.length === resultKeys.length && previous.every((key, index) => key === resultKeys[index])) return false;
+    this.invalidate({ reason: 'Collection demand changed' });
+    for (const key of new Set([...previous, ...resultKeys])) {
+      if (previous.includes(key) !== resultKeys.includes(key)) this.snapshotStore.reset(key, resultKeys.includes(key) ? 'loading' : 'disabled');
+    }
+    this.resultKeys = resultKeys;
+    this.enabled = resultKeys.length > 0;
+    this.collector.setKeys?.(resultKeys);
+    this.resetOnNextRun = true;
+    this.nextDueAt = 0;
+    return true;
+  }
+
+  reportFailure(error, attemptedAt = this.clock()) {
+    for (const key of this.resultKeys) {
+      this.snapshotStore.fail(key, error, attemptedAt, error && error.code === 'ENOENT');
+      this.onStatusChange(key, this.snapshotStore.read()[key].status, error);
+    }
+  }
   isDue(now) { return now >= this.nextDueAt; }
   invalidate({ abortRunning = true, reason = 'Collection disposed' } = {}) {
     this.generation += 1;
@@ -36,13 +77,15 @@ class CollectorRunner {
   }
 
   startIfDue(now = this.clock()) {
-    if (this.isRunning || !this.isDue(now)) return false;
+    if (!this.enabled || this.isRunning || !this.isDue(now)) return false;
     this.run(now);
     return true;
   }
 
   run(attemptedAt = this.clock()) {
+    if (!this.enabled) return Promise.resolve();
     if (this.isRunning) return this.execution;
+    if (this.resetOnNextRun) { this.collector.reset?.(); this.resetOnNextRun = false; }
     this.isRunning = true;
     this.collectionSettled = true;
     this.pendingCollection = Promise.resolve();
@@ -53,7 +96,7 @@ class CollectorRunner {
 
   async collect(attemptedAt) {
     this.nextDueAt = attemptedAt + this.cadenceMilliseconds;
-    this.snapshotStore.markAttempted(this.key, attemptedAt);
+    for (const key of this.resultKeys) this.snapshotStore.markAttempted(key, attemptedAt);
     const generation = this.generation;
     const controller = new AbortController();
     const dispatchController = new AbortController();
@@ -61,6 +104,7 @@ class CollectorRunner {
     this.dispatchController = dispatchController;
     let timeoutId;
     let collection;
+    let partial;
     try {
       const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
@@ -70,24 +114,36 @@ class CollectorRunner {
         }, this.timeoutMilliseconds);
       });
       collection = Promise.resolve(withCollectionContext({ signal: controller.signal, dispatchSignal: dispatchController.signal,
-        deadline: Date.now() + this.timeoutMilliseconds }, () => this.collector.collect()));
+        deadline: Date.now() + this.timeoutMilliseconds }, () => collectReadyValue(this.collector, controller.signal, value => { partial = value; })));
       // Keep the slot until non-cancellable work and snapshot publication settle.
       this.collectionSettled = false;
       this.pendingCollection = collection.finally(() => { this.collectionSettled = true; });
       const result = await Promise.race([collection, timeoutPromise]);
       if (generation !== this.generation) return;
-      this.snapshotStore.commit(this.key, result, this.clock());
-      this.onStatusChange(this.key, 'fresh');
+      this.commit(result);
     } catch (error) {
       if (generation !== this.generation) return;
       if (controller.signal.aborted && controller.signal.reason) error = controller.signal.reason;
-      this.snapshotStore.fail(this.key, error, attemptedAt, error && error.code === 'ENOENT');
-      this.onStatusChange(this.key, this.snapshotStore.read()[this.key].status, error);
+      if (partial?.failureCode) {
+        this.commit({ ...partial.value, collectionErrors: [...partial.value.collectionErrors || [], { code: partial.failureCode, message: error.message }] }, error);
+        return;
+      }
+      if (partial) this.commit(partial.value);
+      this.reportFailure(error, attemptedAt);
     } finally {
       clearTimeout(timeoutId);
       if (this.controller === controller) this.controller = null;
       if (this.dispatchController === dispatchController) this.dispatchController = null;
       if (generation === this.generation) this.onSettled(this.key);
+    }
+  }
+
+  commit(result, error) {
+    const now = this.clock();
+    for (const key of this.resultKeys) {
+      const value = this.grouped ? result[key] : result;
+      this.snapshotStore.commit(key, value, value?.sampledAt ?? now);
+      this.onStatusChange(key, 'fresh', error);
     }
   }
 }

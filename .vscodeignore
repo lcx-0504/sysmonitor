@@ -3,10 +3,6 @@ icon-marketplace.svg
 assets/
 .git/
 .gitignore
-Chat.md
-genai-chat/
-VSCode Extension Token.txt
-TODO.txt
 release/
 screenshots/
 *.vsix

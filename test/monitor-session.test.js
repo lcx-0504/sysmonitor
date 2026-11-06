@@ -1,13 +1,115 @@
 'use strict';
-
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createSessionFixture } = require('./session-fixture');
+
+test('paused one-shot samples are acknowledged without consuming the resume gap', t => {
+  let now = 0; t.mock.method(Date, 'now', () => now);
+  const fixture = createSessionFixture(); t.after(() => fixture.session.dispose());
+  fixture.commit(); fixture.session.captureChartFrame(Date.now()); now = 1000; fixture.session.setPaused(true);
+  now = 2000; fixture.values.memory.usagePercent = 50; fixture.commit(['memory']);
+  now = 10000; fixture.session.setPaused(false); fixture.commit(['cpu']);
+  now = 11000; fixture.values.memory.usagePercent = 60; fixture.commit(['memory']); fixture.session.captureChartFrame(Date.now());
+  assert.deepEqual(fixture.session.history.filter(sample => sample.source === 'memory').map(sample => [sample.t, sample.gapBefore]), [[0, false], [10000, true], [11000, false]]);
+});
+
 const { MonitorService } = require('../src/services/monitor-service');
 const { normalizeConfig } = require('../src/config/normalize-config');
 const { MonitorSession } = require('../src/services/monitor-session');
+
+test('disabled performance modules do not delay the first display or surface their old failures', async t => {
+  let config=normalizeConfig({});
+  const session=new MonitorSession({configStore:{getCurrent:()=>config},language:'en',serviceOptions:{isSsh:false,statusBarAvailable:false}});
+  t.after(()=>session.dispose());
+  session.service.snapshotStore.fail('diskTopology',new Error('disk failed'));
+  session.acceptSnapshot(session.service.readSnapshot());
+  assert.equal(session.ready,false);
+  const waiting=session.waitForInitialSample();
+  config=normalizeConfig({statusBar:{barEnabled:false},display:{hiddenGroups:{cpu:true,memory:true,disk:true,network:true,gpuSummary:true,gpuCards:true}}});
+  session.updateConfig(); await waiting;
+  assert.equal(session.ready,true);
+  assert.deepEqual(session.viewState().failures,[]);
+  assert.equal(session.model.sources.diskTopology.state,'disabled');
+  assert.deepEqual(session.service.requiredKeys(),[]);
+});
 const { CollectorRunner } = require('../src/core/collector-runner');
 const { MonitorScheduler } = require('../src/core/monitor-scheduler');
+
+test('an already-open view receives one initial snapshot after network and SSH also settle', (t) => {
+  const fixture = createSessionFixture();
+  t.after(() => fixture.session.dispose());
+  fixture.commit(['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators']);
+  assert.equal(fixture.session.ready, false);
+  assert.equal(fixture.session.snapshotMessage().viewModel, null);
+  fixture.commit(['network']);
+  assert.equal(fixture.session.ready, false);
+  fixture.store.fail('sshTraffic', new Error('SSH metrics unavailable'));
+  fixture.publish();
+  assert.equal(fixture.session.ready, true);
+  assert.equal(fixture.session.snapshotMessage().viewModel.performance.cpu.usagePercent, 12);
+  assert.equal(fixture.session.snapshotMessage().viewModel.sources.sshTraffic.state, 'error');
+});
+
+test('first-screen completion publishes immediately and later results wait for a refresh tick', t => {
+  const fixture = createSessionFixture();
+  t.after(() => fixture.session.dispose());
+  const { session, store, values } = fixture;
+  for (const key of Object.keys(values).filter(key => key !== 'accelerators')) store.commit(key, values[key]);
+  session.acceptInitialSnapshot(store.read());
+  assert.equal(session.ready, false);
+  assert.equal(session.model, null);
+  store.fail('accelerators', Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }));
+  session.acceptInitialSnapshot(store.read());
+  assert.equal(session.ready, true);
+  assert.equal(session.model.performance.memory.usagePercent, 20);
+  assert.equal(session.viewState().failures.length, 1);
+  store.commit('memory', { ...values.memory, usagePercent: 70 });
+  store.commit('accelerators', values.accelerators);
+  session.acceptInitialSnapshot(store.read());
+  assert.equal(session.model.performance.memory.usagePercent, 20);
+  assert.equal(session.snapshotMessage(true).status.failures.length, 1);
+  fixture.publish();
+  assert.equal(session.model.performance.memory.usagePercent, 70);
+  assert.equal(session.viewState().failures.length, 0);
+});
+
+test('unpublished failures do not leak through chart frames or view hydration', t => {
+  const fixture = createSessionFixture();
+  t.after(() => fixture.session.dispose());
+  fixture.commit();
+  fixture.store.fail('diskIo', Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }));
+  fixture.session.acceptInitialSnapshot(fixture.store.read());
+  fixture.session.captureChartFrame(Date.now());
+  assert.deepEqual(fixture.session.snapshotMessage(true).status.failures, []);
+  assert.equal(fixture.session.model.sources.diskIo.state, 'ready');
+  fixture.publish();
+  assert.equal(fixture.session.viewState().failures[0].key, 'diskIo');
+  assert.equal(fixture.session.model.sources.diskIo.state, 'stale');
+});
+
+test('paused one-shot collection publishes only after its active modules settle', async t => {
+  const config = normalizeConfig({ statusBar: { barEnabled: false }, display: { hiddenGroups: {
+    cpu: true, disk: true, network: true, gpuCards: true, gpuSummary: true,
+  } } });
+  const session = new MonitorSession({ configStore: { getCurrent: () => config }, language: 'en', serviceOptions: { isSsh: false } });
+  t.after(() => session.dispose());
+  session.paused = true;
+  let finishMemory, finishProcesses;
+  session.service.runners.find(runner => runner.key === 'resources').collector = {
+    collect: () => new Promise(resolve => { finishMemory = resolve; }),
+  };
+  session.service.runners.find(runner => runner.key === 'processes').collector = {
+    collect: () => new Promise(resolve => { finishProcesses = resolve; }),
+  };
+  const retry = session.retry(); await new Promise(setImmediate);
+  finishMemory({ memory: { usagePercent: 40, usedBytes: 40, availableBytes: 60, totalBytes: 100 } });
+  await new Promise(setImmediate);
+  assert.equal(session.model, null);
+  finishProcesses({ rows: [], totalCount: 0 }); await retry;
+  assert.equal(session.model.performance.memory.usagePercent, 40);
+  assert.equal(session.service.scheduler.isPaused, true);
+  assert.equal(session.service.scheduler.timer, null);
+});
 
 for (const remote of [false, true]) {
   test((remote ? 'SSH' : 'direct') + ' session waits for complete first data and publishes immediately', async (t) => {
@@ -15,16 +117,20 @@ for (const remote of [false, true]) {
     const fixture = createSessionFixture({ remote, id: remote ? 'ssh:lab' : 'local', onUpdate: (session) => updates.push(session.snapshotMessage()) });
     t.after(() => fixture.session.dispose());
     if (remote) await fixture.transport.connect();
-    fixture.commit(['cpu', 'memory', 'diskIo', 'diskTopology']);
-    assert.equal(fixture.session.model, null);
+    fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);
+    assert.equal(fixture.session.model.performance.cpu.usagePercent, 12);
+    assert.equal(fixture.session.ready, false);
     assert.equal(fixture.session.viewState().loading, true);
+    assert.equal(fixture.session.snapshotMessage().viewModel, null);
+    assert.equal(fixture.session.snapshotMessage(true).viewModel, null);
     const ready = fixture.session.waitForInitialSample();
     fixture.commit(['accelerators']);
+    fixture.session.captureChartFrame(Date.now());
     await ready;
     assert.equal(fixture.session.ready, true);
     assert.equal(updates.at(-1).viewModel.performance.cpu.usagePercent, 12);
     assert.deepEqual(updates.at(-1).viewModel.performance.gpus, []);
-    assert.equal(fixture.session.history.length, 1);
+    assert.equal(fixture.session.history.filter(sample => sample.source === 'cpu').length, 1);
   });
 }
 
@@ -51,7 +157,7 @@ test('disconnection freezes history until a complete sample from the new connect
   assert.equal(session.model, model);
   assert.deepEqual(session.history, history);
   session.setConnection('connected');
-  for (const key of ['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators']) {
+  for (const key of ['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology', 'accelerators']) {
     fixture.store.commit(key, fixture.values[key], session.requiredSince - 1);
   }
   fixture.publish();
@@ -92,7 +198,7 @@ test('paused retry updates once, preserves history, and deduplicates simultaneou
   assert.equal(attempts, 1);
   assert.equal(session.service.scheduler.isPaused, true);
   assert.deepEqual(session.history, history);
-  assert.equal(session.snapshotMessage().skipHistory, true);
+  assert.deepEqual(session.snapshotMessage().samples, []);
 });
 
 test('failed paused retry stops its one-shot collection', async (t) => {
@@ -118,7 +224,7 @@ test('manual retry excludes a previous in-flight failure and waits for the new r
     collector: { async collect() {
       attempts++;
       if (attempts === 1) await new Promise((resolve, reject) => { failPrevious = reject; });
-      fixture.commit(['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators']);
+      fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology', 'accelerators']);
       return fixture.values.processes;
     } },
   });
@@ -143,20 +249,23 @@ test('each new view receives the same shared snapshot and history', (t) => {
   const second = fixture.session.snapshotMessage(true);
   assert.deepEqual(first.samples, second.samples);
   assert.equal(first.viewModel, second.viewModel);
-  assert.equal(first.skipHistory, true);
+  assert.equal(first.replaceSamples, true);
 });
 
-for (const remote of [false, true]) test((remote ? 'SSH' : 'direct') + ' first-sample failure is explicit and a subsequent retry can recover', async (t) => {
+for (const remote of [false, true]) test((remote ? 'SSH' : 'direct') + ' first-sample failure opens usable data and a subsequent retry can recover', async (t) => {
   const fixture = createSessionFixture({ remote, id: remote ? 'ssh:lab' : 'local' });
   t.after(() => fixture.session.dispose());
   if (remote) await fixture.transport.connect();
   const ready = fixture.session.waitForInitialSample();
-  const rejected = assert.rejects(ready, /NFS unavailable/);
   fixture.store.fail('diskTopology', new Error('NFS unavailable'));
   fixture.publish();
-  await rejected;
-  assert.equal(fixture.session.viewState().hasSnapshot, false);
-  assert.equal(fixture.session.loadError, 'NFS unavailable');
+  assert.equal(fixture.session.ready, false);
+  fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'accelerators']);
+  await ready;
+  assert.equal(fixture.session.viewState().hasSnapshot, true);
+  assert.equal(fixture.session.ready, true);
+  assert.equal(fixture.session.viewState().failures[0].key, 'diskTopology');
+  assert.equal(fixture.session.loadError, null);
   fixture.session.service.collectOnce = async ({ onStart }) => { onStart(); fixture.commit(); };
   await fixture.session.retry();
   assert.equal(fixture.session.ready, true);
@@ -166,11 +275,76 @@ for (const remote of [false, true]) test((remote ? 'SSH' : 'direct') + ' first-s
 test('the first process page stays loading until process data arrives', (t) => {
   const fixture = createSessionFixture();
   t.after(() => fixture.session.dispose());
-  fixture.commit(['cpu', 'memory', 'diskIo', 'diskTopology', 'accelerators']);
+  fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology', 'accelerators']);
   assert.equal(fixture.session.viewState().ready, true);
   assert.equal(fixture.session.viewState().processesReady, false);
   fixture.commit(['processes']);
   assert.equal(fixture.session.viewState().processesReady, true);
+});
+
+test('an NVML failure completes the first round while healthy resources remain usable', async (t) => {
+  const fixture = createSessionFixture();
+  t.after(() => fixture.session.dispose());
+  const opened = fixture.session.waitForInitialSample();
+  fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);
+  assert.equal(fixture.session.ready, false);
+  fixture.store.fail('accelerators', new Error('Failed to initialize NVML: Driver/library version mismatch'));
+  fixture.publish();
+  await opened;
+  assert.equal(fixture.session.ready, true);
+  assert.equal(fixture.session.model.performance.cpu.usagePercent, 12);
+  assert.equal(fixture.session.model.sources.accelerators.state, 'error');
+  assert.match(fixture.session.model.sources.accelerators.error.message, /NVML/);
+  assert.equal(fixture.session.viewState().failures[0].key, 'accelerators');
+});
+
+test('failed initial CPU and memory queries remain unknown rather than zero', (t) => {
+  const fixture = createSessionFixture();
+  t.after(() => fixture.session.dispose());
+  fixture.store.fail('cpu', new Error('cpu collection timed out'));
+  fixture.store.fail('memory', new Error('memory collection timed out'));
+  fixture.commit(['network', 'sshTraffic', 'diskIo', 'diskTopology', 'accelerators']);
+  assert.equal(fixture.session.ready, true);
+  assert.equal(fixture.session.model.performance.cpu.usagePercent, null);
+  assert.equal(fixture.session.model.performance.memory.usagePercent, null);
+  assert.equal(fixture.session.model.performance.memory.usedText, '--');
+});
+
+test('manual reconnection performs one requested round before restarting periodic collection', async (t) => {
+  const fixture = createSessionFixture({ remote: true });
+  t.after(() => fixture.session.dispose());
+  let resumed = 0, collected = 0;
+  fixture.session.running = true;
+  fixture.session.service.resume = () => { resumed++; };
+  fixture.session.service.collectOnce = async ({ onStart }) => { assert.equal(resumed, 0); collected++; onStart(); fixture.commit(); };
+  fixture.session.setConnection('disconnected', new Error('SSH timeout'));
+  await fixture.session.retry();
+  assert.equal(collected, 1);
+  assert.equal(resumed, 1);
+  assert.equal(fixture.session.ready, true);
+});
+
+test('first display follows the configured collection budget and waits for a settled result', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const fixture = createSessionFixture({ configStore: { getCurrent: () => normalizeConfig({ timeouts: { enabled: true, extended: 120 } }) } });
+  t.after(() => fixture.session.dispose());
+  fixture.session.start();
+  fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);
+  let displayed = false;
+  const opened = fixture.session.waitForInitialSample();
+  opened.then(() => { displayed = true; });
+  t.mock.timers.tick(45000);
+  await Promise.resolve();
+  assert.equal(displayed, false);
+  assert.equal(fixture.session.ready, false);
+  assert.equal(fixture.session.snapshotMessage().viewModel, null);
+  t.mock.timers.tick(75000);
+  fixture.store.fail('accelerators', Object.assign(new Error('accelerators collection timed out'), { code: 'ETIMEDOUT' }));
+  fixture.publish();
+  await opened;
+  assert.equal(fixture.session.ready, true);
+  assert.equal(displayed, true);
+  assert.equal(fixture.session.snapshotMessage().viewModel.sources.accelerators.state, 'error');
 });
 
 test('a long pause preserves the chart history when monitoring resumes', (t) => {
@@ -179,29 +353,69 @@ test('a long pause preserves the chart history when monitoring resumes', (t) => 
   const fixture = createSessionFixture();
   t.after(() => fixture.session.dispose());
   fixture.commit();
+  fixture.session.captureChartFrame(Date.now());
   now = 3000;
   fixture.commit();
+  fixture.session.captureChartFrame(Date.now());
   fixture.session.setPaused(true);
   now += 3600000;
   fixture.session.setPaused(false);
   fixture.commit();
-  assert.deepEqual(fixture.session.history.map((point) => point.t), [1000, 3000, 3603000]);
+  assert.deepEqual(fixture.session.history.filter(sample => sample.source === 'cpu').map(sample => sample.t), [1000, 3000, 3603000]);
+  assert.equal(fixture.session.history.filter(sample => sample.source === 'cpu').at(-1).gapBefore, true);
+});
+
+test('display-only settings retain the running chart clock and only interval edits restart it', t => {
+  let config = normalizeConfig({});
+  const fixture = createSessionFixture({ configStore:{ getCurrent:() => config } }); t.after(() => fixture.session.dispose());
+  fixture.commit(); fixture.session.start();
+  const timer = fixture.session.frameClock.timer, length = fixture.session.history.length;
+  config = normalizeConfig({ display:{ charts:false } }); fixture.session.updateConfig();
+  assert.equal(fixture.session.frameClock.timer, timer); assert.equal(fixture.session.history.length, length);
+  config = normalizeConfig({ refreshInterval:5 }); fixture.session.updateConfig();
+  assert.notEqual(fixture.session.frameClock.timer, timer); assert.equal(fixture.session.metricHistory.intervalMilliseconds, 5000);
+});
+
+test('an interval edit sends the new starting frame to live views and history together', t => {
+  let now=0, config=normalizeConfig({}); const messages=[];
+  t.mock.method(Date,'now',()=>now);
+  const fixture=createSessionFixture({configStore:{getCurrent:()=>config},onUpdate:session=>messages.push(session.snapshotMessage())});
+  t.after(()=>fixture.session.dispose()); fixture.commit(); fixture.session.start(); messages.length=0;
+  now=1000; config=normalizeConfig({refreshInterval:5}); fixture.session.updateConfig();
+  assert.equal(messages.length,1);
+  assert.deepEqual(messages.flatMap(message=>message.samples.filter(sample=>sample.source==='cpu').map(sample=>sample.t)),[1000]);
+  assert.deepEqual(fixture.session.history.filter(sample=>sample.source==='cpu').map(sample=>sample.t),[0,1000]);
+});
+
+test('an existing complete frame accepts early reconnect sources while a new list opening still waits', async t => {
+  const fixture = createSessionFixture({ remote: true, id: 'ssh:fixture' }); t.after(() => fixture.session.dispose());
+  await fixture.transport.connect(); fixture.commit(); assert.equal(fixture.session.hasInitialFrame, true);
+  fixture.session.setConnection('disconnected', new Error('lost')); await fixture.transport.connect();
+  let opened = false; const pending = fixture.session.waitForInitialSample().then(() => { opened = true; });
+  fixture.commit(['cpu']);
+  assert.equal(fixture.session.ready, false); assert.equal(fixture.session.snapshotMessage().status.canPresent, true);
+  assert.equal(fixture.session.snapshotMessage().connection.canPresent, true); assert.ok(fixture.session.snapshotMessage().viewModel);
+  await new Promise(setImmediate); assert.equal(opened, false);
+  fixture.commit(); await pending; assert.equal(opened, true);
 });
 
 test('real service completion publishes the complete first snapshot before the next scheduler tick', async (t) => {
   const files = {
     '/proc/stat': 'cpu 10 0 10 80 0 0 0 0\n',
+    '/proc/loadavg': '1 2 3 1/10 5\n',
     '/proc/meminfo': 'MemTotal: 1000 kB\nMemAvailable: 400 kB\n',
     '/proc/net/dev': 'Inter-| Receive | Transmit\nface | bytes\neth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n',
     '/proc/net/route': 'Iface Destination Gateway Flags\neth0 00000000 0 0003\n',
     '/proc/diskstats': '8 0 sda 0 0 10 0 0 0 20 0 0 0 0\n',
+    '/proc/self/mountinfo': ['/', '/data', '/nfs-one', '/nfs-two'].map((target, index) => `${index + 1} 0 8:0 / ${target} rw - ${index < 2 ? 'ext4' : 'nfs'} source rw`).join('\n'),
   };
   const mounts = ['/', '/data', '/nfs-one', '/nfs-two'].map((target, index) => ({ target, fstype: index < 2 ? 'ext4' : 'nfs', size: 1000, used: 400, avail: 600, 'use%': '40%' }));
+  let cpuReads = 0;
   const session = new MonitorSession({
     configStore: { getCurrent: () => normalizeConfig({}) }, language: 'en',
     serviceOptions: {
-      fileReader: { readFile: async (file) => files[file] },
-      systemInfo: { cpuInfo: async () => ({ coreCount: 4, loadAverage: [1, 2, 3] }), totalMemoryBytes: async () => 1024000 },
+      fileReader: { readFile: async (file) => file === '/proc/stat' ? `cpu ${++cpuReads * 10} 0 10 80 0 0 0 0\ncpu0 1 0 1 8\ncpu1 1 0 1 8\ncpu2 1 0 1 8\ncpu3 1 0 1 8\n` : files[file] },
+      systemInfo: { coreCount: async () => 4, totalMemoryBytes: async () => 1024000 },
       commandRunner: { dispose() {}, async execFile(command) {
         if (command === 'nvidia-smi') throw Object.assign(new Error('no GPU'), { code: 'ENOENT' });
         if (command === 'findmnt') return { stdout: JSON.stringify({ filesystems: mounts }) };
@@ -212,7 +426,14 @@ test('real service completion publishes the complete first snapshot before the n
   t.after(() => session.dispose());
   session.start();
   await new Promise(setImmediate);
+  assert.equal(session.ready, false);
+  assert.equal(session.snapshotMessage().viewModel, null);
+  await session.waitForInitialSample();
   assert.equal(session.ready, true);
+  assert.equal(cpuReads, 2);
+  assert.ok(Number.isFinite(session.model.performance.cpu.usagePercent));
+  assert.ok(Number.isFinite(session.model.performance.network.receiveBytesPerSecond));
+  assert.ok(Number.isFinite(session.model.performance.diskIo.readBytesPerSecond));
   assert.deepEqual(session.model.performance.disks.map((disk) => disk.mount), ['/', '/data', '/nfs-one', '/nfs-two']);
-  assert.equal(session.history.length, 1);
+  assert.ok(session.history.length > 0);
 });

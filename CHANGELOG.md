@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.5.3 — Unreleased
+
+- Add Traditional Chinese support across the monitor, extension settings, and documentation.
+- Add configurable SSH connection, standard collection, and extended collection timeouts, plus a per-server SSH connection pool limit of 1–8 connections.
+- Extend the refresh interval range to 1–60 seconds. Disk capacity queries respect the configured refresh interval and remain at least 10 seconds apart.
+- Reduce process-list transfer size by selecting the top 100 processes by CPU, RAM, and total GPU memory on the monitored host, then merging them into at most 300 unique candidates. Each view sorts these candidates locally and displays up to 100 results. Search is limited to the returned candidates.
+- Reduce SSH collection overhead by combining CPU, memory, network, and disk I/O reads into one request.
+- Stop collecting metrics that are disabled in both the performance panel and the applicable status bar. Disabling all GPU displays also hides GPU information and sorting in the process list.
+- Update displayed metrics together at the configured refresh interval using the latest available snapshot.
+- Allow monitor views to open when some initial metrics fail, showing the available metrics alongside collection errors.
+- Smooth chart scrolling with delayed samples, preserve gaps during manual pauses, and reconnect valid points after automatic recovery. Keep GPU history associated with the same physical GPU when card indices change.
+- Determine idle GPUs by the absence of compute processes instead of utilization thresholds, consistently across cards, the picker, and the status bar.
+- Retain available GPU measurements when process or ownership queries fail, and show an unknown idle count when occupancy information is unavailable.
+- Apply disk exclusions before capacity queries so excluded NFS mounts cannot block those queries. Refresh the selected mounts when filter settings change.
+- Keep disk I/O visible when no mounts are displayed and show read and write values in an information popover.
+- Improve SSH traffic matching for nonstandard ports and loopback connections, and preserve valid rate baselines across temporary query failures.
+- Correct CPU utilization on hosts running virtual machines by counting guest CPU time once.
+- Preserve valid measurements when a query omits individual values and show placeholders for unavailable readings.
+- Fix settings inputs losing focus during automatic saves. Save text fields on blur and switches or selections immediately, preserve independent edits from other views, and provide a retry action for failed saves.
+- Support automatically expanding multiline disk exclusion fields and keep the settings dialog open when its backdrop is clicked.
+- Collapse toolbar actions progressively into an overflow menu based on the available width.
+- Apply server-side command time limits through the system `timeout` tool when available.
+- Keep collection errors visible during a manual retry, with a collecting indicator until results arrive.
+- Report SSH configuration permission and I/O errors instead of displaying an empty server list.
+- Apply monitor settings at User level across windows and automatically migrate renamed settings, including `showVirtualFs` to `hideVirtualFs`.
+
 ## 1.5.2 — 2026-09-29
 
 - Update GPU ownership borders when the current user's processes start or finish.

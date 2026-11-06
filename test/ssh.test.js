@@ -18,6 +18,126 @@ async function waitFor(check) {
   assert.fail('Timed out waiting for SSH lifecycle');
 }
 
+test('SSH stdin roundtrips large data and remains usable after early stdin exit', async () => {
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    const input = '中文\0\n'.repeat(80000);
+    assert.equal((await transport.execFile('cat', [], { input, timeoutMilliseconds: 5000 })).stdout, input);
+    assert.equal((await transport.execFile('true', [], { input })).stdout, '');
+    assert.equal((await transport.execFile('printf', ['next'])).stdout, 'next');
+  } finally { transport.dispose(); }
+});
+
+test('SSH dispatch passes the remaining budget after queueing', async () => {
+  const frames = [];
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false, maxConnections: 1,
+    spawnProcess: () => {
+      const child = spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] });
+      const write = child.stdin.write.bind(child.stdin);
+      child.stdin.write = (text, ...args) => { if (text.startsWith('RUN ')) frames.push(text); return write(text, ...args); };
+      return child;
+    },
+  });
+  try {
+    await transport.connect();
+    await Promise.all([transport.execFile('sleep', ['0.1']), transport.execFile('true', [], { timeoutMilliseconds: 1000 })]);
+    const remaining = Number(frames[1].trim().split(' ')[3]);
+    assert.ok(remaining > 0 && remaining < 0.96, String(remaining));
+  } finally { transport.dispose(); }
+});
+
+test('remote timeout reports a timeout and leaves the same channel available', async () => {
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    await transport.connect();
+    const channel = [...transport.channels][0];
+    if (!channel.timeoutAvailable) return;
+    await assert.rejects(channel.execFile(50, 'sleep', ['1'], 1000, false, undefined, 50), { code: 'ETIMEDOUT' });
+    assert.equal(channel.closed, false);
+    assert.equal((await channel.execFile(51, 'printf', ['alive'], 1000)).stdout, 'alive');
+  } finally { transport.dispose(); }
+});
+
+test('a timeout before the process START header remains a timeout and preserves the channel', async () => {
+  const channel = new SshChannel({ onClose() { assert.fail('A valid timeout response must not close the channel'); } });
+  channel.ready = true; channel.timeoutAvailable = true; channel.child = { stdin: { write() {} } };
+  const result = assert.rejects(channel.execFile(1, 'sleep', ['1'], 1000, false, undefined, 1), { code: 'ETIMEDOUT' });
+  for (const char of '\n' + channel.prefix + 'END 1 124\n') channel.receive('stdout', char);
+  channel.receive('stderr', '\n' + channel.prefix + 'END 1 124\n');
+  await result; assert.equal(channel.closed, false); assert.equal(channel.request, null);
+});
+
+test('an incompatible timeout falls back to local deadlines and warns once per server session', async () => {
+  const warnings = [];
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false, onWarning: key => warnings.push(key),
+    spawnProcess: () => spawn('sh', ['-c', 'timeout() { return 143; }; . /dev/stdin'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    await transport.connect();
+    assert.equal([...transport.channels][0].timeoutAvailable, false);
+    await Promise.all(Array.from({ length: 4 }, () => transport.execFile('sleep', ['0.05'])));
+    assert.deepEqual(warnings, ['remoteTimeoutUnavailable']);
+    assert.equal((await transport.execFile('printf', ['ok'])).stdout, 'ok');
+  } finally { transport.dispose(); }
+});
+
+test('remote timeout terminates a signal-ignoring test command after its tool-managed grace period', async () => {
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    await transport.connect(); const channel = [...transport.channels][0];
+    if (!channel.timeoutAvailable) return;
+    await assert.rejects(channel.execFile(60, 'sh', ['-c', 'trap "" TERM; exec sleep 3'], 1000, false, undefined, 100), { code: 'ETIMEDOUT' });
+    assert.equal(channel.closed, false);
+    assert.equal((await channel.execFile(61, 'true', [], 1000)).stdout, '');
+  } finally { transport.dispose(); }
+});
+
+test('a large disk scan leaves SSH pool capacity available for CPU collection', async () => {
+  const { DiskTopologyCollector } = require('../src/collectors/disk-topology-collector');
+  const { ResourceCollector } = require('../src/collectors/resource-collector');
+  const { CollectorRunner } = require('../src/core/collector-runner');
+  const { SnapshotStore } = require('../src/core/snapshot-store');
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  let diskCommands = 0;
+  try {
+    await Promise.all(Array.from({ length: 4 }, () => transport.execFile('true')));
+    const disk = new DiskTopologyCollector({
+      fileReader: { readFile: async () => Array.from({ length: 35 }, (_, index) =>
+        `${index + 1} 0 8:0 / /disk${index} rw - ext4 source rw`).join('\n') },
+      getDiskConfig: () => ({ mountFilter: 'all' }),
+      commandRunner: { async execFile(command, args, options) {
+        diskCommands++;
+        assert.equal(command, 'findmnt');
+        const mounts = require('../src/domain/disk').parseMountInfo(options.input, { mountFilter: 'all' });
+        assert.equal(mounts.length, 35);
+        const output = JSON.stringify({ filesystems: mounts.map(mount => ({ target: mount.mountPath, fstype: mount.fileSystemType, size: 100, used: 40, avail: 60, 'use%': '40%' })) });
+        return transport.execFile('sh', ['-c', 'sleep 0.1; printf "%s" "$1"', 'sh', output], { timeoutMilliseconds: 2000 });
+      } },
+    });
+    const disks = disk.collect();
+    await new Promise(setImmediate);
+    const store = new SnapshotStore();
+    let cpuReads = 0;
+    const reader = { readFile: (file) => transport.execFile('printf', ['%s', file === '/proc/stat'
+      ? `cpu ${++cpuReads * 10} 2 3 4 5 6 7 8\ncpu0 1 2 3 4 5 6 7 8\n` : '1.0 2.0 3.0 1/100 123']).then(({ stdout }) => stdout) };
+    const cpu = new CollectorRunner({ key: 'resources', grouped:true, resultKeys:['cpu'], collector: new ResourceCollector({ fileReader:reader,keys:['cpu'] }),
+      snapshotStore: store, cadenceMilliseconds: 2000, timeoutMilliseconds: 250 });
+    await cpu.run();
+    const values = await disks;
+    assert.equal(store.read().cpu.status, 'fresh');
+    assert.equal(values.length, 35);
+    assert.equal(diskCommands, 1);
+  } finally { transport.dispose(); }
+});
+
 test('SSH pool performs concurrent requests without any temporary directory or file changes', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sysmonitor-pool-test-'));
   await fs.writeFile(path.join(root, 'keep'), 'unchanged');
@@ -62,6 +182,25 @@ test('SSH pool grows on demand to its limit and reuses established channels', as
       assert.equal(starts, 4);
       assert.equal(transport.channels.size, 4);
     }
+  } finally { transport.dispose(); }
+});
+
+test('changing the SSH pool limit retires idle channels and lets active commands finish', async () => {
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    const commands = Array.from({ length: 4 }, () => transport.execFile('sh', ['-c', 'sleep 0.2; printf done']));
+    await waitFor(() => [...transport.channels].filter(channel => channel.request).length === 4);
+    transport.setMaxConnections(1);
+    assert.deepEqual(await Promise.all(commands), Array(4).fill({ stdout: 'done', stderr: '' }));
+    await waitFor(() => transport.channels.size === 1);
+    assert.equal(transport.ready, true);
+    await Promise.all(Array.from({ length: 3 }, () => transport.execFile('true')));
+    assert.equal(transport.channels.size, 1);
+    transport.setMaxConnections(3);
+    await Promise.all(Array.from({ length: 3 }, () => transport.execFile('sleep', ['0.1'])));
+    assert.equal(transport.channels.size, 3);
   } finally { transport.dispose(); }
 });
 

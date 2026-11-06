@@ -58,17 +58,20 @@ class ServerDirectory {
       const currentError = (this.hostErrors.get(host) || {}).message || (device && (device.error || device.loadError)) || null;
       const state = pending || (currentError ? device && device.state === 'connected' ? 'error' : 'disconnected' : device ? device.state : 'idle');
       const error = state === 'disconnected' || state === 'error' ? currentError : null;
-      const snapshot = device && device.service.readSnapshot();
+      const model = device && device.model;
+      const sources = model && model.sources;
       const metrics = [];
-      if (state === 'connected' && snapshot && device.model) {
-        const performance = device.model.performance;
-        if (snapshot.cpu.status === 'fresh') metrics.push(`CPU ${performance.cpu.usagePercent}%`);
-        if (snapshot.memory.status === 'fresh') metrics.push(`RAM ${performance.memory.usagePercent}%`);
-        if (snapshot.accelerators.status === 'fresh' && performance.gpus.length) {
-          metrics.push(`GPU ${performance.gpus.filter((gpu) => gpu.isIdle).length}/${performance.gpus.length}`);
+      const summaryLoading = state === 'connected' && (!sources || ['cpu', 'memory', 'accelerators'].some(key => sources[key].state === 'loading'));
+      if (state === 'connected' && model) {
+        const performance = model.performance;
+        if (sources.cpu.state === 'ready' && Number.isFinite(performance.cpu.usagePercent)) metrics.push(`CPU ${performance.cpu.usagePercent}%`);
+        if (sources.memory.state === 'ready' && Number.isFinite(performance.memory.usagePercent)) metrics.push(`RAM ${performance.memory.usagePercent}%`);
+        if (sources.accelerators.state === 'ready' && performance.gpus.length) {
+          const idleCount = performance.gpus.some(gpu => gpu.availability === 'unknown') ? '--' : performance.gpus.filter(gpu => gpu.isIdle).length;
+          metrics.push(`GPU ${idleCount}/${performance.gpus.length}`);
         }
       }
-      return { host, state, error, busy: !!pending, metrics };
+      return { host, state, error, busy: !!pending, metrics, summaryLoading };
     });
   }
 

@@ -8,10 +8,10 @@ const projectRoot = path.resolve(__dirname, '..');
 const releaseDirectory = path.join(projectRoot, 'release');
 
 fs.mkdirSync(releaseDirectory, { recursive: true });
-const result = spawnSync('vsce', ['package', '--out', path.join('release', `${name}-${version}.vsix`)], {
+const output = process.argv[2] || path.join('release', `${name}-${version}.vsix`);
+const result = spawnSync('vsce', ['package', '--out', output], {
   cwd: projectRoot,
   stdio: 'inherit',
-  shell: process.platform === 'win32',
 });
 if (result.error) process.stderr.write(`${result.error.message}\n`);
 process.exit(result.status ?? 1);

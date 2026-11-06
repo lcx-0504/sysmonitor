@@ -26,12 +26,12 @@ test('English and Chinese package localization expose the same keys', () => {
   assert.deepEqual(Object.keys(chinese).sort(), Object.keys(english).sort());
   assert.equal(english.cmdEditorMoveWindow, english.cmdOpenWindow);
   assert.equal(chinese.cmdEditorMoveWindow, chinese.cmdOpenWindow);
-  const serverList = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview-servers.js'), 'utf8');
-  assert.match(serverList, /floating\.title = zh \? '在新窗口打开' : 'Open in New Window'/);
-  assert.match(serverList, /remote\.title = zh \? '打开远程窗口' : 'Open Remote Window'/);
+  const serverList = fs.readFileSync(path.join(projectRoot, 'src/view/assets/servers.mjs'), 'utf8');
+  assert.match(serverList, /floating\.title = tr\("openInNewWindow"\)/);
+  assert.match(serverList, /remote\.title = tr\("openRemoteWindow"\)/);
   assert.equal(chinese.cmdCopyToWindow, '系统监控: 在新窗口打开');
   assert.equal(chinese.cmdOpenRemoteWindow, '系统监控: 打开远程窗口');
-  const settings = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview-settings.js'), 'utf8');
+  const settings = fs.readFileSync(path.join(projectRoot, 'src/i18n/catalogs.js'), 'utf8');
   assert.match(settings, /新建 \/ 切换编辑器视图/);
   assert.match(settings, /新建 \/ 移动到新窗口/);
   assert.match(settings, /打开 SSH 终端/);
@@ -70,6 +70,7 @@ test('public configuration defaults remain characterized', () => {
   });
   assert.deepEqual(properties['sysmonitor.disk'].default, {
     mountFilter: 'default',
+    hideVirtualFs: true,
     hideParentMounts: true,
   });
   assert.deepEqual(properties['sysmonitor.display'].default, {
@@ -124,9 +125,10 @@ test('development files are excluded from VSIX and runtime assets exist', () => 
 test('Webview resets topology keys on empty GPU results and restores translucent zero-percent tags', () => {
   const script = WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(projectRoot, 'src/view/assets', fileName), 'utf8')).join('\n');
   const style = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview.css'), 'utf8');
-  assert.match(script, /gpuBody\.innerHTML = '';\s*renderedAcceleratorKeys = \[\];/);
+  assert.match(script, /gpuBody\.innerHTML = '';\s*state\.ui\.renderedAcceleratorKeys = \[\];/);
   assert.match(script, /g\.mappingStatus === 'unmatched' \? ' tag-unknown' : ' ' \+ tagColorClass\(pct\)/);
   assert.match(style, /\.gpu-tag\.tag-accent[^}]*transparent/);
-  assert.match(script, /function sendToExtension\(/);
+  const bridge = fs.readFileSync(path.join(projectRoot, 'src/view/assets/ui.mjs'), 'utf8');
+  assert.match(bridge, /function sendToExtension\(/);
   assert.doesNotMatch(script, /function postMessage\(/);
 });

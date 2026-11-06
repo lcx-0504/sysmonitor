@@ -8,7 +8,7 @@ function listJavaScriptFiles(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const absolutePath = path.join(directory, entry.name);
     if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : listJavaScriptFiles(absolutePath);
-    return entry.isFile() && entry.name.endsWith('.js') ? [absolutePath] : [];
+    return entry.isFile() && /\.(?:js|mjs)$/.test(entry.name) ? [absolutePath] : [];
   });
 }
 const sourceFiles = [

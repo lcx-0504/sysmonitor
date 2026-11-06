@@ -1,7 +1,15 @@
 'use strict';
 
+const REFRESH_SETTING = Object.freeze({ default: 2, minimum: 1, maximum: 60 });
+const COLLECTION_FIELDS = Object.freeze([
+  { key: 'connection', label: 'connectionTimeout', help: 'connectionTimeoutInfo', default: 15, minimum: 5, maximum: 120 },
+  { key: 'standard', label: 'standardTimeout', help: 'standardTimeoutInfo', default: 10, minimum: 5, maximum: 120 },
+  { key: 'extended', label: 'extendedTimeout', help: 'extendedTimeoutInfo', default: 30, minimum: 5, maximum: 120 },
+  { key: 'sshPoolSize', label: 'sshPoolSize', help: 'sshPoolInfo', default: 4, minimum: 1, maximum: 8 },
+].map(Object.freeze));
 const DEFAULT_CONFIG = Object.freeze({
-  refreshInterval: 2,
+  refreshInterval: REFRESH_SETTING.default,
+  timeouts: Object.freeze({ enabled: false, ...Object.fromEntries(COLLECTION_FIELDS.map(field => [field.key, field.default])) }),
   servers: Object.freeze({
     visibleOnly: false,
     restoreTabs: true,
@@ -30,6 +38,7 @@ const DEFAULT_CONFIG = Object.freeze({
   }),
   disk: Object.freeze({
     mountFilter: 'default',
+    hideVirtualFs: true,
     hideParentMounts: true,
   }),
   display: Object.freeze({
@@ -43,4 +52,4 @@ const DEFAULT_CONFIG = Object.freeze({
   }),
 });
 
-module.exports = { DEFAULT_CONFIG };
+module.exports = { DEFAULT_CONFIG, COLLECTION_FIELDS, REFRESH_SETTING };

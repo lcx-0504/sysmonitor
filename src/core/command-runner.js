@@ -16,6 +16,7 @@ class CommandRunner {
     try { options = executionOptions(options); } catch (error) { return Promise.reject(error); }
     const timeout = Number.isFinite(options.timeoutMilliseconds) ? options.timeoutMilliseconds : this.defaultTimeoutMilliseconds;
     return new Promise((resolve, reject) => {
+      let inputError;
       const child = execFile(command, args, {
         timeout,
         maxBuffer: options.maxBufferBytes || this.maxBufferBytes,
@@ -33,8 +34,11 @@ class CommandRunner {
           reject(error);
           return;
         }
+        if (inputError) { reject(inputError); return; }
         resolve({ stdout, stderr });
       });
+      child.stdin.on('error', error => { if (error.code !== 'EPIPE') inputError = error; });
+      child.stdin.end(options.input);
       this.children.add(child);
     });
   }

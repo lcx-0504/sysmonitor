@@ -3,8 +3,8 @@
 function formatStatusBarText(config, viewModel, currentUserNativeIndices = []) {
   if (config.barEnabled === false) return '';
   const parts = [];
-  if (config.cpu && viewModel.cpu) parts.push(`$(dashboard) ${viewModel.cpu.usagePercent}%`);
-  if (config.ram && viewModel.memory) parts.push(`$(server) ${viewModel.memory.usagePercent}%`);
+  if (config.cpu && viewModel.cpu && viewModel.cpu.available !== false) parts.push(`$(dashboard) ${Number.isFinite(viewModel.cpu.usagePercent) ? viewModel.cpu.usagePercent + '%' : '—'}`);
+  if (config.ram && viewModel.memory && viewModel.memory.available !== false) parts.push(`$(server) ${Number.isFinite(viewModel.memory.usagePercent) ? viewModel.memory.usagePercent + '%' : '—'}`);
   const diskRoot = viewModel.disks && viewModel.disks.find((disk) => disk.mount === '/');
   if ((config.disk || (config.diskIO && config.diskIO !== 'off')) && (diskRoot || viewModel.diskIo)) {
     const diskText = config.disk && diskRoot ? `${diskRoot.pct}%` : '';
@@ -32,7 +32,8 @@ function formatStatusBarText(config, viewModel, currentUserNativeIndices = []) {
     const gpu = config.gpu; let hasIcon = false;
     if (gpu.summary) {
       const idle = viewModel.gpus.filter((device) => device.isIdle === true);
-      let text = `$(circuit-board) ${idle.length}/${viewModel.gpus.length}`;
+      const idleCount = viewModel.gpus.some(device => device.availability === 'unknown') ? '--' : idle.length;
+      let text = `$(circuit-board) ${idleCount}/${viewModel.gpus.length}`;
       if (gpu.showIdleIds && idle.length) text += ` (${idle.map((device) => device.idx).join(',')})`;
       parts.push(text); hasIcon = true;
     }
@@ -43,9 +44,11 @@ function formatStatusBarText(config, viewModel, currentUserNativeIndices = []) {
     else if (gpu.mode === 'my') indices = currentUserNativeIndices;
     const details = indices.sort((left, right) => left - right).map((index) => viewModel.gpus.find((device) => device.idx === index)).filter(Boolean).filter((device) => !(gpu.skipIdle && device.isIdle)).map((device) => {
       const memoryPercent = device.memPct;
-      if (gpu.metric === 'util') return `#${device.idx} ${device.util || 0}%`;
-      if (gpu.metric === 'vram') return `#${device.idx} ${memoryPercent}%V`;
-      return `#${device.idx} ${device.util || 0}%/${memoryPercent}%V`;
+      const util = Number.isFinite(device.util) ? device.util + '%' : '—';
+      const memory = Number.isFinite(memoryPercent) ? memoryPercent + '%V' : '—';
+      if (gpu.metric === 'util') return `#${device.idx} ${util}`;
+      if (gpu.metric === 'vram') return `#${device.idx} ${memory}`;
+      return `#${device.idx} ${util}/${memory}`;
     });
     if (details.length) parts.push(`${hasIcon ? '' : '$(circuit-board) '}${details.join(' ')}`);
   }

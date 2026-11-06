@@ -3,11 +3,12 @@
 const { MonitorSession } = require('./monitor-session');
 const { SshTransport } = require('../ssh/ssh-transport');
 const { RemoteSystemInfo } = require('../ssh/remote-system-info');
+const { effectiveTimeouts } = require('./collection-policy');
 
 class DeviceMonitorManager {
   constructor({ configStore, language, localLinux, configFile = null, onUpdate = () => {}, onLog = () => {},
-    onResidualProcesses = () => {}, onPauseChange = () => {} }) {
-    Object.assign(this, { configStore, language, localLinux, configFile, onUpdate, onLog, onResidualProcesses, onPauseChange });
+    onResidualProcesses = () => {}, onWarning = () => {}, onPauseChange = () => {} }) {
+    Object.assign(this, { configStore, language, localLinux, configFile, onUpdate, onLog, onResidualProcesses, onWarning, onPauseChange });
     this.devices = new Map();
     this.visibleIds = new Set();
     this.preparingIds = new Set();
@@ -20,7 +21,10 @@ class DeviceMonitorManager {
     const remote = id !== 'local';
     const host = remote ? id.slice(4) : null;
     const transport = remote ? new SshTransport({ host, configFile: this.configFile,
+      connectionTimeoutMilliseconds: effectiveTimeouts(this.configStore.getCurrent()).connection * 1000,
+      maxConnections: effectiveTimeouts(this.configStore.getCurrent()).sshPoolSize,
       onLog: (message) => this.onLog(id + ': ' + message),
+      onWarning: (key) => this.onWarning(host, key),
       onResidualProcesses: (pids, acknowledge) => {
         this.setPaused(true);
         return this.onResidualProcesses(host, pids, acknowledge);
@@ -36,9 +40,11 @@ class DeviceMonitorManager {
       onUpdate: (session) => this.onUpdate(id, session),
       onLog: (message) => this.onLog(id + ': ' + message),
       serviceOptions: {
+        statusBarAvailable: !remote,
         isSsh: remote, sshClientIp: '',
         ...(remote ? {
           commandRunner: transport, fileReader: transport,
+          resourceCommandRunner: transport,
           sshConnectionInfo: () => transport.sshConnections,
           systemInfo: new RemoteSystemInfo({ fileReader: transport, commandRunner: transport }),
         } : {}),

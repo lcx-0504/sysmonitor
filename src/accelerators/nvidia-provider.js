@@ -1,5 +1,4 @@
 'use strict';
-const fs = require('node:fs/promises');
 const { executionOptions } = require('../core/collection-context');
 
 const CARD_QUERY = ['--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,gpu_uuid', '--format=csv,noheader,nounits'];
@@ -7,8 +6,10 @@ const PROCESS_QUERY = ['--query-compute-apps=pid,gpu_uuid,used_memory', '--forma
 
 function parseNvidiaCards(raw) {
   return raw.trim().split('\n').filter(Boolean).map((line) => {
-    const [index, name, utilization, memoryUsed, memoryTotal, temperature, powerDraw, powerLimit, uuid] = line.split(',').map((value) => value.trim());
-    const toBytes = (mebibytes) => Number.parseInt(mebibytes, 10) * 1024 * 1024;
+    const fields = line.split(',').map((value) => value.trim());
+    const [index, name, utilization, memoryUsed, memoryTotal, temperature, powerDraw, powerLimit, uuid] = fields;
+    if (fields.length !== 9 || !Number.isInteger(Number(index)) || !name || !uuid || uuid === 'N/A') throw Object.assign(new Error('Incomplete GPU query output'), { code: 'EINCOMPLETE' });
+    const toBytes = (mebibytes) => Number.isFinite(Number.parseInt(mebibytes, 10)) ? Number.parseInt(mebibytes, 10) * 1024 * 1024 : null;
     return {
       provider: 'nvidia', deviceKey: `nvidia:${uuid}`, providerDeviceId: uuid, nativeIndex: Number.parseInt(index, 10), name,
       utilizationPercent: Number.isFinite(Number.parseInt(utilization, 10)) ? Number.parseInt(utilization, 10) : null,
@@ -24,58 +25,83 @@ function parseNvidiaProcesses(raw, devicesById) {
   const usagesByPid = new Map();
   for (const line of raw.trim().split('\n').filter(Boolean)) {
     const [pidRaw, uuid, memoryRaw] = line.split(',').map((value) => value.trim());
-    const pid = Number.parseInt(pidRaw, 10); if (!pid) continue;
+    const pid = Number(pidRaw);
+    if (!Number.isInteger(pid) || pid <= 0 || !uuid || memoryRaw === undefined) throw Object.assign(new Error('Incomplete GPU process query output'), { code: 'EINCOMPLETE' });
     const device = devicesById.get(uuid);
-    const usage = { pid, deviceKey: device ? device.deviceKey : null, nativeIndex: device ? device.nativeIndex : null, providerDeviceId: uuid, memoryUsedBytes: (Number.parseInt(memoryRaw, 10) || 0) * 1024 * 1024, memoryTotalBytes: device ? device.memory.totalBytes : null, mappingStatus: device ? 'matched' : 'unmatched' };
+    const usage = { pid, deviceKey: device ? device.deviceKey : null, nativeIndex: device ? device.nativeIndex : null, providerDeviceId: uuid, memoryUsedBytes: Number.isFinite(Number.parseInt(memoryRaw, 10)) ? Number.parseInt(memoryRaw, 10) * 1024 * 1024 : null, memoryTotalBytes: device ? device.memory.totalBytes : null, mappingStatus: device ? 'matched' : 'unmatched' };
     if (!usagesByPid.has(pid)) usagesByPid.set(pid, []);
     usagesByPid.get(pid).push(usage);
   }
   return usagesByPid;
 }
 
+const { processStartTime } = require('../domain/linux-parsers');
+
 class NvidiaProvider {
-  constructor({ commandRunner, fileReader = fs, userId = typeof process.getuid === 'function' ? process.getuid() : null, systemInfo = null }) { this.commandRunner = commandRunner; this.fileReader = fileReader; this.userId = userId; this.systemInfo = systemInfo; this.id = 'nvidia'; this.clockTicksPerSecondPromise = null; }
-  async readProcessKeys(pids) {
-    if (!this.clockTicksPerSecondPromise) this.clockTicksPerSecondPromise = this.commandRunner.execFile('getconf', ['CLK_TCK'], { timeoutMilliseconds: 2000 }).then(({ stdout }) => Number.parseInt(stdout, 10) || 100).catch(() => {
-      this.clockTicksPerSecondPromise = null;
-      executionOptions();
-      return 100;
-    });
-    const [clockTicksPerSecond, procStat] = await Promise.all([this.clockTicksPerSecondPromise, this.fileReader.readFile('/proc/stat', 'utf8')]);
-    const bootTimeMatch = procStat.match(/^btime\s+(\d+)/m); if (!bootTimeMatch) return new Map();
-    const bootTimeSeconds = Number(bootTimeMatch[1]); const keys = new Map();
-    await Promise.all(pids.map(async (pid) => {
-      try {
-        const stat = await this.fileReader.readFile(`/proc/${pid}/stat`, 'utf8');
-        const fields = stat.slice(stat.lastIndexOf(') ') + 2).trim().split(/\s+/); const startTimeTicks = Number(fields[19]);
-        // ps lstart has one-second precision; use the same precision on both sides
-        // when matching a GPU process to the process table.
-        if (Number.isFinite(startTimeTicks)) keys.set(pid, `${pid}:${Math.floor(bootTimeSeconds + startTimeTicks / clockTicksPerSecond) * 1000}`);
-      } catch { executionOptions(); /* process exited */ }
-    }));
-    return keys;
+  constructor({ commandRunner, userId = typeof process.getuid === 'function' ? process.getuid() : null, systemInfo = null }) {
+    Object.assign(this, { commandRunner, userId, systemInfo });
+    this.id = 'nvidia';
   }
-  async collect() {
-    const { stdout: cardOutput } = await this.commandRunner.execFile('nvidia-smi', CARD_QUERY, { timeoutMilliseconds: 15000 });
-    const devices = parseNvidiaCards(cardOutput);
-    if (devices.length === 0) return { devices: [], usagesByPid: new Map(), currentUserDeviceKeys: [] };
-    const devicesById = new Map(devices.map((device) => [device.providerDeviceId, device]));
-    const { stdout: processOutput } = await this.commandRunner.execFile('nvidia-smi', PROCESS_QUERY, { timeoutMilliseconds: 15000 });
-    const usagesByPid = parseNvidiaProcesses(processOutput, devicesById);
-    const processKeys = await this.readProcessKeys([...usagesByPid.keys()]);
-    for (const [pid, usages] of usagesByPid) for (const usage of usages) usage.processKey = processKeys.get(pid) || null;
-    const currentUserDeviceKeys = new Set();
-    const userId = this.systemInfo ? await this.systemInfo.userId() : this.userId;
-    if (userId !== null && Number.isFinite(userId)) {
-      await Promise.all([...usagesByPid.entries()].map(async ([pid, usages]) => {
-        try {
-          const status = await this.fileReader.readFile(`/proc/${pid}/status`, 'utf8');
-          const match = status.match(/^Uid:\s+(\d+)/m);
-          if (match && Number(match[1]) === userId) for (const usage of usages) if (usage.deviceKey) currentUserDeviceKeys.add(usage.deviceKey);
-        } catch { executionOptions(); /* process exited */ }
-      }));
+
+  async readProcessIdentities(pids) {
+    let stdout;
+    try {
+      ({ stdout } = await this.commandRunner.execFile('ps', ['-p', pids.join(','), '-o', 'pid=,uid=,user:32=,lstart='], executionOptions()));
+    } catch (error) {
+      if ((error.exitCode === 1 || error.code === 1) && !error.stderr?.trim()) return new Map();
+      throw error;
     }
-    return { devices, usagesByPid, currentUserDeviceKeys: [...currentUserDeviceKeys] };
+    const identities = new Map();
+    for (const line of stdout.trim().split('\n').filter(Boolean)) {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
+      if (!match) throw Object.assign(new Error('Incomplete GPU process identity output'), { code: 'EINCOMPLETE' });
+      const startedAt = processStartTime(match[4]);
+      if (!Number.isFinite(startedAt)) throw Object.assign(new Error('Incomplete GPU process start time'), { code: 'EINCOMPLETE' });
+      const pid = Number(match[1]);
+      identities.set(pid, { processKey: pid + ':' + startedAt, userId: Number(match[2]), userName: match[3] });
+    }
+    return identities;
+  }
+
+  async collect({ onPartial = () => {} } = {}) {
+    const { stdout: cardOutput } = await this.commandRunner.execFile('nvidia-smi', CARD_QUERY, executionOptions());
+    const devices = parseNvidiaCards(cardOutput);
+    const cards = { devices, usagesByPid: new Map(), currentUserDeviceKeys: [], occupancyKnown: false, sampledAt: Date.now() };
+    if (!devices.length) return { ...cards, occupancyKnown: true };
+    onPartial({ value: cards, failureCode: 'GPU_OCCUPANCY_UNAVAILABLE' });
+    const devicesById = new Map(devices.map(device => [device.providerDeviceId, device]));
+    let usagesByPid;
+    try {
+      const { stdout } = await this.commandRunner.execFile('nvidia-smi', PROCESS_QUERY, executionOptions());
+      usagesByPid = parseNvidiaProcesses(stdout, devicesById);
+    } catch (error) {
+      return { ...cards, collectionErrors: [{ code: 'GPU_OCCUPANCY_UNAVAILABLE', message: error.message }] };
+    }
+    for (const usages of usagesByPid.values()) for (const usage of usages) usage.identityKnown = false;
+    const occupied = { ...cards, usagesByPid, occupancyKnown: true };
+    if (!usagesByPid.size) return occupied;
+    onPartial({ value: occupied, failureCode: 'GPU_IDENTITY_UNAVAILABLE' });
+    try {
+      const identityResults = await Promise.allSettled([
+        this.readProcessIdentities([...usagesByPid.keys()]),
+        this.systemInfo ? this.systemInfo.userId() : this.userId,
+      ]);
+      const failure = identityResults.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
+      const [identities, userId] = identityResults.map(result => result.value);
+      const currentUserDeviceKeys = new Set();
+      const identifiedUsages = new Map();
+      for (const [pid, usages] of usagesByPid) {
+        const identity = identities.get(pid);
+        identifiedUsages.set(pid, usages.map(usage => {
+          if (identity && identity.userId === userId && usage.deviceKey) currentUserDeviceKeys.add(usage.deviceKey);
+          return { ...usage, identityKnown: !!identity, processKey: identity?.processKey || null, userName: identity?.userName || null };
+        }));
+      }
+      return { ...occupied, usagesByPid: identifiedUsages, currentUserDeviceKeys: [...currentUserDeviceKeys] };
+    } catch (error) {
+      return { ...occupied, collectionErrors: [{ code: 'GPU_IDENTITY_UNAVAILABLE', message: error.message }] };
+    }
   }
 }
 module.exports = { NvidiaProvider, parseNvidiaCards, parseNvidiaProcesses };

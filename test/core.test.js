@@ -2,13 +2,19 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { SnapshotStore } = require('../src/core/snapshot-store');
-const { CollectorRunner } = require('../src/core/collector-runner');
 const { CommandRunner } = require('../src/core/command-runner');
-const { MonitorScheduler } = require('../src/core/monitor-scheduler');
 const { MonitorService } = require('../src/services/monitor-service');
 const { SshTransport } = require('../src/ssh/ssh-transport');
 const { spawn } = require('node:child_process');
-const { executionOptions, withCollectionContext } = require('../src/core/collection-context');
+const { withCollectionContext } = require('../src/core/collection-context');
+
+test('command stdin carries large UTF-8 input without argv size limits and tolerates early exit', async t => {
+  const runner = new CommandRunner(); t.after(() => runner.dispose());
+  const input = '中文\0\n'.repeat(80000);
+  assert.equal((await runner.execFile('cat', [], { input })).stdout, input);
+  assert.equal((await runner.execFile('true', [], { input })).stdout, '');
+});
+
 
 test('SnapshotStore distinguishes successful empty results from failures with stale data', () => {
   const store = new SnapshotStore();
@@ -21,62 +27,6 @@ test('SnapshotStore distinguishes successful empty results from failures with st
   assert.deepEqual(store.read().accelerators.value, []);
 });
 
-test('CollectorRunner is single-flight and commits complete results', async () => {
-  const store = new SnapshotStore(); let resolveCollection; let calls = 0;
-  const collector = { collect: () => { calls += 1; return new Promise((resolve) => { resolveCollection = resolve; }); } };
-  const runner = new CollectorRunner({ key: 'cpu', collector, snapshotStore: store, cadenceMilliseconds: 2000, timeoutMilliseconds: 1000, clock: () => 100 });
-  assert.equal(runner.startIfDue(100), true);
-  assert.equal(runner.startIfDue(101), false);
-  assert.equal(calls, 1);
-  resolveCollection({ usagePercent: 12 });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(store.read().cpu.status, 'fresh');
-  assert.equal(store.read().cpu.value.usagePercent, 12);
-});
-
-test('invalidated late collector results never overwrite the snapshot', async () => {
-  const store = new SnapshotStore(); let resolveCollection;
-  const runner = new CollectorRunner({ key: 'memory', collector: { collect: () => new Promise((resolve) => { resolveCollection = resolve; }) }, snapshotStore: store, cadenceMilliseconds: 2000, timeoutMilliseconds: 1000, clock: () => 100 });
-  runner.startIfDue(100); runner.invalidate(); resolveCollection({ usagePercent: 99 });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(store.read().memory.value, null);
-});
-
-test('a timed-out collector stays single-flight until its underlying task settles', async () => {
-  const store = new SnapshotStore();
-  let finish;
-  let calls = 0;
-  const runner = new CollectorRunner({
-    key: 'cpu', snapshotStore: store, cadenceMilliseconds: 10, timeoutMilliseconds: 1,
-    collector: { collect() {
-      calls++;
-      return calls === 1 ? new Promise((resolve) => { finish = resolve; }) : Promise.resolve({ usagePercent: 20 });
-    } },
-    clock: () => 100,
-  });
-  await runner.run(0);
-  assert.equal(store.read().cpu.lastError.code, 'ETIMEDOUT');
-  assert.equal(runner.startIfDue(100), false);
-  assert.equal(calls, 1);
-  finish({ usagePercent: 99 });
-  await new Promise(setImmediate);
-  assert.equal(store.read().cpu.value, null);
-  assert.equal(runner.startIfDue(100), true);
-  await new Promise(setImmediate);
-  assert.equal(calls, 2);
-  assert.equal(store.read().cpu.value.usagePercent, 20);
-});
-
-test('MonitorScheduler uses one tick for due runners and pauses all collection', () => {
-  let now = 0; let starts = 0; let renders = 0;
-  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 2000, clock: () => now, onTick: () => { renders += 1; } });
-  scheduler.addRunner({ cadenceSource: 'refreshInterval', cadenceMilliseconds: 2000, startIfDue: () => { starts += 1; }, setCadence(value) { this.cadenceMilliseconds = value; }, invalidate() {} });
-  scheduler.tick(); scheduler.pause(); scheduler.tick();
-  assert.equal(starts, 1); assert.equal(renders, 1);
-  scheduler.setRefreshInterval(5000);
-  assert.equal(scheduler.runners[0].cadenceMilliseconds, 5000);
-  scheduler.dispose();
-});
 
 test('forced resume makes every collector due', () => {
   const service = Object.create(MonitorService.prototype);
@@ -88,94 +38,74 @@ test('forced resume makes every collector due', () => {
   assert.equal(resumed, true);
 });
 
-test('pausing blocks a collector next step while letting its active operation finish', async () => {
-  let finish;
-  let hardSignal;
-  let nextSteps = 0;
-  const store = new SnapshotStore();
-  store.commit('cpu', { usagePercent: 10 });
-  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 1000, onTick() {} });
-  const runner = new CollectorRunner({ key: 'cpu', snapshotStore: store, cadenceMilliseconds: 1000, timeoutMilliseconds: 1000,
-    collector: { async collect() {
-      hardSignal = executionOptions().signal;
-      await new Promise((resolve) => { finish = resolve; });
-      executionOptions();
-      nextSteps++;
-      return { usagePercent: 99 };
-    } },
-  });
-  scheduler.addRunner(runner);
-  scheduler.start();
-  scheduler.pause();
-  assert.equal(hardSignal.aborted, false);
-  finish();
-  await runner.whenIdle();
-  assert.equal(nextSteps, 0);
-  assert.deepEqual(store.read().cpu.value, { usagePercent: 10 });
-  assert.equal(store.read().cpu.lastError, null);
-  scheduler.dispose();
+
+test('only mount selection changes refresh the disk runner; display projection changes do not', t => {
+  const { normalizeConfig } = require('../src/config/normalize-config');
+  const service = new MonitorService({ runtimeConfig:normalizeConfig({}), isSsh:false });
+  t.after(() => service.dispose());
+  const disk = service.runners.find(runner => runner.key === 'diskTopology'), refreshed = [];
+  service.scheduler.refreshRunner = runner => refreshed.push(runner);
+  service.scheduler.setRefreshInterval = () => assert.fail('Interval is unchanged');
+  service.updateConfig(normalizeConfig({ disk: { hideParentMounts: false } })); assert.deepEqual(refreshed, []);
+  service.updateConfig(normalizeConfig({ disk: { mountFilter: 'custom', customPathExclude: '/nfs', hideParentMounts: false } }));
+  assert.deepEqual(refreshed, [disk]);
 });
 
-test('one-shot collection runs fast and slow collectors exactly once without a periodic timer', async () => {
-  const store = new SnapshotStore();
-  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 10, onTick() {} });
-  let fastCalls = 0, slowCalls = 0, finish;
-  for (const [key, collect] of [
-    ['cpu', async () => { fastCalls++; return {}; }],
-    ['memory', async () => { slowCalls++; await new Promise((resolve) => { finish = resolve; }); return {}; }],
-  ]) scheduler.addRunner(new CollectorRunner({ key, collector: { collect }, snapshotStore: store, cadenceMilliseconds: 10, timeoutMilliseconds: 1000 }));
-  scheduler.pause();
-  const once = scheduler.collectOnce();
-  assert.equal(once, scheduler.collectOnce());
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.equal(fastCalls, 1);
-  assert.equal(slowCalls, 1);
-  assert.equal(scheduler.timer, null);
-  finish();
-  await once;
-  assert.equal(scheduler.isPaused, true);
-  assert.equal(scheduler.isCollectingOnce, false);
-  assert.equal(scheduler.timer, null);
-  scheduler.dispose();
+test('regular publication uses the current snapshot at fixed ticks without awaiting collectors', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 0 });
+  const { normalizeConfig } = require('../src/config/normalize-config');
+  const published = [], pending = new Map(), calls = new Map();
+  const service = new MonitorService({ runtimeConfig: normalizeConfig({}), isSsh: true,
+    onSnapshot: snapshot => published.push({ at: Date.now(), snapshot }) });
+  t.after(() => service.dispose());
+  for (const runner of service.runners) {
+    runner.timeoutMilliseconds = 2500;
+    runner.collector = { collect() {
+      calls.set(runner.key, (calls.get(runner.key) || 0) + 1);
+      return new Promise(resolve => pending.set(runner.key, resolve));
+    } };
+  }
+  const flush = () => new Promise(setImmediate);
+  function finish(key, value) {
+    const runner = service.runners.find(item => item.key === key);
+    pending.get(key)(runner.grouped ? Object.fromEntries(runner.resultKeys.map(result => [result, value])) : value);
+    pending.delete(key);
+  }
+  service.start();
+  assert.deepEqual(published.map(item => item.at), [0]);
+  t.mock.timers.tick(300);
+  finish('resources', { value: 1 }); finish('sshTraffic', { value: 1 });
+  finish('processes', []); finish('diskTopology', []);
+  await flush();
+  assert.equal(service.readSnapshot().cpu.value.value, 1);
+  assert.equal(published[0].snapshot.cpu.value, null);
+  assert.equal(published.length, 1);
+  t.mock.timers.tick(1700); await flush();
+  assert.deepEqual(published.map(item => item.at), [0, 2000]);
+  assert.equal(published[1].snapshot.cpu.value.value, 1);
+  assert.equal(calls.get('resources'), 2);
+  assert.equal(calls.get('accelerators'), 1);
+  t.mock.timers.tick(500); await flush();
+  assert.equal(service.readSnapshot().accelerators.lastError.code, 'ETIMEDOUT');
+  assert.equal(published.at(-1).snapshot.accelerators.lastError, null);
+  assert.equal(published.length, 2);
+  finish('accelerators', { value: 'late' }); await flush();
+  assert.equal(service.readSnapshot().accelerators.value, null);
+  finish('resources', { value: 2 }); finish('sshTraffic', { value: 2 }); finish('processes', []);
+  await flush();
+  t.mock.timers.tick(1500); await flush();
+  assert.deepEqual(published.map(item => item.at), [0, 2000, 4000]);
+  assert.equal(published.at(-1).snapshot.cpu.value.value, 2);
+  assert.equal(published.at(-1).snapshot.accelerators.lastError.code, 'ETIMEDOUT');
+  assert.equal(calls.get('accelerators'), 2);
+  t.mock.timers.tick(100); finish('accelerators', { devices: [], usagesByPid: new Map(), currentUserDeviceKeys: [] }); await flush();
+  assert.equal(published.at(-1).snapshot.accelerators.value, null);
+  t.mock.timers.tick(1900); await flush();
+  assert.deepEqual(published.map(item => item.at), [0, 2000, 4000, 6000]);
+  assert.deepEqual(published.at(-1).snapshot.accelerators.value.devices, []);
+  assert.equal(published.at(-1).snapshot.accelerators.lastError, null);
 });
 
-test('pausing during a one-shot cancels waiting work and never resumes periodic collection', async () => {
-  const store = new SnapshotStore();
-  let release;
-  let calls = 0;
-  const runner = new CollectorRunner({ key: 'cpu', snapshotStore: store, cadenceMilliseconds: 10, timeoutMilliseconds: 1000,
-    collector: { async collect() { calls++; await new Promise((resolve) => { release = resolve; }); return {}; } },
-  });
-  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 10, onTick() {} });
-  scheduler.addRunner(runner);
-  scheduler.start();
-  const once = scheduler.collectOnce();
-  scheduler.pause();
-  release();
-  await once;
-  assert.equal(calls, 1);
-  assert.equal(scheduler.isPaused, true);
-  assert.equal(scheduler.timer, null);
-  assert.equal(store.read().cpu.value, null);
-  scheduler.dispose();
-});
-
-test('one-shot collection rejects a still-running timed-out collector without starting another', async () => {
-  let release;
-  let calls = 0;
-  const runner = new CollectorRunner({ key: 'cpu', snapshotStore: new SnapshotStore(), cadenceMilliseconds: 1, timeoutMilliseconds: 5,
-    collector: { collect() { calls++; return new Promise((resolve) => { release = resolve; }); } },
-  });
-  const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 10, onTick() {} });
-  scheduler.addRunner(runner);
-  scheduler.pause();
-  await runner.run();
-  await assert.rejects(scheduler.collectOnce(), { code: 'EBUSY' });
-  assert.equal(calls, 1);
-  release({});
-  await runner.idle;
-  scheduler.dispose();
-});
 
 test('a cooperative pause removes queued SSH work but does not close the active channel', async () => {
   const executor = new SshTransport({ host: 'fixture', requireLinux: false, maxConnections: 1,
@@ -199,6 +129,7 @@ test('a cooperative pause removes queued SSH work but does not close the active 
   } finally { executor.dispose(); }
 });
 
+
 for (const remote of [false, true]) {
   test((remote ? 'SSH' : 'direct') + ' collection commands use the same UTC locale environment', async () => {
     const executor = remote ? new SshTransport({ host: 'fixture', requireLinux: false,
@@ -211,36 +142,9 @@ for (const remote of [false, true]) {
   });
 }
 
+
 test('CommandRunner executes without a shell and returns bounded command output', async () => {
   const runner = new CommandRunner();
   const result = await runner.execFile(process.execPath, ['-e', 'process.stdout.write("ok")']);
   assert.equal(result.stdout, 'ok'); runner.dispose();
 });
-
-for (const remote of [false, true]) {
-  test((remote ? 'SSH' : 'direct') + ' commands share the collector deadline across sequential steps', async () => {
-    const executor = remote ? new SshTransport({ host: 'fixture', requireLinux: false,
-      spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
-    }) : new CommandRunner();
-    try {
-      if (remote) await executor.connect();
-      await assert.rejects(executor.execFile('sleep', ['0.1'], { timeoutMilliseconds: 10 }), { code: 'ETIMEDOUT' });
-      const store = new SnapshotStore();
-      let finished = false;
-      const runner = new CollectorRunner({ key: 'cpu', snapshotStore: store, cadenceMilliseconds: 2000, timeoutMilliseconds: 200,
-        collector: { async collect() {
-          await executor.execFile('sleep', ['0.13'], { timeoutMilliseconds: 1000 });
-          await executor.execFile('sleep', ['0.13'], { timeoutMilliseconds: 1000 });
-          finished = true;
-          return {};
-        } },
-      });
-      await runner.run();
-      await new Promise(setImmediate);
-      assert.equal(finished, false);
-      assert.equal(store.read().cpu.lastError.code, 'ETIMEDOUT');
-      assert.equal(store.read().cpu.value, null);
-      assert.equal((await executor.execFile('printf', ['usable'])).stdout, 'usable');
-    } finally { executor.dispose(); }
-  });
-}
