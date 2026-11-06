@@ -197,7 +197,8 @@ test('CommandRunner executes without a shell and returns bounded command output'
   assert.equal(result.stdout, 'ok'); runner.dispose();
 });
 
-test('local command timeouts, cancellation and disposal stop the whole process group', { skip: process.platform === 'win32' }, async t => {
+test('a supervising timeout stops whole local commands on expiry, cancellation and disposal', { skip: process.platform === 'win32' }, async t => {
+  if (!(await new CommandRunner().timeoutUtility())) { t.skip('timeout utility unavailable'); return; }
   const fs = require('node:fs');
   const os = require('node:os');
   const path = require('node:path');
@@ -229,5 +230,24 @@ test('local command timeouts, cancellation and disposal stop the whole process g
   assert.equal(await settle(disposedPid), false);
   await assert.rejects(runner.execFile('sh', ['-c', 'printf "failure detail\\n" >&2; exit 3']), { code: 3, exitCode: 3, message: 'failure detail' });
   await assert.rejects(runner.execFile('printf', ['x'.repeat(100)], { maxBufferBytes: 16 }), { code: 'EMAXBUFFER' });
+  await assert.rejects(runner.execFile('sysmonitor-missing-command'), { code: 'ENOENT' });
+});
+
+test('without a timeout utility local commands are stopped through their child process object', { skip: process.platform === 'win32' }, async t => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sysmonitor-direct-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runner = new CommandRunner({ timeoutUtility: async () => false });
+  t.after(() => runner.dispose());
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const pidFile = path.join(root, 'pid');
+  const running = runner.execFile('sh', ['-c', 'echo $$ > "$1"; exec sleep 30', 'fixture', pidFile], { timeoutMilliseconds: 200 });
+  await assert.rejects(running, { code: 'ETIMEDOUT' });
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  for (let attempt = 0; attempt < 100 && alive(pid); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(alive(pid), false);
+  await assert.rejects(runner.execFile('sh', ['-c', 'exit 127']), { code: 127, exitCode: 127 });
   await assert.rejects(runner.execFile('sysmonitor-missing-command'), { code: 'ENOENT' });
 });

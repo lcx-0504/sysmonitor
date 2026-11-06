@@ -1,49 +1,52 @@
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { COLLECTION_ENV, executionOptions, timeoutError } = require('./collection-context');
 const { COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_MILLISECONDS } = require('./execution-defaults');
 
-const PROCESS_GROUPS = process.platform !== 'win32';
-const activeChildren = new Set();
-let exitHandlerInstalled = false;
+const TIMEOUT_EXIT_CODES = new Set([124, 137]);
+const COMMAND_NOT_FOUND_EXIT_CODE = 127;
+let timeoutProbe = null;
 
-function terminate(child) {
-  if (PROCESS_GROUPS && child.pid) {
-    try {
-      process.kill(-child.pid, 'SIGKILL');
-      return;
-    } catch (error) {
-      if (error.code === 'ESRCH') return;
-    }
-  }
-  child.kill('SIGKILL');
-}
-
-function trackChild(child) {
-  activeChildren.add(child);
-  if (exitHandlerInstalled) return;
-  exitHandlerInstalled = true;
-  process.once('exit', () => { for (const active of activeChildren) terminate(active); });
+// Same check as the SSH dispatcher: a GNU-compatible timeout exits with 124 when its own limit expires.
+function probeTimeoutUtility() {
+  if (process.platform === 'win32') return Promise.resolve(false);
+  timeoutProbe ||= new Promise((resolve) => {
+    execFile('timeout', ['-k', '1', '0.01', 'sleep', '1'], { windowsHide: true }, (error) => resolve(!!error && error.code === 124));
+  });
+  return timeoutProbe;
 }
 
 class CommandRunner {
-  constructor({ defaultTimeoutMilliseconds = DEFAULT_COMMAND_TIMEOUT_MILLISECONDS, maxBufferBytes = COMMAND_OUTPUT_LIMIT_BYTES } = {}) {
+  constructor({ defaultTimeoutMilliseconds = DEFAULT_COMMAND_TIMEOUT_MILLISECONDS, maxBufferBytes = COMMAND_OUTPUT_LIMIT_BYTES,
+    timeoutUtility = probeTimeoutUtility } = {}) {
     this.defaultTimeoutMilliseconds = defaultTimeoutMilliseconds;
     this.maxBufferBytes = maxBufferBytes;
-    this.children = new Set();
+    this.timeoutUtility = timeoutUtility;
+    this.children = new Map();
     this.closed = false;
   }
 
-  execFile(command, args = [], options = {}) {
-    if (this.closed) return Promise.reject(new Error('Command runner disposed'));
-    try { options = executionOptions(options); } catch (error) { return Promise.reject(error); }
+  async execFile(command, args = [], options = {}) {
+    if (this.closed) throw new Error('Command runner disposed');
+    options = executionOptions(options);
+    const supervised = await this.timeoutUtility();
+    if (this.closed) throw new Error('Command runner disposed');
+    if (options.signal && options.signal.aborted) throw options.signal.reason || new Error('Command cancelled');
     const timeout = Number.isFinite(options.timeoutMilliseconds) ? options.timeoutMilliseconds : this.defaultTimeoutMilliseconds;
+    return this.run(command, args, options, timeout, supervised);
+  }
+
+  run(command, args, options, timeout, supervised) {
     const limit = options.maxBufferBytes || this.maxBufferBytes;
+    const file = supervised ? 'timeout' : command;
+    const fileArgs = supervised ? ['-k', '1', String(timeout / 1000), command, ...args] : args;
+    // A supervising timeout forwards SIGTERM to the whole command; without it only the direct child can be stopped.
+    const stopSignal = supervised ? 'SIGTERM' : 'SIGKILL';
     return new Promise((resolve, reject) => {
       let child;
       try {
-        child = spawn(command, args, { detached: PROCESS_GROUPS, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+        child = spawn(file, fileArgs, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ...COLLECTION_ENV, ...(options.env || {}) } });
       } catch (error) {
         reject(error);
@@ -55,7 +58,7 @@ class CommandRunner {
       let settled = false;
       const stop = (error) => {
         failure ||= error;
-        terminate(child);
+        child.kill(stopSignal);
       };
       const onAbort = () => stop(options.signal.reason || new Error('Command cancelled'));
       const timer = setTimeout(() => stop(timeoutError('Command timed out: ' + command)), timeout);
@@ -65,16 +68,20 @@ class CommandRunner {
         clearTimeout(timer);
         if (options.signal) options.signal.removeEventListener('abort', onAbort);
         this.children.delete(child);
-        activeChildren.delete(child);
         const stdout = output.stdout.text;
         const stderr = output.stderr.text;
         if (failure || error) {
           reject(Object.assign(failure || error, { stderr }));
           return;
         }
+        if (supervised && TIMEOUT_EXIT_CODES.has(exitCode)) {
+          reject(Object.assign(timeoutError('Command timed out: ' + command), { exitCode, stderr }));
+          return;
+        }
         if (exitCode !== 0) {
           const status = signal ? 'Command terminated (' + signal + ')' : 'Command exited (' + exitCode + ')';
-          reject(Object.assign(new Error(stderr.trim() || status), { code: exitCode, exitCode, signal, stderr }));
+          const code = supervised && exitCode === COMMAND_NOT_FOUND_EXIT_CODE ? 'ENOENT' : exitCode;
+          reject(Object.assign(new Error(stderr.trim() || status), { code, exitCode, signal, stderr }));
           return;
         }
         if (inputError) {
@@ -98,14 +105,13 @@ class CommandRunner {
       if (options.signal) options.signal.addEventListener('abort', onAbort, { once: true });
       child.stdin.on('error', error => { if (error.code !== 'EPIPE') inputError = error; });
       child.stdin.end(options.input);
-      this.children.add(child);
-      trackChild(child);
+      this.children.set(child, stop);
     });
   }
 
   dispose() {
     this.closed = true;
-    for (const child of this.children) terminate(child);
+    for (const stop of this.children.values()) stop(new Error('Command runner disposed'));
     this.children.clear();
   }
 }
