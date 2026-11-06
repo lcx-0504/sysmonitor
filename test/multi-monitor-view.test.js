@@ -551,6 +551,9 @@ test('local views log ignored and failed messages and receive retry errors', asy
   await view.receive({ version: 1, cmd: 'retrySampling', deviceId: 'ssh:campus' });
   assert.deepEqual(view.messages, [{ cmd: 'retryConnectionResult', deviceId: 'ssh:campus', error: 'collect failed' }]);
   assert.equal(logs.at(-1), 'Monitor retry ssh:campus: collect failed');
+  view.messages.length = 0;
+  await view.receive({ version: 1, cmd: 'retrySampling', deviceId: 'ssh:other' });
+  assert.deepEqual(view.messages, [{ cmd: 'retryConnectionResult', deviceId: 'ssh:other' }], 'an ignored retry still releases the pending button');
 });
 
 test('local pause requests go through the device manager, whose change is broadcast once', async (t) => {

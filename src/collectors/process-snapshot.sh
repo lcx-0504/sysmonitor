@@ -50,10 +50,12 @@ tmux_panes=
 screen_sessions=
 if command -v tmux > /dev/null 2>&1 || command -v screen > /dev/null 2>&1; then
   user_id=$(id -u 2>/dev/null)
-  if command -v tmux > /dev/null 2>&1; then
+  # Query only servers that already exist: both tools create their socket directories when none exists.
+  if [ -n "$user_id" ] && command -v tmux > /dev/null 2>&1 && [ -e "${TMUX_TMPDIR:-/tmp}/tmux-$user_id/default" ]; then
     tmux_panes=$(tmux list-panes -a -F "#{pane_pid}${tab}#{session_name}" 2>/dev/null) || tmux_panes=
   fi
-  if command -v screen > /dev/null 2>&1; then
+  if [ -n "$user_id" ] && command -v screen > /dev/null 2>&1 &&
+    printf '%s\n' "$processes" | awk -v uid="$user_id" '$3 == uid && $11 == "SCREEN" { found = 1 } END { exit !found }'; then
     screen_sessions=$(screen -ls 2>/dev/null)
   fi
 fi

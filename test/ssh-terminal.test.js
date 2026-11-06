@@ -22,7 +22,7 @@ function sessionSandbox(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sysmonitor-session-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const record = path.join(directory, 'record.json');
-  const recorder = '#!/bin/sh\n{ printf \'%s\\0\' "$@"; printf \'%s\\0%s\\0\' "${TMUX+set}" "${TMUX_PANE+set}"; } > "$FAKE_RECORD"\nexit "$FAKE_EXIT"\n';
+  const recorder = '#!/bin/sh\n{ printf \'%s\\0\' "$@"; printf \'%s\\0%s\\0\\n\' "${TMUX+set}" "${TMUX_PANE+set}"; } >> "$FAKE_RECORD"\nexit "$FAKE_EXIT"\n';
   for (const command of ['tmux', 'screen']) fs.writeFileSync(path.join(directory, command), recorder, { mode: 0o755 });
   const loginShell = path.join(directory, 'login-shell');
   fs.writeFileSync(loginShell, '#!/bin/sh\nprintf "login:%s\\n" "$1"\n', { mode: 0o755 });
@@ -32,19 +32,27 @@ function sessionSandbox(t) {
       FAKE_RECORD: record, FAKE_EXIT: String(exitCode), TMUX: '/tmp/outer,1,0', TMUX_PANE: '%1',
     }),
     read() {
-      const fields = fs.readFileSync(record, 'utf8').split('\0');
+      const calls = fs.readFileSync(record, 'utf8').split('\0\n').filter(Boolean).map((entry) => {
+        const fields = entry.split('\0');
+        return { args: fields.slice(0, -2), tmux: fields.at(-2) || null, pane: fields.at(-1) || null };
+      });
       fs.rmSync(record);
-      return { args: fields.slice(0, -3), tmux: fields.at(-3) || null, pane: fields.at(-2) || null };
+      return calls;
     },
   };
 }
 
 function assertAttached(sandbox, session, result, exitCode, label) {
   assert.equal(result.status, 0, label + ': ' + result.stderr);
-  const record = sandbox.read();
-  assert.deepEqual(record.args, session.type === 'tmux' ? ['attach-session', '-t', '=' + session.id] : ['-x', session.id], label);
-  assert.equal(record.tmux, null, label);
-  assert.equal(record.pane, null, label);
+  const calls = sandbox.read();
+  const target = ['-t', '=' + session.id];
+  const expected = session.type === 'screen' ? [['-x', session.id]]
+    : exitCode ? [['has-session', ...target]] : [['has-session', ...target], ['attach-session', ...target]];
+  assert.deepEqual(calls.map((call) => call.args), expected, label);
+  for (const call of calls) {
+    assert.equal(call.tmux, null, label);
+    assert.equal(call.pane, null, label);
+  }
   assert.equal(result.stdout, (exitCode ? `cannot attach ${session.name}\n` : '') + 'login:-l\n', label);
 }
 
@@ -81,7 +89,7 @@ test('local session terminals run the attach script in /bin/sh without inherited
   const tmux = sessionTerminalOptions({ type: 'tmux', name: 'train', id: 'train' }, { failureMessage: 'gone' });
   assert.deepEqual(tmux, {
     name: 'tmux: train', shellPath: '/bin/sh', env: { TMUX: null, TMUX_PANE: null },
-    shellArgs: ['-c', 'unset TMUX TMUX_PANE; tmux attach-session -t \'=train\' || printf \'%s\\n\' \'gone\'; exec "${SHELL:-/bin/sh}" -l'],
+    shellArgs: ['-c', 'unset TMUX TMUX_PANE; tmux has-session -t \'=train\' 2>/dev/null && tmux attach-session -t \'=train\' || printf \'%s\\n\' \'gone\'; exec "${SHELL:-/bin/sh}" -l'],
   });
   const screen = sessionTerminalOptions({ type: 'screen', name: 'train', id: '4242.train' }, { failureMessage: 'gone' });
   assert.equal(screen.name, 'screen: train');

@@ -395,7 +395,11 @@ class MultiMonitorViewProvider extends MonitorViewHost {
 
   async retryConnection(record, id) {
     const state = record.state;
-    if (!record.ready || state.page === 'servers' || state.selected !== id) return;
+    if (!record.ready) return;
+    if (state.page === 'servers' || state.selected !== id) {
+      this.readiness.post(record, { cmd: TO_WEBVIEW.retryConnectionResult, deviceId: id });
+      return;
+    }
     await this.retryDevice(record, id, this.manager.get(id));
   }
 

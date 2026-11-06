@@ -176,6 +176,22 @@ function renderFootnote(note) {
   footnoteTooltip.refresh();
 }
 
+function focusedSessionPid() {
+  const active = document.activeElement;
+  if (!active || !active.classList || !active.classList.contains('session-tag') || !processTable.contains(active)) return null;
+  const row = active.closest('tr');
+  const process = row ? table.visible[Number(row.dataset.index)] : null;
+  return process ? process.pid : null;
+}
+
+function restoreSessionFocus(pid) {
+  if (pid === null) return;
+  const index = table.visible.findIndex((process) => process.pid === pid && process.session);
+  if (index < 0) return;
+  const button = processTable.querySelector('tr[data-index="' + index + '"] .session-tag');
+  if (button) button.focus();
+}
+
 function renderProcTable() {
   table.stale = false;
   const gpuEnabled = gpuProcessesEnabled !== false;
@@ -184,8 +200,10 @@ function renderProcTable() {
   const total = state.data.viewModel?.processTotalCount ?? 0;
   processCount.textContent = ready ? tr('processCount', { count: total }) : '--';
   renderProcHeader(display, gpuEnabled);
+  const focusedPid = focusedSessionPid();
   table.visible = rows;
   processTable.innerHTML = rows.map((process, index) => processRowHtml(process, index, display, gpuEnabled)).join('');
+  restoreSessionFocus(focusedPid);
   renderFootnote(ready ? processFootnote({ total, candidates: table.processes.length, matched: matchedCount, searching: !!search }) : null);
 }
 

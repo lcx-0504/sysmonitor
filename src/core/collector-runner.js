@@ -53,7 +53,7 @@ class CollectorRunner {
   setDemand(resultKeys) {
     const previous = this.enabled ? this.resultKeys : [];
     if (previous.length === resultKeys.length && previous.every((key, index) => key === resultKeys[index])) return false;
-    this.invalidate({ reason: 'Collection demand changed' });
+    this.invalidate({ abortRunning: false, reason: 'Collection demand changed' });
     for (const key of new Set([...previous, ...resultKeys])) {
       if (previous.includes(key) !== resultKeys.includes(key)) this.snapshotStore.reset(key, resultKeys.includes(key) ? 'loading' : 'disabled');
     }

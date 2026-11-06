@@ -208,7 +208,13 @@ function activateSession(environment) {
     },
   });
   registerViews(context, configStore, provider);
-  watchConfig(environment, provider, { statusBar, updateCollection: () => session.updateConfig() });
+  watchConfig(environment, provider, {
+    statusBar,
+    updateCollection: () => session.updateConfig(),
+    onConfiguration: (event) => {
+      if (event.affectsConfiguration('remote.SSH.defaultExtensions')) provider.pushConfig();
+    },
+  });
   session.start();
   return {
     'sysmonitor.copyToEditor': () => provider.openEditorPanel(),

@@ -248,6 +248,6 @@ test('without a timeout utility local commands are stopped through their child p
   const pid = Number(fs.readFileSync(pidFile, 'utf8'));
   for (let attempt = 0; attempt < 100 && alive(pid); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(alive(pid), false);
-  await assert.rejects(runner.execFile('sh', ['-c', 'exit 127']), { code: 127, exitCode: 127 });
+  await assert.rejects(runner.execFile('sh', ['-c', 'exit 127']), { code: 'ENOENT', exitCode: 127 });
   await assert.rejects(runner.execFile('sysmonitor-missing-command'), { code: 'ENOENT' });
 });

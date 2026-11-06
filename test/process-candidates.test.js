@@ -51,13 +51,17 @@ const SHELL_FIXTURE = [
 ].join('\n');
 
 function fixture(t, rows, { first = {}, second = first, uptime = [100, 101], gpu = '', gpuStatus = 0, gpuEnabled = true, psStatus = 0, interval = 2,
-  tmux = '', screen = '', userId = '1000', clockTicks = 100, sleepFractions = true, advanceUptime = '', shell = 'sh', prelude = '' } = {}) {
+  tmux = '', screen = '', userId = '1000', clockTicks = 100, sleepFractions = true, advanceUptime = '', shell = 'sh', prelude = '', tmuxServer = tmux !== '' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sysmonitor-processes-'));
   const runner = new CommandRunner();
   t.after(() => { runner.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
   writeProc(path.join(root, 'proc'), first, uptime[0]);
   writeProc(path.join(root, 'next'), second, uptime[1]);
   fs.writeFileSync(path.join(root, 'ps'), rows.map(line => line + '\n').join(''));
+  if (tmuxServer) {
+    fs.mkdirSync(path.join(root, 'tmux-' + userId));
+    fs.writeFileSync(path.join(root, 'tmux-' + userId, 'default'), '');
+  }
   const calls = { stderr: '' };
   const collector = new ProcessCollector({ gpuEnabled: () => gpuEnabled, refreshInterval: () => interval,
     systemInfo: { totalMemoryBytes: async () => 1024 ** 3, coreCount: async () => 4 },
@@ -66,7 +70,7 @@ function fixture(t, rows, { first = {}, second = first, uptime = [100, 101], gpu
       assert.equal(args[1], SNAPSHOT_SCRIPT);
       const result = await runner.execFile(shell, ['-c', SHELL_FIXTURE + prelude + args[1], ...args.slice(2)], { ...options, env: {
         SYSMON_PROC_ROOT: path.join(root, 'proc'), FIXTURE_ROOT: root, GPU_ROWS: gpu, GPU_STATUS: String(gpuStatus), PS_STATUS: String(psStatus),
-        CLOCK_TICKS: String(clockTicks), USER_ID: userId, TMUX_ROWS: tmux, SCREEN_ROWS: screen, SLEEP_FRACTIONS: sleepFractions ? '1' : '0',
+        CLOCK_TICKS: String(clockTicks), USER_ID: userId, TMUX_ROWS: tmux, SCREEN_ROWS: screen, SLEEP_FRACTIONS: sleepFractions ? '1' : '0', TMUX_TMPDIR: root,
         ADVANCE_UPTIME: advanceUptime,
       } }).catch(error => { calls.stderr += error.stderr || ''; throw error; });
       calls.stderr += result.stderr;
@@ -253,6 +257,14 @@ test('absent tmux or screen commands are skipped without being run', async t => 
   const withScreen = await screenOnly.collector.collect();
   assert.deepEqual(sessionsOf(withScreen), [[100, null], [101, null], [200, 'screen'], [201, 'screen']]);
   assert.deepEqual(screenOnly.sessionCalls(), ['id', 'screen']);
+});
+
+test('tmux and screen are queried only when the current user already runs a server', async t => {
+  const rows = [row(100, { command: 'bash' }), row(101, { ppid: 100 }), row(200, { uid: 1001, user: 'bob', command: 'SCREEN -S other' })];
+  const source = fixture(t, rows, { first: steady([100, 101, 200]), tmux: '100\tmain', screen: '\t200.other\t(Detached)', tmuxServer: false });
+  const sample = await source.collector.collect();
+  assert.deepEqual(sample.rows.map(process => process.session), [null, null, null]);
+  assert.deepEqual(source.sessionCalls(), ['id']);
 });
 
 test('process totals reuse published memory and core counts before querying the host', async t => {

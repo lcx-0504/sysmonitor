@@ -220,8 +220,10 @@ function gpuSummaryText(gpus, source) {
 
 function renderAccelerators(gpus, instant, source) {
   const generation = ++gpuRenderGeneration;
-  for (const index of Object.keys(selectedGpus)) {
-    if (!gpus.some((gpu) => gpu.idx === parseInt(index) && gpu.isIdle === true)) delete selectedGpus[index];
+  if (gpus.length && source?.state === 'ready') {
+    const stale = Object.keys(selectedGpus).filter((index) => !gpus.some((gpu) => gpu.idx === parseInt(index) && gpu.isIdle === true));
+    for (const index of stale) delete selectedGpus[index];
+    if (stale.length) storeGpuSelection();
   }
   const identityKeys = gpus.map((gpu) => JSON.stringify([gpu.idx, gpu.deviceKey || String(gpu.idx)]));
   const created = identityKeys.join('\n') !== view.renderedAcceleratorKeys.join('\n');

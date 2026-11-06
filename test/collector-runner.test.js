@@ -166,6 +166,22 @@ test('a timed-out collector stays single-flight until its underlying task settle
 });
 
 
+test('a demand change lets a running collection finish without aborting it and discards its result', async () => {
+  const store = new SnapshotStore(); let resolveCollection; let signal;
+  const collector = { collect() {
+    signal = executionOptions().signal;
+    return new Promise((resolve) => { resolveCollection = resolve; });
+  } };
+  const runner = new CollectorRunner({ key: 'processes', collector, snapshotStore: store, timeoutMilliseconds: 1000, clock: () => 100 });
+  runner.startIfDue(100);
+  assert.equal(runner.setDemand([]), true);
+  assert.equal(signal.aborted, false);
+  resolveCollection({ rows: [], totalCount: 0 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(store.read().processes.value, null);
+  assert.equal(store.read().processes.status, 'disabled');
+});
+
 test('targeted refresh aborts obsolete work, coalesces selections and drops late old results', async t => {
   const store = new SnapshotStore(); store.commit('diskTopology', [{ mountPath: '/previous' }]);
   const scheduler = new MonitorScheduler({ refreshIntervalMilliseconds: 10000, onTick() {} });

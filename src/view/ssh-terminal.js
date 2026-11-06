@@ -33,7 +33,10 @@ function processSession(viewModel, pid) {
 }
 
 function sessionAttachCommand(session) {
-  if (session.type === 'tmux') return `tmux attach-session -t ${quoteShellArgument('=' + session.id)}`;
+  if (session.type === 'tmux') {
+    const target = quoteShellArgument('=' + session.id);
+    return `tmux has-session -t ${target} 2>/dev/null && tmux attach-session -t ${target}`;
+  }
   return `screen -x ${quoteShellArgument(session.id)}`;
 }
 

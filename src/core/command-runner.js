@@ -80,7 +80,7 @@ class CommandRunner {
         }
         if (exitCode !== 0) {
           const status = signal ? 'Command terminated (' + signal + ')' : 'Command exited (' + exitCode + ')';
-          const code = supervised && exitCode === COMMAND_NOT_FOUND_EXIT_CODE ? 'ENOENT' : exitCode;
+          const code = exitCode === COMMAND_NOT_FOUND_EXIT_CODE ? 'ENOENT' : exitCode;
           reject(Object.assign(new Error(stderr.trim() || status), { code, exitCode, signal, stderr }));
           return;
         }
