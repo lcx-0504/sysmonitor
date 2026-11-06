@@ -167,8 +167,8 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
   <div class="hint-box filter-hint" id="filter-hint"><span class="hint-close" id="hint-close">&times;</span>${t("searchHint")}${t("sentenceSeparator")}${t("searchHintGpu")}${t("sentenceSeparator")}<code>GPU0</code> <code>#0</code> <code>GPU 0</code></div>
   <div class="table-scroll">
     <table><thead><tr id="proc-hdr"></tr></thead><tbody id="proc-tbody"></tbody></table>
+    <div class="proc-footnote" id="proc-footnote" hidden><span id="proc-footnote-text"></span><button type="button" class="gpu-info" id="proc-footnote-info" aria-label="${t("processSearchScope")}" hidden>ⓘ</button></div>
   </div>
-  <div class="proc-footnote" id="proc-footnote" hidden><span id="proc-footnote-text"></span><button type="button" class="gpu-info" id="proc-footnote-info" aria-label="${t("processSearchScope")}" hidden>ⓘ</button></div>
 </div>
 
 <div class="tab-content" id="tab-servers">

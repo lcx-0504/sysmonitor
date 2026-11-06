@@ -112,7 +112,7 @@
   #tab-proc .proc-toolbar-wrap { flex-shrink: 0; padding: var(--gap) var(--gap) 0 var(--gap); }
   #tab-proc .filter-hint { flex-shrink: 0; margin: 4px var(--gap) 0 var(--gap); }
   #tab-proc .table-scroll { flex: 1; overflow: auto; min-height: 0; }
-  .proc-footnote { flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 3px var(--gap) 5px; font-size: 10px; color: var(--muted); }
+  .proc-footnote { display: flex; align-items: center; gap: 4px; padding: 3px var(--gap) 5px; font-size: 10px; color: var(--muted); }
   #proc-footnote-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ── 模态 ── */
