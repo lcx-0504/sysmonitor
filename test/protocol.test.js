@@ -11,11 +11,12 @@ const { normalizeConfig } = require('../src/config/normalize-config');
 
 const VIEW_DIRECTORY = path.join(__dirname, '..', 'src', 'view');
 const ASSET_DIRECTORY = path.join(VIEW_DIRECTORY, 'assets');
+const GENERATED_MODULES = ['i18n.mjs', 'protocol.mjs', 'device-id.mjs', 'metric-playback.mjs'];
 const HOST_FILES = ['monitor-view-host.js', 'monitor-view-provider.js', 'multi-monitor-view-provider.js'];
 
 function frontendSource() {
   return fs.readdirSync(ASSET_DIRECTORY)
-    .filter((file) => file.endsWith('.mjs') && file !== 'i18n.mjs' && file !== 'protocol.mjs')
+    .filter((file) => file.endsWith('.mjs') && !GENERATED_MODULES.includes(file))
     .map((file) => fs.readFileSync(path.join(ASSET_DIRECTORY, file), 'utf8'))
     .join('\n');
 }
@@ -28,12 +29,27 @@ test('the generated browser protocol matches the extension protocol', async () =
   }
 });
 
-test('commands named by the frontend are declared in the protocol', () => {
+test('the frontend names commands only through the protocol and handles every webview command', () => {
   const source = frontendSource();
-  const sent = [...source.matchAll(/\bcmd\s*:\s*'([A-Za-z]+)'/g)].map((match) => match[1]);
-  const handled = [...source.matchAll(/\bdata\.cmd\s*[!=]==\s*'([A-Za-z]+)'/g)].map((match) => match[1]);
-  for (const name of sent) assert.ok(Object.hasOwn(protocol.TO_EXTENSION, name), name);
-  for (const name of handled) assert.ok(Object.hasOwn(protocol.TO_WEBVIEW, name), name);
+  assert.doesNotMatch(source, /\bcmd\s*:\s*['"`]/);
+  assert.doesNotMatch(source, /\.cmd\s*[!=]==\s*['"`]/);
+  assert.doesNotMatch(source, /\bversion\s*:\s*\d/);
+  const sent = new Set([...source.matchAll(/\bTO_EXTENSION\.(\w+)/g)].map((match) => match[1]));
+  const handled = new Set([...source.matchAll(/\[TO_WEBVIEW\.(\w+)\]\s*:/g)].map((match) => match[1]));
+  assert.deepEqual([...sent].sort(), Object.keys(protocol.TO_EXTENSION).sort());
+  assert.deepEqual([...handled].sort(), Object.keys(protocol.TO_WEBVIEW).sort());
+});
+
+test('the frontend recognizes device ids only through the shared helpers', async () => {
+  const domain = require('../src/domain/device-id');
+  const browser = await import('../src/view/assets/device-id.mjs');
+  assert.deepEqual(Object.keys(browser).sort(), Object.keys(domain).sort());
+  assert.equal(browser.LOCAL_DEVICE_ID, domain.LOCAL_DEVICE_ID);
+  assert.equal(browser.deviceHost(domain.sshDeviceId('user@campus')), 'user@campus');
+  const source = frontendSource();
+  assert.doesNotMatch(source, /['"`]ssh:|startsWith\(\s*['"`]ssh/);
+  assert.doesNotMatch(source, /[!=]==\s*['"`]local['"`]|\|\|\s*['"`]local['"`]/);
+  assert.doesNotMatch(source, /\.slice\(4\)/);
 });
 
 test('every webview command has a handler and view hosts name commands only through the protocol', () => {

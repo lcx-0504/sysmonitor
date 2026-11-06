@@ -158,7 +158,7 @@ class MultiMonitorViewProvider extends MonitorViewHost {
   }
 
   deviceTitle(id) {
-    return isLocalDeviceId(id) ? this.translator()('local') : deviceHost(id);
+    return isLocalDeviceId(id) ? this.translator()('localDevice') : deviceHost(id);
   }
 
   initialViewConfig(record) {
@@ -490,7 +490,7 @@ class MultiMonitorViewProvider extends MonitorViewHost {
     const t = this.translator();
     const copy = t('copyPIDs');
     const understood = t('gotIt');
-    const message = t('remotePerformanceCollectionHasTimedOutRepeatedlyServer', { host, pids });
+    const message = t('residualProcesses', { host, pids });
     for (;;) {
       const choice = await this.vscode.window.showWarningMessage(message, copy, understood);
       if (choice === understood) {

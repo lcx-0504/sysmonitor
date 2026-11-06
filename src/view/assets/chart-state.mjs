@@ -1,6 +1,9 @@
 import { state } from './state.mjs';
 import { displayPosition } from './metric-playback.mjs';
 
+export const DEFAULT_CHART_MINUTES = 5;
+const SECOND_MILLISECONDS = 1000;
+const MINUTE_MILLISECONDS = 60 * SECOND_MILLISECONDS;
 const SERIES = { cpu: 'cpu', memory: 'memory', netTx: 'network', netRx: 'network', sshTx: 'sshTraffic', sshRx: 'sshTraffic', diskRead: 'diskIo', diskWrite: 'diskIo' };
 const seriesSources = new WeakMap();
 
@@ -10,14 +13,22 @@ function newSeries(source) {
   return series;
 }
 
+export function chartMinutes() {
+  return state.config.display?.sparkMinutes || DEFAULT_CHART_MINUTES;
+}
+
+export function updateChartWindow() {
+  state.charts.windowMilliseconds = chartMinutes() * MINUTE_MILLISECONDS;
+}
+
 export function initializeChartState() {
   for (const [key, source] of Object.entries(SERIES)) state.charts[key] = newSeries(source);
   state.charts.gpus = {};
   state.charts.versions = {};
   state.charts.clock = null;
   state.charts.playback = {};
-  state.charts.intervalMilliseconds = state.config.refreshInterval * 1000;
-  state.charts.windowMilliseconds = (state.config.display?.sparkMinutes || 5) * 60000;
+  state.charts.intervalMilliseconds = state.config.refreshInterval * SECOND_MILLISECONDS;
+  updateChartWindow();
 }
 
 function sourceNow() {
@@ -30,14 +41,9 @@ export function sparkDisplayTime(series = state.charts.cpu) {
   if (!source) throw new Error('Chart series has no source');
   const playback = state.charts.playback[source];
   const now = sourceNow();
-  const interval = state.charts.intervalMilliseconds ?? state.config.refreshInterval * 1000;
+  const interval = state.charts.intervalMilliseconds ?? state.config.refreshInterval * SECOND_MILLISECONDS;
   if (!playback) return Math.min(now - interval, typeof series === 'string' ? Infinity : series.at(-1)?.t ?? Infinity);
   return displayPosition(playback, now);
-}
-
-export function setSparkActivity(paused, connectionAllowsAnimation) {
-  state.ui.paused = paused;
-  state.ui.canAnimate = connectionAllowsAnimation;
 }
 
 function append(series, sample, value) {
@@ -45,8 +51,25 @@ function append(series, sample, value) {
   const previous = series.at(-1);
   const point = { t: sample.t, v: value, segment: sample.segment,
     gapBefore: !!previous && (sample.gapBefore === true || sample.segment !== previous.segment) };
-  if (previous?.t === sample.t) { point.gapBefore ||= previous.gapBefore; series[series.length - 1] = point; }
-  else series.push(point);
+  if (previous?.t === sample.t) {
+    point.gapBefore ||= previous.gapBefore;
+    series[series.length - 1] = point;
+  } else series.push(point);
+}
+
+function applyAcceleratorSample(sample) {
+  const previous = new Map(Object.entries(state.charts.gpus).map(([index, series]) => [series.deviceKey || index, series]));
+  const present = {};
+  for (const gpu of sample.values.gpus) {
+    const identity = gpu.deviceKey || String(gpu.idx);
+    let series = previous.get(identity);
+    if (!series || series.generation !== gpu.generation || sample.reset) series = newSeries('gpu:' + identity);
+    series.deviceKey = gpu.deviceKey;
+    series.generation = gpu.generation;
+    append(series, sample, gpu.value);
+    present[gpu.idx] = series;
+  }
+  state.charts.gpus = present;
 }
 
 export function applySamples(samples, { replace = false, timeline = null } = {}) {
@@ -63,19 +86,10 @@ export function applySamples(samples, { replace = false, timeline = null } = {})
     if ((state.charts.versions[sample.source] ?? -1) >= sample.sequence) continue;
     state.charts.versions[sample.source] = sample.sequence;
     if (sample.source === 'accelerators') {
-      const previous = new Map(Object.entries(state.charts.gpus).map(([index, series]) => [series.deviceKey || index, series]));
-      const present = {};
-      for (const gpu of sample.values.gpus) {
-        const identity = gpu.deviceKey || String(gpu.idx);
-        let series = previous.get(identity);
-        if (!series || series.generation !== gpu.generation || sample.reset) series = newSeries('gpu:' + identity);
-        series.deviceKey = gpu.deviceKey;
-        series.generation = gpu.generation;
-        append(series, sample, gpu.value);
-        present[gpu.idx] = series;
-      }
-      state.charts.gpus = present;
-    } else for (const [key, value] of Object.entries(sample.values)) {
+      applyAcceleratorSample(sample);
+      continue;
+    }
+    for (const [key, value] of Object.entries(sample.values)) {
       if (sample.reset) state.charts[key] = newSeries(sample.source);
       append(state.charts[key], sample, value);
     }

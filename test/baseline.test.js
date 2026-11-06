@@ -27,8 +27,8 @@ test('English and Chinese package localization expose the same keys', () => {
   assert.equal(english.cmdEditorMoveWindow, english.cmdOpenWindow);
   assert.equal(chinese.cmdEditorMoveWindow, chinese.cmdOpenWindow);
   const serverList = fs.readFileSync(path.join(projectRoot, 'src/view/assets/servers.mjs'), 'utf8');
-  assert.match(serverList, /floating\.title = tr\("openInNewWindow"\)/);
-  assert.match(serverList, /remote\.title = tr\("openRemoteWindow"\)/);
+  assert.match(serverList, /serverAction\('server-window', SERVER_ICONS\.window, tr\('openInNewWindow'\)/);
+  assert.match(serverList, /serverAction\('server-remote', SERVER_ICONS\.remote, tr\('openRemoteWindow'\)/);
   assert.equal(chinese.cmdCopyToWindow, '系统监控: 在新窗口打开');
   assert.equal(chinese.cmdOpenRemoteWindow, '系统监控: 打开远程窗口');
   const settings = fs.readFileSync(path.join(projectRoot, 'src/i18n/catalogs.js'), 'utf8');
@@ -125,8 +125,8 @@ test('development files are excluded from VSIX and runtime assets exist', () => 
 test('Webview resets topology keys on empty GPU results and restores translucent zero-percent tags', () => {
   const script = WEBVIEW_SCRIPT_FILES.map((fileName) => fs.readFileSync(path.join(projectRoot, 'src/view/assets', fileName), 'utf8')).join('\n');
   const style = fs.readFileSync(path.join(projectRoot, 'src/view/assets/webview.css'), 'utf8');
-  assert.match(script, /if \(created\) \{\s*state\.ui\.renderedAcceleratorKeys = identityKeys;/);
-  assert.match(script, /g\.mappingStatus === 'unmatched' \? ' tag-unknown' : ' ' \+ tagColorClass\(pct\)/);
+  assert.match(script, /if \(created\) \{\s*view\.renderedAcceleratorKeys = identityKeys;/);
+  assert.match(script, /usage\.mappingStatus === 'unmatched' \? ' tag-unknown' : ' ' \+ tagColorClass\(percent\)/);
   assert.match(style, /\.gpu-tag\.tag-accent[^}]*transparent/);
   const bridge = fs.readFileSync(path.join(projectRoot, 'src/view/assets/ui.mjs'), 'utf8');
   assert.match(bridge, /function sendToExtension\(/);

@@ -15,7 +15,7 @@ function harness(t, minutes = 5) {
   t.mock.method(Date, 'now', () => wall);
   t.mock.method(performance, 'now', () => now);
   state.config = { refreshInterval: 2, display: { sparkMinutes: minutes } };
-  state.ui = { paused: false, canAnimate: true };
+  state.ui = { paused: false };
   charts.initializeCharts();
   const history = new MetricHistory();
   const model = {
@@ -39,8 +39,8 @@ function harness(t, minutes = 5) {
     publish(history.recordDisplayFrames(model, [now], now, minutes * 60000));
   }
   function restore() { data.applySamples(history.samples, { replace: true, timeline: history.timeline(now) }); }
-  function stop(at, gap = true) { time(at); history.stop(now, { gap }); publish(); data.setSparkActivity(true, true); }
-  function resume(at) { time(at); history.resume(now); publish(); data.setSparkActivity(false, true); }
+  function stop(at, gap = true) { time(at); history.stop(now, { gap }); publish(); state.ui.paused = true; }
+  function resume(at) { time(at); history.resume(now); publish(); state.ui.paused = false; }
   function interval(value, at) {
     time(at); history.setSampleInterval(value * 1000, now); state.config.refreshInterval = value; publish();
   }
