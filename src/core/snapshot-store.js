@@ -65,4 +65,4 @@ class SnapshotStore {
   }
 }
 
-module.exports = { PARTITIONS, SnapshotStore };
+module.exports = { SnapshotStore };

@@ -1,7 +1,6 @@
 'use strict';
 const { CpuCollector } = require('./cpu-collector');
 const { parseMemoryInfo } = require('../domain/linux-parsers');
-const { performance } = require('node:perf_hooks');
 const { NetworkCollector } = require('./network-collector');
 const { DiskIoCollector } = require('./disk-io-collector');
 
@@ -9,35 +8,45 @@ const RESOURCE_INPUTS = {
   cpu: ['/proc/stat', '/proc/loadavg'], memory: ['/proc/meminfo'],
   network: ['/proc/net/dev', '/proc/net/route'], diskIo: ['/proc/diskstats'],
 };
-const RESOURCE_FILES = Object.values(RESOURCE_INPUTS).flat();
 const OPTIONAL_FILES = new Set(['/proc/net/route']);
 const marker = index => `__SYSMON_RESOURCE_${index}__\n`;
-const resourceCommand = files => files.map((file, index) =>
-  `printf '${marker(index)}'; cat '${file}' ${OPTIONAL_FILES.has(file) ? '2>/dev/null || :' : '|| exit $?'}; printf '\\n'`).join('\n') + `\nprintf '${marker(files.length)}'`;
-const RESOURCE_COMMAND = resourceCommand(RESOURCE_FILES);
+const incomplete = () => Object.assign(new Error('Incomplete resource sample'), { code: 'EINCOMPLETE' });
+const resourceCommand = files => [
+  'read -r started ignored < /proc/uptime || exit 1',
+  ...files.map((file, index) =>
+    `printf '${marker(index)}'; cat '${file}' ${OPTIONAL_FILES.has(file) ? '2>/dev/null || :' : '|| exit $?'}; printf '\\n'`),
+  'read -r finished ignored < /proc/uptime || exit 1',
+  `printf '${marker(files.length)}%s %s\\n' "$started" "$finished"`,
+].join('\n');
 
-function parseResourceFiles(stdout, files = RESOURCE_FILES) {
+function parseResourceFiles(stdout, files) {
   const values = new Map();
   let offset = 0;
   for (let index = 0; index < files.length; index++) {
     const start = marker(index), end = marker(index + 1);
-    if (!stdout.startsWith(start, offset)) throw new Error('Incomplete resource sample');
+    if (!stdout.startsWith(start, offset)) throw incomplete();
     const next = stdout.indexOf(end, offset + start.length);
-    if (next < 0) throw new Error('Incomplete resource sample');
+    if (next < 0) throw incomplete();
     values.set(files[index], stdout.slice(offset + start.length, next));
     offset = next;
   }
-  return values;
+  const end = marker(files.length);
+  const timing = stdout.startsWith(end, offset) && stdout.slice(offset + end.length).match(/^(\d+(?:\.\d+)?) (\d+(?:\.\d+)?)\n$/);
+  if (!timing) throw incomplete();
+  return { values, sampledAt: (Number(timing[1]) + Number(timing[2])) / 2 * 1000 };
 }
 
 class ResourceCollector {
-  constructor({ fileReader, commandRunner = null, keys = Object.keys(RESOURCE_INPUTS) }) {
-    this.fileReader = fileReader;
+  constructor({ commandRunner, keys = Object.keys(RESOURCE_INPUTS) }) {
     this.commandRunner = commandRunner;
+    this.keys = keys;
+    this.reset();
+  }
+
+  reset() {
     this.cpu = new CpuCollector();
     this.network = new NetworkCollector();
     this.diskIo = new DiskIoCollector();
-    this.keys = keys;
   }
 
   setKeys(keys) {
@@ -52,15 +61,8 @@ class ResourceCollector {
     const keys = [...this.keys];
     const {cpu, network, diskIo} = this;
     const inputs = keys.flatMap(key => RESOURCE_INPUTS[key]);
-    let files;
-    if (this.commandRunner) {
-      const { stdout } = await this.commandRunner.execFile('sh', ['-c', resourceCommand(inputs)]);
-      files = parseResourceFiles(stdout, inputs);
-    } else files = new Map(await Promise.all(inputs.map(async file => {
-      try { return [file, await this.fileReader.readFile(file, 'utf8')]; }
-      catch (error) { if (OPTIONAL_FILES.has(file)) return [file, '']; throw error; }
-    })));
-    const sampledAt = performance.now();
+    const { stdout } = await this.commandRunner.execFile('sh', ['-c', resourceCommand(inputs)]);
+    const { values: files, sampledAt } = parseResourceFiles(stdout, inputs);
     const result = {};
     for (const key of keys) {
       if (key === 'cpu') {
@@ -79,4 +81,4 @@ class ResourceCollector {
   }
 }
 
-module.exports = { ResourceCollector, RESOURCE_FILES, RESOURCE_COMMAND, parseResourceFiles };
+module.exports = { ResourceCollector };

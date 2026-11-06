@@ -9,6 +9,7 @@ const test = require('node:test');
 const { listSshHosts, parseWords } = require('../src/ssh/ssh-config');
 const { SshTransport } = require('../src/ssh/ssh-transport');
 const { SshChannel } = require('../src/ssh/ssh-channel');
+const { resourceCommandRunner } = require('./resource-fixture');
 
 async function waitFor(check) {
   for (let attempt = 0; attempt < 150; attempt++) {
@@ -128,8 +129,8 @@ test('a large disk scan leaves SSH pool capacity available for CPU collection', 
     let cpuReads = 0;
     const reader = { readFile: (file) => transport.execFile('printf', ['%s', file === '/proc/stat'
       ? `cpu ${++cpuReads * 10} 2 3 4 5 6 7 8\ncpu0 1 2 3 4 5 6 7 8\n` : '1.0 2.0 3.0 1/100 123']).then(({ stdout }) => stdout) };
-    const cpu = new CollectorRunner({ key: 'resources', grouped:true, resultKeys:['cpu'], collector: new ResourceCollector({ fileReader:reader,keys:['cpu'] }),
-      snapshotStore: store, cadenceMilliseconds: 2000, timeoutMilliseconds: 250 });
+    const cpu = new CollectorRunner({ key: 'resources', grouped:true, resultKeys:['cpu'], collector: new ResourceCollector({ commandRunner:resourceCommandRunner(reader.readFile),keys:['cpu'] }),
+      snapshotStore: store, timeoutMilliseconds: 250 });
     await cpu.run();
     const values = await disks;
     assert.equal(store.read().cpu.status, 'fresh');
@@ -579,4 +580,98 @@ test('paused SSH transport does not automatically reconnect at cooldown expiry',
     await new Promise((resolve) => setTimeout(resolve, 60));
     assert.equal(attempts, 1);
   } finally { transport.dispose(); }
+});
+
+function fakeSshChild() {
+  const { EventEmitter } = require('node:events');
+  const { PassThrough } = require('node:stream');
+  return Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(),
+    pid: 4242, exitCode: null, signalCode: null, kill() {} });
+}
+
+test('an SSH channel settles output that arrives after exit and reports diagnostics from after its handshake', async () => {
+  const flush = () => new Promise(setImmediate);
+  const errors = [];
+  const child = fakeSshChild();
+  const channel = new SshChannel({ host: 'fixture', spawnProcess: () => child, onClose: (_channel, error) => errors.push(error.message) });
+  const connected = channel.connect();
+  child.stderr.write('Warning: Permanently added fixture to the list of known hosts.\n');
+  child.stdout.write(channel.prefix + 'READY 1 10.0.0.1 50000 10.0.0.2 22\n');
+  await connected;
+  const result = channel.execFile(1, 'printf', ['done'], 1000);
+  child.stdout.write(channel.prefix + 'START 1 - - -\ndone');
+  await flush();
+  child.exitCode = 255;
+  child.emit('exit', 255, null);
+  child.stdout.write('\n' + channel.prefix + 'END 1 0\n');
+  child.stderr.write('\n' + channel.prefix + 'END 1 0\n');
+  assert.deepEqual(await result, { stdout: 'done', stderr: '' });
+  assert.equal(channel.closed, false);
+  child.stderr.write('Connection to fixture closed by remote host.\n');
+  await flush();
+  child.emit('close', 255, null);
+  assert.deepEqual(errors, ['Connection to fixture closed by remote host.']);
+  const quiet = fakeSshChild();
+  const second = new SshChannel({ host: 'fixture', spawnProcess: () => quiet, onClose: (_channel, error) => errors.push(error.message) });
+  const ready = second.connect();
+  quiet.stderr.write('Warning: Permanently added fixture to the list of known hosts.\n');
+  quiet.stdout.write(second.prefix + 'READY 1\n');
+  await ready;
+  quiet.exitCode = 255;
+  quiet.emit('close', 255, null);
+  assert.equal(errors.at(-1), 'SSH exited (255)');
+});
+
+test('an invalid remote timeout budget fails only its request and the dispatcher keeps serving', async () => {
+  const dispatcher = await fs.readFile(path.join(__dirname, '../src/ssh/dispatcher.sh'), 'utf8');
+  assert.equal(dispatcher.match(/run_command\(\)/g).length, 1);
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }),
+  });
+  try {
+    await transport.connect();
+    const channel = [...transport.channels][0];
+    await assert.rejects(channel.execFile(80, 'true', [], 1000, false, undefined, NaN), { code: 'EREMOTE', message: /Invalid timeout budget/ });
+    assert.equal(channel.closed, false);
+    assert.equal((await channel.execFile(81, 'printf', ['alive'], 1000)).stdout, 'alive');
+  } finally { transport.dispose(); }
+});
+
+test('an idle SSH transport keeps one channel and restores the pool when sampling resumes', async () => {
+  let starts = 0;
+  const transport = new SshTransport({ host: 'fixture', requireLinux: false,
+    spawnProcess: () => { starts++; return spawn('sh', ['-s'], { stdio: ['pipe', 'pipe', 'pipe'] }); },
+  });
+  try {
+    await Promise.all(Array.from({ length: 4 }, () => transport.execFile('sleep', ['0.1'])));
+    assert.equal(transport.channels.size, 4);
+    transport.setIdle(true);
+    await waitFor(() => transport.channels.size === 1);
+    await Promise.all(Array.from({ length: 3 }, () => transport.execFile('sleep', ['0.05'])));
+    assert.equal(transport.channels.size, 1);
+    assert.equal(transport.ready, true);
+    transport.setIdle(false);
+    await Promise.all(Array.from({ length: 4 }, () => transport.execFile('sleep', ['0.1'])));
+    assert.equal(transport.channels.size, 4);
+    assert.equal(starts, 7);
+  } finally { transport.dispose(); }
+});
+
+test('remote system facts share concurrent reads and cache only valid values', async () => {
+  const { RemoteSystemInfo } = require('../src/ssh/remote-system-info');
+  let reads = 0, memory = 'MemTotal: 0 kB\n', user = 'unknown\n';
+  const info = new RemoteSystemInfo({
+    fileReader: { async readFile(file) { reads++; await new Promise(setImmediate); return file === '/proc/meminfo' ? memory : 'cpu 1 2\ncpu0 1 2\ncpu1 1 2\n'; } },
+    commandRunner: { async execFile() { return { stdout: user }; } },
+  });
+  await assert.rejects(info.totalMemoryBytes(), { code: 'EINCOMPLETE' });
+  memory = 'MemTotal: 1000 kB\n';
+  assert.deepEqual(await Promise.all([info.totalMemoryBytes(), info.totalMemoryBytes()]), [1024000, 1024000]);
+  assert.equal(reads, 2);
+  assert.equal(await info.totalMemoryBytes(), 1024000);
+  assert.equal(reads, 2);
+  assert.equal(await info.coreCount(), 2);
+  await assert.rejects(info.userId(), { code: 'EINCOMPLETE' });
+  user = '1000\n';
+  assert.equal(await info.userId(), 1000);
 });

@@ -45,8 +45,6 @@ class ConfigStore {
     this.flushPromise = null;
   }
 
-  get dirtyKeys() { return new Set(this.pending.keys()); }
-  get isWriting() { return this.flushPromise !== null; }
   raw(configuration, key) {
     const value = configuration.inspect(key)?.globalValue;
     return upgradeSetting(key, value) || value;

@@ -15,7 +15,7 @@ async function collectReadyValue(collector, signal, onPartial) {
 }
 
 class CollectorRunner {
-  constructor({ key, resultKeys = [key], grouped = resultKeys.length > 1, collector, snapshotStore, cadenceMilliseconds, timeoutMilliseconds, clock = () => Date.now(), onStatusChange = () => {}, onSettled = () => {} }) {
+  constructor({ key, resultKeys = [key], grouped = resultKeys.length > 1, collector, snapshotStore, minimumIntervalMilliseconds = 0, timeoutMilliseconds, clock = () => Date.now(), onStatusChange = () => {}, onSettled = () => {} }) {
     this.key = key;
     this.collector = collector;
     this.resultKeys = resultKeys;
@@ -23,7 +23,9 @@ class CollectorRunner {
     this.enabled = true;
     this.resetOnNextRun = false;
     this.snapshotStore = snapshotStore;
-    this.cadenceMilliseconds = cadenceMilliseconds;
+    this.minimumIntervalMilliseconds = minimumIntervalMilliseconds;
+    this.cadenceCycles = 1;
+    this.elapsedCycles = Infinity;
     this.timeoutMilliseconds = timeoutMilliseconds;
     this.clock = clock;
     this.onStatusChange = onStatusChange;
@@ -32,14 +34,11 @@ class CollectorRunner {
     this.dispatchController = null;
     this.idle = Promise.resolve();
     this.isRunning = false;
-    this.nextDueAt = 0;
     this.generation = 0;
   }
 
-  setCadence(cadenceMilliseconds) {
-    if (this.nextDueAt) this.nextDueAt += cadenceMilliseconds - this.cadenceMilliseconds;
-    this.cadenceMilliseconds = cadenceMilliseconds;
-  }
+  markDue() { this.elapsedCycles = Infinity; }
+  advanceCycle() { this.elapsedCycles += 1; }
   setDemand(resultKeys) {
     const previous = this.enabled ? this.resultKeys : [];
     if (previous.length === resultKeys.length && previous.every((key, index) => key === resultKeys[index])) return false;
@@ -51,7 +50,7 @@ class CollectorRunner {
     this.enabled = resultKeys.length > 0;
     this.collector.setKeys?.(resultKeys);
     this.resetOnNextRun = true;
-    this.nextDueAt = 0;
+    this.markDue();
     return true;
   }
 
@@ -61,7 +60,7 @@ class CollectorRunner {
       this.onStatusChange(key, this.snapshotStore.read()[key].status, error);
     }
   }
-  isDue(now) { return now >= this.nextDueAt; }
+  isDue() { return this.elapsedCycles >= this.cadenceCycles; }
   invalidate({ abortRunning = true, reason = 'Collection disposed' } = {}) {
     this.generation += 1;
     const error = new Error(reason);
@@ -76,9 +75,9 @@ class CollectorRunner {
     await this.idle;
   }
 
-  startIfDue(now = this.clock()) {
-    if (!this.enabled || this.isRunning || !this.isDue(now)) return false;
-    this.run(now);
+  startIfDue() {
+    if (!this.enabled || this.isRunning || !this.isDue()) return false;
+    this.run();
     return true;
   }
 
@@ -95,7 +94,7 @@ class CollectorRunner {
   }
 
   async collect(attemptedAt) {
-    this.nextDueAt = attemptedAt + this.cadenceMilliseconds;
+    this.elapsedCycles = 0;
     for (const key of this.resultKeys) this.snapshotStore.markAttempted(key, attemptedAt);
     const generation = this.generation;
     const controller = new AbortController();

@@ -9,6 +9,7 @@ const { ResourceCollector } = require('../src/collectors/resource-collector');
 const { SnapshotStore } = require('../src/core/snapshot-store');
 const { CollectorRunner } = require('../src/core/collector-runner');
 const { buildMonitorViewModel } = require('../src/services/monitor-view-model');
+const { resourceCommandFiles, resourceCommandRunner } = require('./resource-fixture');
 
 const hiddenGroups = { cpu:true, memory:true, disk:true, network:true, gpuCards:true, gpuSummary:true };
 const disabledConfig = () => normalizeConfig({ display:{hiddenGroups}, statusBar:{barEnabled:false} });
@@ -16,8 +17,9 @@ const disabledConfig = () => normalizeConfig({ display:{hiddenGroups}, statusBar
 test('panel and the applicable status bar share one metric demand calculation', () => {
   const config = disabledConfig();
   assert.deepEqual(collectionDemand(config), {
-    cpu:false, memory:false, network:false, diskIo:false, diskTopology:false, sshTraffic:false, accelerators:false, processes:true,
+    cpu:false, memory:false, network:false, diskIo:false, diskTopology:false, sshTraffic:false, accelerators:false, processes:false,
   });
+  assert.equal(collectionDemand(config, { processes:true }).processes, true);
   config.statusBar.barEnabled = true;
   config.statusBar.diskIO = 'read';
   config.statusBar.gpu.summary = false;
@@ -33,6 +35,7 @@ test('disabled modules leave scheduling, failures and initial readiness together
   service.pause(); t.after(() => service.dispose());
   for (const key of ['cpu','memory','diskIo','diskTopology','accelerators']) service.snapshotStore.fail(key, new Error('failed'));
   service.updateConfig(disabledConfig());
+  service.setProcessDemand(true);
   assert.deepEqual(service.requiredKeys(), []);
   assert.deepEqual(service.requiredKeys('proc'), ['processes']);
   for (const runner of service.runners) assert.equal(runner.enabled, runner.key === 'processes');
@@ -56,9 +59,9 @@ test('a hidden disk is omitted from the resource read and cannot fail the other 
     '/proc/meminfo':'MemTotal: 1000 kB\nMemAvailable: 400 kB\n',
     '/proc/net/dev':'Inter-| Receive | Transmit\nface | bytes\neth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n', '/proc/net/route':'',
   };
-  const collector = new ResourceCollector({fileReader:{async readFile(file) {
+  const collector = new ResourceCollector({commandRunner:resourceCommandRunner(async file => {
     read.push(file); if (!(file in files)) throw new Error('disk unavailable'); return files[file];
-  }}});
+  })});
   collector.setKeys(['cpu','memory','network']);
   assert.deepEqual(Object.keys(await collector.collect()), ['cpu','memory','network']);
   assert.equal(read.includes('/proc/diskstats'), false);
@@ -68,14 +71,14 @@ test('a single selected resource is still transported and committed as a grouped
   let commandText;
   const collector = new ResourceCollector({keys:['memory'], commandRunner:{async execFile(command,args) {
     assert.equal(command, 'sh'); commandText = args[1];
-    return {stdout:'__SYSMON_RESOURCE_0__\nMemTotal: 1000 kB\nMemAvailable: 400 kB\n\n__SYSMON_RESOURCE_1__\n'};
+    return {stdout:'__SYSMON_RESOURCE_0__\nMemTotal: 1000 kB\nMemAvailable: 400 kB\n\n__SYSMON_RESOURCE_1__\n12.00 12.01\n'};
   }}});
   const store = new SnapshotStore();
   const runner = new CollectorRunner({key:'resources', grouped:true, resultKeys:['memory'], collector, snapshotStore:store,
-    cadenceMilliseconds:2000, timeoutMilliseconds:1000});
+    timeoutMilliseconds:1000});
   await runner.run();
   assert.equal(store.read().memory.value.usagePercent, 60);
-  assert.match(commandText, /\/proc\/meminfo/); assert.doesNotMatch(commandText, /diskstats|\/proc\/stat|\/proc\/net/);
+  assert.deepEqual(resourceCommandFiles(commandText), ['/proc/meminfo']);
   assert.equal(store.read().cpu.value, null);
 });
 
@@ -107,7 +110,7 @@ test('the configured local status bar does not keep remote server collectors run
 
 test('re-enabling counter resources establishes a fresh baseline', async () => {
   let sectors=10;
-  const collector=new ResourceCollector({keys:['diskIo'],fileReader:{readFile:async()=>`8 0 sda 0 0 ${sectors} 0 0 0 20 0 0 0 0 0\n`}});
+  const collector=new ResourceCollector({keys:['diskIo'],commandRunner:resourceCommandRunner(async()=>`8 0 sda 0 0 ${sectors} 0 0 0 20 0 0 0 0 0\n`)});
   assert.equal((await collector.collect()).diskIo.readBytesPerSecond,null);
   collector.setKeys([]); sectors=100000;
   collector.setKeys(['diskIo']);
@@ -116,7 +119,7 @@ test('re-enabling counter resources establishes a fresh baseline', async () => {
 
 test('process CPU normalization is available without the CPU utilization collector', async () => {
   const {ProcessCollector}=require('../src/collectors/process-collector');
-  const collector=new ProcessCollector({commandRunner:{execFile:async()=>({stdout:'__SYSMON_PROCESSES__ 1 0\n7 root 50.0 2048 Sun Jul 13 12:34:56 2026 /bin/test\n'})},
+  const collector=new ProcessCollector({commandRunner:{execFile:async()=>({stdout:'__SYSMON_PROCESSES__ 1 0\n7 root 50.0 2048 Sun Jul 13 12:34:56 2026 /bin/test\n__SYSMON_SESSIONS__\n'})},
     systemInfo:{totalMemoryBytes:async()=>1024**3,coreCount:async()=>4}});
   const store=new SnapshotStore(); store.reset('cpu','disabled'); store.commit('processes',await collector.collect());
   const model=buildMonitorViewModel(store.read(),'en');

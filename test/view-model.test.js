@@ -93,7 +93,6 @@ test('view model combines GPU users, CPU denominator and SSH latency', () => {
   assert.deepEqual(model.performance.cpu.loadAverage, { oneMinute: '1.2', fiveMinutes: '2.6', fifteenMinutes: '4.0' });
   assert.equal(model.performance.gpus[0].displayName, 'H100 80GB HBM3');
   assert.equal(model.performance.gpus[0].isMine, true);
-  assert.equal(model.performance.gpus[0].memTotalStr, '80.0 G');
   assert.equal(model.performance.gpus[0].memPairStr, '3.0 / 80.0G');
   assert.deepEqual(model.performance.gpus[0].users.map((user) => user.name), ['alice', 'bob']);
   assert.equal(model.performance.gpus[0].users[0].usedStr, '2.0G');

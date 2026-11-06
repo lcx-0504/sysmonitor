@@ -9,8 +9,7 @@ class NetworkCollector {
     const defaultRouteInterfaces = parseDefaultRouteInterfaces(routeRaw);
     let counters = parseNetworkCounters(deviceRaw, defaultRouteInterfaces);
     let interfaces = [...defaultRouteInterfaces].filter(name => counters.availableInterfaces.includes(name));
-    const usedFallbackInterfaces = interfaces.length === 0;
-    if (usedFallbackInterfaces) {
+    if (interfaces.length === 0) {
       if (defaultRouteInterfaces.size) counters = parseNetworkCounters(deviceRaw);
       interfaces = counters.availableInterfaces;
     }
@@ -26,10 +25,10 @@ class NetworkCollector {
         receiveBytesPerSecond = receiveDelta / elapsedSeconds;
         transmitBytesPerSecond = transmitDelta / elapsedSeconds;
       }
-      else if (receiveDelta < 0 || transmitDelta < 0) resetFields = ['receiveBytesPerSecond', 'transmitBytesPerSecond'];
+      else if (elapsedSeconds < 0 || receiveDelta < 0 || transmitDelta < 0) resetFields = ['receiveBytesPerSecond', 'transmitBytesPerSecond'];
     }
     this.previous = { ...counters, sampledAt, sampleIdentity };
-    return { receiveBytesPerSecond, transmitBytesPerSecond, sampleIdentity, resetFields, interfaces, usedFallbackInterfaces };
+    return { receiveBytesPerSecond, transmitBytesPerSecond, sampleIdentity, resetFields, interfaces };
   }
 }
 module.exports = { NetworkCollector };

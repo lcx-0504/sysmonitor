@@ -9,6 +9,7 @@ function createSessionFixture({ id = 'local', remote = false, paused = false, ch
   let publish;
   const transport = remote ? {
     onState() {},
+    setIdle(idle) { this.idle = idle; },
     async connect() { this.onState('connected'); },
     async retryNow() { return this.connect(); },
     dispose() {},
@@ -19,12 +20,19 @@ function createSessionFixture({ id = 'local', remote = false, paused = false, ch
       publish = () => options.onSnapshot(store.read());
       return {
         scheduler: { isPaused: true },
+        processDemand: false,
+        setProcessDemand(demanded) {
+          this.processDemand = demanded;
+          store.reset('processes', demanded ? 'loading' : 'disabled');
+        },
         pause() { this.scheduler.isPaused = true; },
         resume() { this.scheduler.isPaused = false; },
         async collectOnce({ onStart = () => {} } = {}) { onStart(); },
         updateConfig() {}, dispose() {}, readSnapshot: () => store.read(), ...service,
-        requiredKeys:page => Object.entries(require('../src/services/collection-demand').collectionDemand(configStore.getCurrent(), {statusBarAvailable:!remote}))
-          .filter(([key, enabled]) => enabled && (key !== 'processes' || page === 'proc')).map(([key]) => key),
+        requiredKeys(page) {
+          return Object.entries(require('../src/services/collection-demand').collectionDemand(configStore.getCurrent(), { statusBarAvailable:!remote, processes:this.processDemand }))
+            .filter(([key, enabled]) => enabled && (key !== 'processes' || page === 'proc')).map(([key]) => key);
+        },
       };
     },
   });

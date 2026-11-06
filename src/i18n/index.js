@@ -18,10 +18,11 @@ function createTranslator(language) {
 
 function localizeError(error, language) {
   if (!error) return '';
-  const keys = { ETIMEDOUT:'collectionTimeout', EBUSY:'collectionBusy',
+  const keys = { ETIMEDOUT:'collectionTimeout', EBUSY:'collectionBusy', EINCOMPLETE:'collectionIncomplete',
+    EREMOTE:'remoteCommandFailed', EPLATFORM:'remoteNotLinux', EMAXBUFFER:'commandOutputTooLarge', ENOENT:'commandNotFound', PS_UNSUPPORTED:'psUnsupported',
     GPU_OCCUPANCY_UNAVAILABLE:'gpuOccupancyUnavailable', GPU_IDENTITY_UNAVAILABLE:'gpuIdentityUnavailable' };
   const key = typeof error === 'object' && keys[error.code];
-  return key ? createTranslator(language)(key) : String(typeof error === 'object' ? error.message || '' : error);
+  return key ? createTranslator(language)(key, { message: String(error.message || '').trim() }) : String(typeof error === 'object' ? error.message || '' : error);
 }
 
 if (typeof module !== 'undefined') var catalogs = require('./catalogs');

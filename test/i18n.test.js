@@ -50,5 +50,5 @@ test('error categories localize independently from raw diagnostic text', () => {
   assert.equal(localizeError({code:'ETIMEDOUT',message:'network detail'},'zh-CN'),'采集超时');
   assert.equal(localizeError({code:'GPU_OCCUPANCY_UNAVAILABLE',message:'command exited'},'zh-CN'),'GPU 占用信息不可用');
   assert.equal(localizeError({code:'GPU_IDENTITY_UNAVAILABLE',message:'lookup failed'},'zh-CN'),catalogs['zh-CN'].gpuIdentityUnavailable);
-  assert.equal(localizeError({code:'EREMOTE',message:'contains collection timed out as payload'},'zh-CN'),'contains collection timed out as payload');
+  assert.equal(localizeError({code:'EREMOTE',message:'contains collection timed out as payload'},'zh-CN'),'远程命令执行失败：contains collection timed out as payload');
 });

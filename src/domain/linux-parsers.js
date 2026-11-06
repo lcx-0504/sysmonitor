@@ -15,8 +15,9 @@ function parseMemoryInfo(raw) {
     return match ? Number(match[1]) * 1024 : null;
   };
   const totalBytes = readKilobytes('MemTotal');
-  const availableBytes = readKilobytes('MemAvailable');
-  if (totalBytes === null || availableBytes === null || totalBytes <= 0 || availableBytes > totalBytes) throw new Error('Incomplete /proc/meminfo');
+  const reclaimable = ['MemFree', 'Buffers', 'Cached'].map(readKilobytes);
+  const availableBytes = readKilobytes('MemAvailable') ?? (reclaimable.includes(null) ? null : reclaimable.reduce((sum, value) => sum + value, 0));
+  if (totalBytes === null || availableBytes === null || totalBytes <= 0 || availableBytes > totalBytes) throw Object.assign(new Error('Incomplete /proc/meminfo'), { code: 'EINCOMPLETE' });
   const usedBytes = totalBytes - availableBytes;
   return { totalBytes, availableBytes, usedBytes, usagePercent: Math.round(usedBytes / totalBytes * 100) };
 }
@@ -108,4 +109,17 @@ function parseProcessOutput(raw, totalMemoryBytes) {
   return processes;
 }
 
-module.exports = { parseCpuStat, parseDefaultRouteInterfaces, parseDiskIoCounters, parseMemoryInfo, parseNetworkCounters, parseProcessOutput, processStartTime };
+function parseProcessSessions(raw) {
+  const sessions = new Map();
+  for (const line of raw.split('\n')) {
+    const [pid, type, ...parts] = line.split('\t');
+    const id = parts.join('\t');
+    if (!/^\d+$/.test(pid) || !id) continue;
+    if (type === 'tmux') sessions.set(Number(pid), { type, name: id, id });
+    const screen = type === 'screen' && id.match(/^\d+\.(.+)$/s);
+    if (screen) sessions.set(Number(pid), { type, name: screen[1], id });
+  }
+  return sessions;
+}
+
+module.exports = { parseCpuStat, parseDefaultRouteInterfaces, parseDiskIoCounters, parseMemoryInfo, parseNetworkCounters, parseProcessOutput, parseProcessSessions, processStartTime };

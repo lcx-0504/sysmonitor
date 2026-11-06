@@ -28,14 +28,45 @@ test('SnapshotStore distinguishes successful empty results from failures with st
 });
 
 
-test('forced resume makes every collector due', () => {
-  const service = Object.create(MonitorService.prototype);
-  service.runners = [{ nextDueAt: 100 }, { nextDueAt: 200 }];
-  let resumed = false;
-  service.scheduler = { resume() { resumed = true; } };
+test('forced resume makes every collector due and pausing resets counter baselines', t => {
+  const { normalizeConfig } = require('../src/config/normalize-config');
+  const service = new MonitorService({ runtimeConfig: normalizeConfig({}), isSsh: false });
+  t.after(() => service.dispose());
+  const resets = () => service.runners.filter(runner => runner.resetOnNextRun).map(runner => runner.key);
+  for (const runner of service.runners) runner.resetOnNextRun = false;
+  service.pause();
+  assert.deepEqual(resets(), ['resources', 'sshTraffic']);
+  for (const runner of service.runners) { runner.resetOnNextRun = false; runner.elapsedCycles = 0; }
+  service.scheduler.resume = () => {};
+  service.resume();
+  assert.deepEqual(resets(), []);
+  assert.ok(service.runners.every(runner => !runner.isDue()));
   service.resume({ force: true });
-  assert.deepEqual(service.runners.map((runner) => runner.nextDueAt), [0, 0]);
-  assert.equal(resumed, true);
+  assert.deepEqual(resets(), ['resources', 'sshTraffic']);
+  assert.ok(service.runners.every(runner => runner.isDue()));
+});
+
+test('the resource collector clears every counter baseline on reset', async () => {
+  const { ResourceCollector } = require('../src/collectors/resource-collector');
+  const { resourceCommandRunner } = require('./resource-fixture');
+  let counter = 100;
+  const files = {
+    '/proc/stat': () => `cpu ${counter} 0 10 80 0 0 0 0\ncpu0 1 0 1 8\n`, '/proc/loadavg': () => '1 2 3 1/10 5\n',
+    '/proc/meminfo': () => 'MemTotal: 1000 kB\nMemAvailable: 400 kB\n',
+    '/proc/net/dev': () => `Inter-| Receive | Transmit\nface | bytes\neth0: ${counter} 0 0 0 0 0 0 0 ${counter} 0 0 0 0 0 0 0\n`,
+    '/proc/net/route': () => 'Iface Destination Gateway Flags\neth0 00000000 0 0003\n',
+    '/proc/diskstats': () => `8 0 sda 0 0 ${counter} 0 0 0 ${counter} 0 0 0 0 0\n`,
+  };
+  const collector = new ResourceCollector({ commandRunner: resourceCommandRunner(async file => files[file]()) });
+  await collector.collect();
+  counter += 100;
+  const warmed = await collector.collect();
+  assert.equal(collector.needsWarmup(warmed), false);
+  collector.reset();
+  counter += 100;
+  const reset = await collector.collect();
+  assert.equal(collector.needsWarmup(reset), true);
+  assert.deepEqual([reset.cpu.usagePercent, reset.network.receiveBytesPerSecond, reset.diskIo.readBytesPerSecond], [null, null, null]);
 });
 
 
@@ -65,6 +96,7 @@ test('regular publication uses the current snapshot at fixed ticks without await
       return new Promise(resolve => pending.set(runner.key, resolve));
     } };
   }
+  service.setProcessDemand(true);
   const flush = () => new Promise(setImmediate);
   function finish(key, value) {
     const runner = service.runners.find(item => item.key === key);
@@ -147,4 +179,39 @@ test('CommandRunner executes without a shell and returns bounded command output'
   const runner = new CommandRunner();
   const result = await runner.execFile(process.execPath, ['-e', 'process.stdout.write("ok")']);
   assert.equal(result.stdout, 'ok'); runner.dispose();
+});
+
+test('local command timeouts, cancellation and disposal stop the whole process group', { skip: process.platform === 'win32' }, async t => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sysmonitor-groups-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runner = new CommandRunner();
+  t.after(() => runner.dispose());
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const descendant = name => ['sh', ['-c', 'sleep 30 & echo $! > "$1"; wait', 'fixture', path.join(root, name)]];
+  const descendantPid = async name => {
+    for (let attempt = 0; attempt < 100 && !fs.existsSync(path.join(root, name)); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+    return Number(fs.readFileSync(path.join(root, name), 'utf8'));
+  };
+  const settle = async pid => { for (let attempt = 0; attempt < 100 && alive(pid); attempt++) await new Promise(resolve => setTimeout(resolve, 10)); return alive(pid); };
+  await assert.rejects(runner.execFile(...descendant('timeout'), { timeoutMilliseconds: 200 }), { code: 'ETIMEDOUT' });
+  assert.equal(await settle(await descendantPid('timeout')), false);
+  const controller = new AbortController();
+  const cancelled = assert.rejects(runner.execFile(...descendant('cancel'), { signal: controller.signal, timeoutMilliseconds: 5000 }), /cancelled by test/);
+  const cancelledPid = await descendantPid('cancel');
+  controller.abort(new Error('cancelled by test'));
+  await cancelled;
+  assert.equal(await settle(cancelledPid), false);
+  const disposed = new CommandRunner();
+  const running = disposed.execFile(...descendant('dispose'), { timeoutMilliseconds: 5000 });
+  running.catch(() => {});
+  const disposedPid = await descendantPid('dispose');
+  disposed.dispose();
+  await assert.rejects(running);
+  assert.equal(await settle(disposedPid), false);
+  await assert.rejects(runner.execFile('sh', ['-c', 'printf "failure detail\\n" >&2; exit 3']), { code: 3, exitCode: 3, message: 'failure detail' });
+  await assert.rejects(runner.execFile('printf', ['x'.repeat(100)], { maxBufferBytes: 16 }), { code: 'EMAXBUFFER' });
+  await assert.rejects(runner.execFile('sysmonitor-missing-command'), { code: 'ENOENT' });
 });

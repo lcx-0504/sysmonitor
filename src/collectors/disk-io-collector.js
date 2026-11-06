@@ -14,7 +14,7 @@ class DiskIoCollector {
       const readDelta = counters.readBytes - this.previous.readBytes;
       const writeDelta = counters.writeBytes - this.previous.writeBytes;
       if (elapsedSeconds > 0 && readDelta >= 0 && writeDelta >= 0) { readBytesPerSecond = readDelta / elapsedSeconds; writeBytesPerSecond = writeDelta / elapsedSeconds; }
-      else if (readDelta < 0 || writeDelta < 0) resetFields = ['readBytesPerSecond', 'writeBytesPerSecond'];
+      else if (elapsedSeconds < 0 || readDelta < 0 || writeDelta < 0) resetFields = ['readBytesPerSecond', 'writeBytesPerSecond'];
     }
     this.previous = { ...counters, sampledAt, sampleIdentity };
     return { readBytesPerSecond, writeBytesPerSecond, resetFields, sampleIdentity };

@@ -22,6 +22,7 @@ class SshTransport {
     this.opening = null;
     this.connected = false;
     this.closed = false;
+    this.idle = false;
     this.retryAfter = 0;
     this.expansionAfter = 0;
     this.retryTimer = null;
@@ -33,6 +34,7 @@ class SshTransport {
   }
 
   get ready() { return [...this.channels].some((channel) => channel.ready); }
+  get connectionLimit() { return this.idle ? 1 : this.maxConnections; }
   get sshConnections() {
     const connections = [...this.channels].filter((channel) => channel.ready && channel.connection).map((channel) => channel.connection);
     return [...new Map(connections.map((connection) => [JSON.stringify(connection), connection])).values()];
@@ -43,7 +45,7 @@ class SshTransport {
     if (this.ready) return Promise.resolve();
     if (this.opening) return this.opening;
     if (Date.now() < this.retryAfter) return Promise.reject(this.lastError || new Error('SSH reconnect waiting'));
-    if (this.channels.size >= this.maxConnections) {
+    if (this.channels.size >= this.connectionLimit) {
       return Promise.race([...this.channels].map((channel) => channel.exitPromise)).then(() => this.connect());
     }
     if (!this.connected) this.onState('connecting');
@@ -105,6 +107,11 @@ class SshTransport {
     this.drain();
   }
 
+  setIdle(idle) {
+    this.idle = idle;
+    this.drain();
+  }
+
   execFile(command, args = [], options = {}) {
     try { options = executionOptions(options); } catch (error) { return Promise.reject(error); }
     if (this.closed) return Promise.reject(new Error('SSH transport disposed'));
@@ -152,7 +159,7 @@ class SshTransport {
 
   drain() {
     if (this.closed || Date.now() < this.retryAfter) return;
-    let surplus = [...this.channels].filter(channel => !channel.closed).length - this.maxConnections;
+    let surplus = [...this.channels].filter(channel => !channel.closed).length - this.connectionLimit;
     for (const channel of this.channels) {
       if (surplus <= 0) break;
       if (channel.ready && !channel.request && !channel.closed) {
@@ -171,7 +178,7 @@ class SshTransport {
         (result) => task.finish(null, result), (error) => task.finish(error));
     }
     if (this.nextQueuedTask() && !this.opening
-      && this.channels.size < this.maxConnections && Date.now() >= this.expansionAfter) {
+      && this.channels.size < this.connectionLimit && Date.now() >= this.expansionAfter) {
       if (!this.connected) this.onState('connecting');
       this.openChannel().catch(() => {});
     }

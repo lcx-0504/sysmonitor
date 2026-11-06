@@ -2,11 +2,11 @@
 const { DEFAULT_CONFIG } = require('../config/default-config');
 
 const COLLECTION_POLICY = Object.freeze({
-  resources: { budget: 'standard', resultKeys:['cpu','memory','network','diskIo'] },
-  sshTraffic: { budget: 'standard' },
+  resources: { budget: 'standard', resultKeys:['cpu','memory','network','diskIo'], counters: true },
+  sshTraffic: { budget: 'standard', counters: true },
   processes: { budget: 'extended' },
   accelerators: { budget: 'extended' },
-  diskTopology: { budget: 'extended', cadenceMilliseconds: 10000 },
+  diskTopology: { budget: 'extended', minimumIntervalMilliseconds: 10000 },
 });
 
 function effectiveTimeouts(config) {

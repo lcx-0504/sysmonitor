@@ -1,8 +1,7 @@
 'use strict';
 
 const fields = {
-  cpu: ['usagePercent', 'coreCount', 'loadAverage.oneMinute', 'loadAverage.fiveMinutes', 'loadAverage.fifteenMinutes'],
-  memory: ['usagePercent', 'usedBytes', 'availableBytes', 'totalBytes'],
+  cpu: ['usagePercent'],
   network: ['receiveBytesPerSecond', 'transmitBytesPerSecond'],
   diskIo: ['readBytesPerSecond', 'writeBytesPerSecond'],
   sshTraffic: ['clientUploadBytesPerSecond', 'clientDownloadBytesPerSecond', 'latencyMilliseconds'],
