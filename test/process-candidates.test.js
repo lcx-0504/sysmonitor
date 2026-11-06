@@ -272,3 +272,15 @@ test('views independently sort and search the same candidates without changing s
   assert.equal(selectProcessRows(candidates, 'mem', 'alice').rows.length, 100);
   assert.deepEqual(candidates, before);
 });
+
+for (const shell of SHELLS) {
+  test(`long uptimes and CPU counters beyond 32 bits keep full precision (${shell})`, async t => {
+    const rows = [row(7, { command: 'long-running' }), row(8, { command: 'started-in-window' })];
+    const first = { 7: { ticks: 5000000000, start: 400000000 } };
+    const second = { 7: { ticks: 5000000150, start: 400000000 }, 8: { ticks: 40, start: 487939690 } };
+    const source = fixture(t, rows, { first, second, uptime: [4879396.7, 4879397.7], shell });
+    const sample = await source.collector.collect();
+    const cpu = Object.fromEntries(sample.rows.map(process => [process.pid, process.cpuUsagePercent]));
+    assert.deepEqual(cpu, { 7: 150, 8: 50 });
+  });
+}

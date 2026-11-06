@@ -3,12 +3,16 @@ refresh_interval=$2
 proc=${SYSMON_PROC_ROOT:-/proc}
 tab=$(printf '\t')
 stat_reader='
-function read_uptime(    file, line, fields) {
+function uptime_text(    file, line, fields) {
   file = proc "/uptime"
-  if ((getline line < file) <= 0) { close(file); return -1 }
+  if ((getline line < file) <= 0) { close(file); return "" }
   close(file)
   split(line, fields, " ")
-  return (fields[1] ~ /^[0-9]+([.][0-9]+)?$/) ? fields[1] + 0 : -1
+  return (fields[1] ~ /^[0-9]+([.][0-9]+)?$/) ? fields[1] : ""
+}
+function read_uptime(    text) {
+  text = uptime_text()
+  return text == "" ? -1 : text + 0
 }
 function read_stat(file,    line, part, fields) {
   if ((getline line < file) <= 0) { close(file); return 0 }
@@ -26,8 +30,8 @@ function read_stat(file,    line, part, fields) {
 }
 '
 baseline=$(printf '%s\n' "$proc"/[0-9]* | awk -v proc="$proc" "$stat_reader"'
-BEGIN { print read_uptime() }
-read_stat($0 "/stat") { print stat_pid, stat_start, stat_ticks }
+BEGIN { print uptime_text() }
+read_stat($0 "/stat") { printf "%.0f %.0f %.0f\n", stat_pid, stat_start, stat_ticks }
 ')
 clock_ticks=$(getconf CLK_TCK 2>/dev/null)
 case $clock_ticks in ''|*[!0-9]*|0) clock_ticks=100 ;; esac
