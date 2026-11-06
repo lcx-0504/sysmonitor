@@ -180,3 +180,38 @@ test('CommandRunner executes without a shell and returns bounded command output'
   const result = await runner.execFile(process.execPath, ['-e', 'process.stdout.write("ok")']);
   assert.equal(result.stdout, 'ok'); runner.dispose();
 });
+
+test('local command timeouts, cancellation and disposal stop the whole process group', { skip: process.platform === 'win32' }, async t => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sysmonitor-groups-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runner = new CommandRunner();
+  t.after(() => runner.dispose());
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const descendant = name => ['sh', ['-c', 'sleep 30 & echo $! > "$1"; wait', 'fixture', path.join(root, name)]];
+  const descendantPid = async name => {
+    for (let attempt = 0; attempt < 100 && !fs.existsSync(path.join(root, name)); attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+    return Number(fs.readFileSync(path.join(root, name), 'utf8'));
+  };
+  const settle = async pid => { for (let attempt = 0; attempt < 100 && alive(pid); attempt++) await new Promise(resolve => setTimeout(resolve, 10)); return alive(pid); };
+  await assert.rejects(runner.execFile(...descendant('timeout'), { timeoutMilliseconds: 200 }), { code: 'ETIMEDOUT' });
+  assert.equal(await settle(await descendantPid('timeout')), false);
+  const controller = new AbortController();
+  const cancelled = assert.rejects(runner.execFile(...descendant('cancel'), { signal: controller.signal, timeoutMilliseconds: 5000 }), /cancelled by test/);
+  const cancelledPid = await descendantPid('cancel');
+  controller.abort(new Error('cancelled by test'));
+  await cancelled;
+  assert.equal(await settle(cancelledPid), false);
+  const disposed = new CommandRunner();
+  const running = disposed.execFile(...descendant('dispose'), { timeoutMilliseconds: 5000 });
+  running.catch(() => {});
+  const disposedPid = await descendantPid('dispose');
+  disposed.dispose();
+  await assert.rejects(running);
+  assert.equal(await settle(disposedPid), false);
+  await assert.rejects(runner.execFile('sh', ['-c', 'printf "failure detail\\n" >&2; exit 3']), { code: 3, exitCode: 3, message: 'failure detail' });
+  await assert.rejects(runner.execFile('printf', ['x'.repeat(100)], { maxBufferBytes: 16 }), { code: 'EMAXBUFFER' });
+  await assert.rejects(runner.execFile('sysmonitor-missing-command'), { code: 'ENOENT' });
+});

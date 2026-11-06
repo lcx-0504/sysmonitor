@@ -227,6 +227,26 @@ test('missing or failing session commands leave the process list intact', async 
   assert.deepEqual(unknownUser.rows.map(process => process.session), [null, null]);
 });
 
+test('process totals reuse published memory and core counts before querying the host', async t => {
+  const stdout = '__SYSMON_PROCESSES__ 1 0\n7 root 50.0 1048576 Sun Jul 13 12:34:56 2026 /bin/test\n__SYSMON_SESSIONS__\n';
+  let queries = 0;
+  const systemInfo = { async totalMemoryBytes() { queries++; return 4 * 1024 ** 3; }, async coreCount() { queries++; return 8; } };
+  let known = { totalMemoryBytes: 2 * 1024 ** 3, coreCount: 2 };
+  const collector = new ProcessCollector({ commandRunner: { execFile: async () => ({ stdout }) }, systemInfo, knownTotals: () => known });
+  let [first] = (await collector.collect()).rows;
+  assert.deepEqual([first.memoryUsagePercent, first.cpuWhole, queries], [50, 25, 0]);
+  known = {};
+  [first] = (await collector.collect()).rows;
+  assert.deepEqual([first.memoryUsagePercent, first.cpuWhole, queries], [25, 6.25, 2]);
+  const { MonitorService } = require('../src/services/monitor-service');
+  const { normalizeConfig } = require('../src/config/normalize-config');
+  const service = new MonitorService({ runtimeConfig: normalizeConfig({}), isSsh: false });
+  t.after(() => service.dispose());
+  service.snapshotStore.commit('memory', { totalBytes: 1000, availableBytes: 400, usedBytes: 600, usagePercent: 60 });
+  service.snapshotStore.commit('cpu', { usagePercent: 1, coreCount: 16, loadAverage: { oneMinute: 0, fiveMinutes: 0, fifteenMinutes: 0 } });
+  assert.deepEqual(service.runners.find(runner => runner.key === 'processes').collector.knownTotals(), { totalMemoryBytes: 1000, coreCount: 16 });
+});
+
 test('session lines keep tab-separated names and strip only the screen process prefix', () => {
   const sessions = parseProcessSessions('7\ttmux\tname with spaces\n8\tscreen\t12345.pts-0.host\n9\tscreen\tinvalid\n10\tunknown\tx\nbad\ttmux\tx\n11\ttmux\t\n');
   assert.deepEqual([...sessions], [

@@ -115,9 +115,7 @@ class MonitorSession {
     this.service.updateConfig(config);
     this.sampleUpdates = [];
     if (this.state === 'connected') this.acceptSnapshot(this.service.readSnapshot(), { emit:false });
-    else {
-      if (this.model) this.projectSnapshot(this.service.readSnapshot());
-    }
+    else if (this.model) this.projectSnapshot(this.service.readSnapshot());
     this.notify();
   }
 
@@ -198,9 +196,8 @@ class MonitorSession {
   settleWaiters() {
     const error = this.disposed ? 'Monitor session disposed' : this.state === 'disconnected' ? this.error || 'SSH disconnected while loading' : this.loadError;
     for (const waiter of this.waiters) {
-      const failure = error;
-      if (!failure && !this.initialSampleReady(waiter.since, waiter.page, waiter.afterSequence)) continue;
-      waiter.finish(failure ? new Error(failure) : null);
+      if (!error && !this.initialSampleReady(waiter.since, waiter.page, waiter.afterSequence)) continue;
+      waiter.finish(error ? new Error(error) : null);
     }
   }
 
@@ -268,7 +265,6 @@ class MonitorSession {
   }
 
   dispose() {
-    this.stopChartClock();
     this.disposed = true;
     this.pause();
     this.settleWaiters();

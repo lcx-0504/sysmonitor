@@ -8,7 +8,7 @@ function read_uptime(    file, line, fields) {
   if ((getline line < file) <= 0) { close(file); return -1 }
   close(file)
   split(line, fields, " ")
-  return fields[1] ~ /^[0-9]+([.][0-9]+)?$/ ? fields[1] + 0 : -1
+  return (fields[1] ~ /^[0-9]+([.][0-9]+)?$/) ? fields[1] + 0 : -1
 }
 function read_stat(file,    line, part, fields) {
   if ((getline line < file) <= 0) { close(file); return 0 }
@@ -122,7 +122,8 @@ section == "gpu" {
 }
 section == "tmux" {
   separator = index($0, "\t")
-  if (separator > 1 && separator < length($0) && substr($0, 1, separator - 1) ~ /^[0-9]+$/) tmux[substr($0, 1, separator - 1) + 0] = substr($0, separator + 1)
+  pane = substr($0, 1, separator - 1)
+  if (separator > 1 && separator < length($0) && pane ~ /^[0-9]+$/) tmux[pane + 0] = substr($0, separator + 1)
   next
 }
 section == "screen" {
@@ -165,7 +166,7 @@ END {
       elapsed = finished - stat_start / clock_ticks
       ticks = stat_ticks
     }
-    usage = elapsed > 0 && ticks > 0 ? int(ticks / clock_ticks / elapsed * 1000 + 0.5) / 10 : 0
+    usage = (elapsed > 0 && ticks > 0) ? int(ticks / clock_ticks / elapsed * 1000 + 0.5) / 10 : 0
     if (rss[pid] * 1024 <= 1000000 && usage <= 0) continue
     cpu[pid] = usage
     total++

@@ -80,3 +80,18 @@ test('accelerator availability has one shared idle policy and preserves unknown 
   assert.equal(getAcceleratorAvailability(false, false), 'unknown');
   assert.equal(getAcceleratorAvailability(true, false), 'unknown');
 });
+
+test('common collection error codes have localized messages that keep useful details', () => {
+  const { catalogs, localizeError } = require('../src/i18n');
+  const codes = ['EINCOMPLETE', 'EREMOTE', 'EPLATFORM', 'EMAXBUFFER', 'ENOENT', 'PS_UNSUPPORTED'];
+  for (const language of Object.keys(catalogs)) {
+    const messages = codes.map(code => localizeError({ code, message: 'detail text' }, language));
+    assert.equal(new Set(messages).size, codes.length, language);
+    for (const message of messages) assert.ok(message && message !== 'detail text', language + ': ' + message);
+  }
+  assert.equal(localizeError({ code: 'EREMOTE', message: 'ps: bad -o argument' }, 'en'), 'Remote command failed: ps: bad -o argument');
+  assert.equal(localizeError({ code: 'ENOENT', message: 'spawn findmnt ENOENT' }, 'zh-CN'), '缺少所需的命令或文件：spawn findmnt ENOENT');
+  assert.equal(localizeError({ code: 'EREMOTE', message: '' }, 'zh-TW'), '遠端命令執行失敗');
+  assert.equal(localizeError({ code: 'EPLATFORM', message: 'Remote host is not Linux' }, 'zh-CN'), '服务器不是 Linux 系统');
+  assert.equal(localizeError({ code: 'UNKNOWN', message: 'raw detail' }, 'zh-CN'), 'raw detail');
+});
