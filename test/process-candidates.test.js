@@ -39,7 +39,7 @@ const SHELL_FIXTURE = [
   'alias nvidia-smi=fixture_gpu',
   'getconf() { printf "%s\\n" "$CLOCK_TICKS"; }',
   'id() { printf "id\\n" >> "$FIXTURE_ROOT/session-calls"; printf "%s\\n" "$USER_ID"; }',
-  'tmux() { printf "tmux\\n" >> "$FIXTURE_ROOT/session-calls"; [ -n "$TMUX_ROWS" ] || return 1; printf "%s\\n" "$TMUX_ROWS"; }',
+  'tmux() { printf "tmux\\n" >> "$FIXTURE_ROOT/session-calls"; printf "%s" "$4" > "$FIXTURE_ROOT/tmux-format"; [ -n "$TMUX_ROWS" ] || return 1; printf "%s\\n" "$TMUX_ROWS"; }',
   'screen() { printf "screen\\n" >> "$FIXTURE_ROOT/session-calls"; printf "%s\\n" "$SCREEN_ROWS"; return 1; }',
   'sleep() {',
   '  printf "%s\\n" "$1" >> "$FIXTURE_ROOT/sleeps"',
@@ -78,7 +78,8 @@ function fixture(t, rows, { first = {}, second = first, uptime = [100, 101], gpu
     } },
   });
   const lines = name => fs.existsSync(path.join(root, name)) ? fs.readFileSync(path.join(root, name), 'utf8').trim().split('\n') : [];
-  return { collector, calls, sleeps: () => lines('sleeps'), sessionCalls: () => lines('session-calls') };
+  const tmuxFormat = () => fs.existsSync(path.join(root, 'tmux-format')) ? fs.readFileSync(path.join(root, 'tmux-format'), 'utf8') : null;
+  return { collector, calls, sleeps: () => lines('sleeps'), sessionCalls: () => lines('session-calls'), tmuxFormat };
 }
 
 const steady = (pids, ticks = () => 0) => Object.fromEntries(pids.map(pid => [pid, { ticks: ticks(pid), start: 10 }]));
@@ -222,7 +223,7 @@ test('tmux and screen sessions are attributed to the nearest session of the curr
     [400, 1, 1000, 'python detached.py'], [500, 501, 1000, 'loop-a'], [501, 500, 1000, 'loop-b'], [600, 100, 1001, 'python other-user.py']];
   const rows = tree.map(([pid, ppid, uid, command]) => row(pid, { ppid, uid, user: uid === 1000 ? 'alice' : uid ? 'bob' : 'root', command }));
   const screen = 'There are screens on:\n\t200.exp\t(11/06/2026 10:00:00 AM)\t(Detached)\n\t300.nested\t(Attached)\n\t999.gone\t(Dead ???)\n2 Sockets in /run/screen/S-alice.';
-  const source = fixture(t, rows, { first: steady(tree.map(([pid]) => pid)), tmux: '100\tmy train\nmalformed\n\t\n', screen });
+  const source = fixture(t, rows, { first: steady(tree.map(([pid]) => pid)), tmux: '100 my train\nmalformed\n \n', screen });
   const sample = await source.collector.collect();
   const sessions = Object.fromEntries(sample.rows.map(process => [process.pid, process.session && process.session.type + ':' + process.session.name + ':' + process.session.id]));
   assert.deepEqual(sessions, {
@@ -230,6 +231,7 @@ test('tmux and screen sessions are attributed to the nearest session of the curr
     200: 'screen:exp:200.exp', 201: 'screen:exp:200.exp', 300: 'screen:nested:300.nested', 301: 'screen:nested:300.nested',
     400: null, 500: null, 501: null, 600: null,
   });
+  assert.equal(source.tmuxFormat(), '#{pane_pid} #{session_name}', 'tmux replaces control characters such as tabs under the C locale used for collection');
   const store = new SnapshotStore(); store.commit('processes', sample);
   const model = buildMonitorViewModel(store.read());
   assert.deepEqual(model.processes.find(process => process.pid === 201).session, { type: 'screen', name: 'exp', id: '200.exp' });
@@ -240,13 +242,13 @@ test('failing session commands or an unknown user id leave the process list inta
   const rows = [row(100, { command: 'bash' }), row(101, { ppid: 100 })];
   const sample = await fixture(t, rows, { first: steady([100, 101]), screen: 'No Sockets found in /run/screen/S-alice.' }).collector.collect();
   assert.deepEqual(sample.rows.map(process => [process.pid, process.session]), [[100, null], [101, null]]);
-  const unknownUser = await fixture(t, rows, { first: steady([100, 101]), tmux: '100\tmain', userId: '' }).collector.collect();
+  const unknownUser = await fixture(t, rows, { first: steady([100, 101]), tmux: '100 main', userId: '' }).collector.collect();
   assert.deepEqual(unknownUser.rows.map(process => process.session), [null, null]);
 });
 
 test('absent tmux or screen commands are skipped without being run', async t => {
   const rows = [row(100, { command: 'bash' }), row(101, { ppid: 100 }), row(200, { command: 'SCREEN -S exp' }), row(201, { ppid: 200 })];
-  const options = { first: steady([100, 101, 200, 201]), tmux: '100\tmain', screen: '\t200.exp\t(Detached)' };
+  const options = { first: steady([100, 101, 200, 201]), tmux: '100 main', screen: '\t200.exp\t(Detached)' };
   const absent = (...names) => `command() { case "$2" in ${names.join('|')}) return 1 ;; esac; return 0; }\n`;
   const sessionsOf = sample => sample.rows.map(process => [process.pid, process.session && process.session.type]);
   const neither = fixture(t, rows, { ...options, prelude: absent('tmux', 'screen') });
@@ -261,7 +263,7 @@ test('absent tmux or screen commands are skipped without being run', async t => 
 
 test('tmux and screen are queried only when the current user already runs a server', async t => {
   const rows = [row(100, { command: 'bash' }), row(101, { ppid: 100 }), row(200, { uid: 1001, user: 'bob', command: 'SCREEN -S other' })];
-  const source = fixture(t, rows, { first: steady([100, 101, 200]), tmux: '100\tmain', screen: '\t200.other\t(Detached)', tmuxServer: false });
+  const source = fixture(t, rows, { first: steady([100, 101, 200]), tmux: '100 main', screen: '\t200.other\t(Detached)', tmuxServer: false });
   const sample = await source.collector.collect();
   assert.deepEqual(sample.rows.map(process => process.session), [null, null, null]);
   assert.deepEqual(source.sessionCalls(), ['id']);

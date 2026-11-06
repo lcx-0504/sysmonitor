@@ -1,7 +1,6 @@
 gpu_enabled=$1
 refresh_interval=$2
 proc=${SYSMON_PROC_ROOT:-/proc}
-tab=$(printf '\t')
 stat_reader='
 function uptime_text(    file, line, fields) {
   file = proc "/uptime"
@@ -52,7 +51,7 @@ if command -v tmux > /dev/null 2>&1 || command -v screen > /dev/null 2>&1; then
   user_id=$(id -u 2>/dev/null)
   # Query only servers that already exist: both tools create their socket directories when none exists.
   if [ -n "$user_id" ] && command -v tmux > /dev/null 2>&1 && [ -e "${TMUX_TMPDIR:-/tmp}/tmux-$user_id/default" ]; then
-    tmux_panes=$(tmux list-panes -a -F "#{pane_pid}${tab}#{session_name}" 2>/dev/null) || tmux_panes=
+    tmux_panes=$(tmux list-panes -a -F "#{pane_pid} #{session_name}" 2>/dev/null) || tmux_panes=
   fi
   if [ -n "$user_id" ] && command -v screen > /dev/null 2>&1 &&
     printf '%s\n' "$processes" | awk -v uid="$user_id" '$3 == uid && $11 == "SCREEN" { found = 1 } END { exit !found }'; then
@@ -127,7 +126,7 @@ section == "gpu" {
   next
 }
 section == "tmux" {
-  separator = index($0, "\t")
+  separator = index($0, " ")
   pane = substr($0, 1, separator - 1)
   if (separator > 1 && separator < length($0) && pane ~ /^[0-9]+$/) tmux[pane + 0] = substr($0, separator + 1)
   next
