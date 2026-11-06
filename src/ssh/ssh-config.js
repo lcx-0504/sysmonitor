@@ -5,11 +5,24 @@ const os = require('node:os');
 const path = require('node:path');
 
 function expandHome(value, home = os.homedir()) {
-  return value === '~' ? home : value.startsWith('~/') || value.startsWith('~\\') ? path.join(home, value.slice(2)) : value;
+  if (value === '~') return home;
+  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(home, value.slice(2));
+  return value;
+}
+
+function missingAsEmpty(error) {
+  if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return [];
+  throw error;
+}
+
+function globPart(part) {
+  if (part === '*') return '.*';
+  if (part === '?') return '.';
+  return part.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
 }
 
 function globPattern(pattern) {
-  return new RegExp('^' + pattern.split(/([*?])/).map((part) => part === '*' ? '.*' : part === '?' ? '.' : part.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')).join('') + '$');
+  return new RegExp('^' + pattern.split(/([*?])/).map(globPart).join('') + '$');
 }
 
 async function expandInclude(pattern, home = os.homedir(), fileSystem = fs) {
@@ -20,11 +33,14 @@ async function expandInclude(pattern, home = os.homedir(), fileSystem = fs) {
   const parts = resolved.slice(root.length).split(path.sep).filter(Boolean);
   let candidates = [root];
   for (const part of parts) {
-    if (!/[?*]/.test(part)) { candidates = candidates.map((candidate) => path.join(candidate, part)); continue; }
+    if (!/[?*]/.test(part)) {
+      candidates = candidates.map((candidate) => path.join(candidate, part));
+      continue;
+    }
     const matcher = globPattern(part);
     const next = [];
     for (const candidate of candidates) {
-      const entries = await fileSystem.readdir(candidate).catch(error => { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return []; throw error; });
+      const entries = await fileSystem.readdir(candidate).catch(missingAsEmpty);
       for (const entry of entries.sort()) if (matcher.test(entry)) next.push(path.join(candidate, entry));
     }
     candidates = next;
@@ -46,7 +62,11 @@ function parseWords(raw) {
 async function listSshHosts(configFile, { home = os.homedir(), visited = new Set(), fileSystem = fs } = {}) {
   const file = path.resolve(expandHome(configFile || path.join(home, '.ssh', 'config'), home));
   let canonical;
-  try { canonical = await fileSystem.realpath(file); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return []; throw error; }
+  try {
+    canonical = await fileSystem.realpath(file);
+  } catch (error) {
+    return missingAsEmpty(error);
+  }
   if (visited.has(canonical)) return [];
   visited.add(canonical);
   const contents = await fileSystem.readFile(canonical, 'utf8');

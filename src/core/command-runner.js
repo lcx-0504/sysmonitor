@@ -45,7 +45,10 @@ class CommandRunner {
       try {
         child = spawn(command, args, { detached: PROCESS_GROUPS, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env, ...COLLECTION_ENV, ...(options.env || {}) } });
-      } catch (error) { reject(error); return; }
+      } catch (error) {
+        reject(error);
+        return;
+      }
       const output = { stdout: { text: '', bytes: 0 }, stderr: { text: '', bytes: 0 } };
       let failure = null;
       let inputError = null;
@@ -63,14 +66,21 @@ class CommandRunner {
         if (options.signal) options.signal.removeEventListener('abort', onAbort);
         this.children.delete(child);
         activeChildren.delete(child);
-        const stdout = output.stdout.text, stderr = output.stderr.text;
-        if (failure || error) { reject(Object.assign(failure || error, { stderr })); return; }
-        if (exitCode !== 0) {
-          reject(Object.assign(new Error(stderr.trim() || (signal ? 'Command terminated (' + signal + ')' : 'Command exited (' + exitCode + ')')),
-            { code: exitCode, exitCode, signal, stderr }));
+        const stdout = output.stdout.text;
+        const stderr = output.stderr.text;
+        if (failure || error) {
+          reject(Object.assign(failure || error, { stderr }));
           return;
         }
-        if (inputError) { reject(inputError); return; }
+        if (exitCode !== 0) {
+          const status = signal ? 'Command terminated (' + signal + ')' : 'Command exited (' + exitCode + ')';
+          reject(Object.assign(new Error(stderr.trim() || status), { code: exitCode, exitCode, signal, stderr }));
+          return;
+        }
+        if (inputError) {
+          reject(inputError);
+          return;
+        }
         resolve({ stdout, stderr });
       };
       for (const stream of ['stdout', 'stderr']) {

@@ -2,7 +2,10 @@
 
 const { incompleteError } = require('../utils/errors');
 
-const VIRTUAL_FILE_SYSTEMS = new Set(['tmpfs', 'devtmpfs', 'sysfs', 'proc', 'efivarfs', 'squashfs', 'cgroup', 'cgroup2', 'configfs', 'debugfs', 'devpts', 'fusectl', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'binfmt_misc', 'autofs', 'tracefs', 'ramfs', 'bpf']);
+const VIRTUAL_FILE_SYSTEMS = new Set([
+  'tmpfs', 'devtmpfs', 'sysfs', 'proc', 'efivarfs', 'squashfs', 'cgroup', 'cgroup2', 'configfs', 'debugfs', 'devpts',
+  'fusectl', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'binfmt_misc', 'autofs', 'tracefs', 'ramfs', 'bpf',
+]);
 const DISK_PRESETS = Object.freeze({
   default: Object.freeze({ customFsExclude: 'vfat', customPathExclude: '/proc,/sys,/run,/snap,/usr,/etc,/dev,/init', hideVirtualFs: true }),
   more: Object.freeze({ customFsExclude: '', customPathExclude: '', hideVirtualFs: true }),
@@ -20,7 +23,8 @@ function normalizeMountRules(diskConfig) {
 }
 
 function parseRules(rawRules) {
-  const fileSystemTypes = []; const pathPrefixes = [];
+  const fileSystemTypes = [];
+  const pathPrefixes = [];
   for (const rule of (rawRules || '').split(/[,\r\n]+/).map((value) => value.trim()).filter(Boolean)) {
     if (rule.startsWith('/')) pathPrefixes.push(rule); else fileSystemTypes.push(rule);
   }
@@ -45,10 +49,12 @@ function parseFindmntOutput(raw, diskConfig) {
   const filesystems = JSON.parse(raw).filesystems;
   if (!Array.isArray(filesystems)) throw incompleteError('Incomplete findmnt output');
   return filesystems.reduce((mounts, entry) => {
-    const fileSystemType = entry.fstype || ''; const mountPath = entry.target || '';
+    const fileSystemType = entry.fstype || '';
+    const mountPath = entry.target || '';
     if (shouldExclude(fileSystemType, mountPath, diskConfig)) return mounts;
     if (!hasCapacity(entry.size, entry.used, entry.avail)) return mounts;
-    const totalBytes = Number(entry.size); const usedBytes = Number(entry.used);
+    const totalBytes = Number(entry.size);
+    const usedBytes = Number(entry.used);
     const availableBytes = Number(entry.avail);
     mounts.push({ mountPath, fileSystemType, totalBytes, usedBytes, availableBytes, usagePercent: Number.parseInt(entry['use%'], 10) || 0 });
     return mounts;
@@ -85,7 +91,8 @@ function parseMountInfo(raw, diskConfig) {
   const decode = (value) => value.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
   const mounts = raw.trim().split('\n').filter(Boolean).map((line) => {
     const [mount, filesystem] = line.split(' - ');
-    const fields = mount.split(' '); const fsFields = (filesystem || '').split(' ');
+    const fields = mount.split(' ');
+    const fsFields = (filesystem || '').split(' ');
     if (fields.length < 6 || fsFields.length < 3) throw incompleteError('Incomplete mount table');
     // Capacity lookup needs the mount identifiers and paths, not large overlay superblock options.
     const mountInfo = fields.slice(0, 6).join(' ') + ' - ' + fsFields.slice(0, 2).join(' ') + ' rw';

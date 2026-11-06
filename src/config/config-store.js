@@ -7,17 +7,34 @@ const { CONFIGURATION_KEYS, settingSchema } = require('./config-schema');
 
 const CONFIGURATION_SECTION = 'sysmonitor';
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const clone = value => Array.isArray(value) ? value.map(clone) : isObject(value) ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, clone(child)])) : value;
+const ownValue = (value, key) => Object.hasOwn(value || {}, key) ? value[key] : undefined;
+
+function clone(value) {
+  if (Array.isArray(value)) return value.map(clone);
+  if (!isObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, clone(child)]));
+}
+
 function changesBetween(before, after, path = []) {
   if (isDeepStrictEqual(before, after)) return [];
-  if (isObject(before) || isObject(after)) return [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])]
-    .flatMap(key => changesBetween(Object.hasOwn(before || {}, key) ? before[key] : undefined, Object.hasOwn(after || {}, key) ? after[key] : undefined, [...path, key]));
-  return [{ path, value: after }];
+  if (!isObject(before) && !isObject(after)) return [{ path, value: after }];
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  return [...keys].flatMap(key => changesBetween(ownValue(before, key), ownValue(after, key), [...path, key]));
 }
+
+function isFieldChange(key, change) {
+  if (!change || !Array.isArray(change.path)) return false;
+  const definition = settingSchema(key, change.path);
+  return !!definition && definition.type !== 'object';
+}
+
 function applyChanges(value, changes) {
   let result = clone(value);
   for (const change of changes) {
-    if (!change.path.length) { result = clone(change.value); continue; }
+    if (!change.path.length) {
+      result = clone(change.value);
+      continue;
+    }
     if (!isObject(result)) result = {};
     let target = result;
     for (const key of change.path.slice(0, -1)) {
@@ -96,18 +113,28 @@ class ConfigStore {
     return current;
   }
 
-  onDidChange(listener) { this.listeners.add(listener); return { dispose:() => this.listeners.delete(listener) }; }
-  onDidChangeSaveState(listener) { this.saveListeners.add(listener); return { dispose: () => this.saveListeners.delete(listener) }; }
+  onDidChange(listener) {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  onDidChangeSaveState(listener) {
+    this.saveListeners.add(listener);
+    return { dispose: () => this.saveListeners.delete(listener) };
+  }
 
   update(key, changes) {
-    if (!CONFIGURATION_KEYS.includes(key) || !Array.isArray(changes) || changes.some(change => !change || !Array.isArray(change.path) || !settingSchema(key, change.path) || settingSchema(key, change.path).type === 'object')) throw new Error('Invalid configuration changes');
+    const valid = CONFIGURATION_KEYS.includes(key) && Array.isArray(changes) && changes.every(change => isFieldChange(key, change));
+    if (!valid) throw new Error('Invalid configuration changes');
     if (!changes.length) return this.getCurrent();
     this.refresh();
     const next = normalizeConfig({ ...this.current, [key]: applyChanges(this.current[key], changes) });
     this.queue(key, changes.map(change => ({ path: change.path, value: change.path.reduce((value, segment) => value?.[segment], next[key]), local: true })));
     this.refresh();
     this.setSaveState('saving');
-    queueMicrotask(() => { if (!this.flushPromise && this.pending.size) this.flush().catch(() => {}); });
+    queueMicrotask(() => {
+      if (!this.flushPromise && this.pending.size) this.flush().catch(() => {});
+    });
     return this.current;
   }
 
@@ -116,7 +143,9 @@ class ConfigStore {
     if (!this.pending.size) return Promise.resolve();
     this.setSaveState('saving');
     this.flushPromise = this.writePending().then(() => this.setSaveState('saved'), error => {
-      this.setSaveState('error', error); this.onError(error); throw error;
+      this.setSaveState('error', error);
+      this.onError(error);
+      throw error;
     }).finally(() => {
       this.flushPromise = null;
       this.refresh();

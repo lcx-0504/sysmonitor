@@ -1,6 +1,10 @@
 'use strict';
 class AcceleratorCollector {
-  constructor({ providers }) { this.providers = providers; this.previous = new Map(); }
+  constructor({ providers }) {
+    this.providers = providers;
+    this.previous = new Map();
+  }
+
   reset() { this.previous.clear(); }
   async collect({ onPartial = () => {} } = {}) {
     const progress = new Map();
@@ -10,7 +14,8 @@ class AcceleratorCollector {
       const failureCode = pending.includes('GPU_OCCUPANCY_UNAVAILABLE') ? 'GPU_OCCUPANCY_UNAVAILABLE' : pending[0];
       if (values.every(Boolean)) onPartial({ value: combine(values), failureCode });
     };
-    const providerResults = []; const errors = [];
+    const providerResults = [];
+    const errors = [];
     const settledResults = await Promise.allSettled(this.providers.map(async provider => {
       const value = await provider.collect({ onPartial: partial => {
         progress.set(provider.id, partial);
@@ -39,9 +44,13 @@ class AcceleratorCollector {
 }
 
 function combine(providerResults) {
-    const devices = []; const usagesByPid = new Map(); const currentUserDeviceKeys = []; const collectionErrors = [];
+    const devices = [];
+    const usagesByPid = new Map();
+    const currentUserDeviceKeys = [];
+    const collectionErrors = [];
     for (const result of providerResults) {
-      devices.push(...result.devices); currentUserDeviceKeys.push(...result.currentUserDeviceKeys);
+      devices.push(...result.devices);
+      currentUserDeviceKeys.push(...result.currentUserDeviceKeys);
       collectionErrors.push(...result.collectionErrors || []);
       for (const [pid, usages] of result.usagesByPid) usagesByPid.set(pid, [...(usagesByPid.get(pid) || []), ...usages]);
     }

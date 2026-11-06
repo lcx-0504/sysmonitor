@@ -10,6 +10,7 @@ function isSshDefaultExtension(vscode) {
   return defaultExtensions(vscode).some((value) => typeof value === 'string' && value.toLowerCase() === extensionId.toLowerCase());
 }
 async function addSshDefaultExtension(vscode) {
-  if (!isSshDefaultExtension(vscode)) await vscode.workspace.getConfiguration('remote.SSH').update('defaultExtensions', [...defaultExtensions(vscode), extensionId], true);
+  if (isSshDefaultExtension(vscode)) return;
+  await vscode.workspace.getConfiguration('remote.SSH').update('defaultExtensions', [...defaultExtensions(vscode), extensionId], true);
 }
 module.exports = { isSshDefaultExtension, addSshDefaultExtension };

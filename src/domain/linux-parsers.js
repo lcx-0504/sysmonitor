@@ -47,8 +47,10 @@ function parseNetworkCounters(raw, selectedInterfaces) {
     availableInterfaces.push(interfaceName);
     if (selectedInterfaces && selectedInterfaces.size > 0 && !selectedInterfaces.has(interfaceName)) continue;
     const counters = countersPart.trim().split(/\s+/);
-    const received = Number(counters[0]); const transmitted = Number(counters[8]);
-    if (counters.length < 9 || !Number.isFinite(received) || !Number.isFinite(transmitted) || received < 0 || transmitted < 0) throw incompleteError('Incomplete /proc/net/dev');
+    const received = Number(counters[0]);
+    const transmitted = Number(counters[8]);
+    const complete = counters.length >= 9 && Number.isFinite(received) && Number.isFinite(transmitted) && received >= 0 && transmitted >= 0;
+    if (!complete) throw incompleteError('Incomplete /proc/net/dev');
     receiveBytes += received;
     transmitBytes += transmitted;
   }
@@ -67,7 +69,8 @@ function parseDiskIoCounters(raw) {
     const deviceName = fields[2];
     if (/\d$/.test(deviceName) && !/^(?:nvme\d+n\d+|mmcblk\d+)$/.test(deviceName)) continue;
     if (/^(loop|ram|dm-)/.test(deviceName)) continue;
-    const read = Number(fields[5]); const written = Number(fields[9]);
+    const read = Number(fields[5]);
+    const written = Number(fields[9]);
     if (!Number.isFinite(read) || !Number.isFinite(written) || read < 0 || written < 0) throw incompleteError('Incomplete /proc/diskstats');
     devices.push(`${fields[0]}:${fields[1]}:${deviceName}`);
     readSectors += read;
@@ -123,4 +126,7 @@ function parseProcessSessions(raw) {
   return sessions;
 }
 
-module.exports = { parseCpuStat, parseDefaultRouteInterfaces, parseDiskIoCounters, parseMemoryInfo, parseNetworkCounters, parseProcessOutput, parseProcessSessions, processStartTime };
+module.exports = {
+  parseCpuStat, parseDefaultRouteInterfaces, parseDiskIoCounters, parseMemoryInfo, parseNetworkCounters,
+  parseProcessOutput, parseProcessSessions, processStartTime,
+};

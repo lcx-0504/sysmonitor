@@ -66,7 +66,9 @@ class DeviceMonitorManager {
     if (this.localLinux) wanted.add('local');
     for (const id of wanted) if (id === 'local' || id.startsWith('ssh:')) this.open(id);
     for (const [id, device] of this.devices) {
-      if (!wanted.has(id)) { device.dispose(); this.devices.delete(id); }
+      if (wanted.has(id)) continue;
+      device.dispose();
+      this.devices.delete(id);
     }
     this.applyVisibility();
   }

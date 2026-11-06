@@ -74,7 +74,10 @@ class MonitorScheduler {
 
   queueRefresh(runner, refresh = true) {
     this.signalRunnerChange();
-    if (runner.enabled === false || !refresh) { this.refreshes.delete(runner); return Promise.resolve(); }
+    if (runner.enabled === false || !refresh) {
+      this.refreshes.delete(runner);
+      return Promise.resolve();
+    }
     const request = {};
     this.refreshes.set(runner, request);
     request.promise = Promise.resolve().then(() => runner.whenIdle()).then(() => {

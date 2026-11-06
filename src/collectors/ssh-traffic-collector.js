@@ -12,6 +12,8 @@ const SSH_SAMPLE_COMMAND = [
   'exit "$result"',
 ].join('\n');
 
+const asList = (value) => Array.isArray(value) ? value : [value];
+
 function normalizeIp(ip) { return String(ip).replace(/^\[|\]$/g, '').replace(/^::ffff:(?=\d+\.)/i, '').toLowerCase(); }
 
 function endpointOf(token) {
@@ -30,7 +32,8 @@ function readSocketRecords(raw) {
       if (record) records.set(JSON.stringify(endpoints.map((endpoint) => [endpoint.ip, endpoint.port])), record);
     }
     if (!record) continue;
-    const sent = line.match(/bytes_sent:(\d+)/); const received = line.match(/bytes_received:(\d+)/);
+    const sent = line.match(/bytes_sent:(\d+)/);
+    const received = line.match(/bytes_received:(\d+)/);
     const rtt = line.match(/\brtt:([\d.]+)(?:\/|\s|$)/);
     if (sent) record.sent = Number(sent[1]);
     if (received) record.received = Number(received[1]);
@@ -44,8 +47,7 @@ const exactMatch = (record, connection) => record.local.ip === normalizeIp(conne
 const portMatch = (record, connection) => record.local.port === connection.serverPort && record.peer.ip === normalizeIp(connection.clientIp);
 
 function readSshSocketCounters(raw, clientIpOrConnection) {
-  const connections = clientIpOrConnection && typeof clientIpOrConnection === 'object'
-    ? (Array.isArray(clientIpOrConnection) ? clientIpOrConnection : [clientIpOrConnection]) : null;
+  const connections = clientIpOrConnection && typeof clientIpOrConnection === 'object' ? asList(clientIpOrConnection) : null;
   const records = [...readSocketRecords(raw)];
   let matches = connections
     ? connections.map((connection) => records.filter(([, record]) => exactMatch(record, connection)))
@@ -74,8 +76,7 @@ const SSH_RATES = Object.freeze({ clientUploadBytesPerSecond: 'serverReceivedByt
 const EMPTY_RATES = Object.freeze({ clientUploadBytesPerSecond: null, clientDownloadBytesPerSecond: null });
 
 function connectionIdentity(connection) {
-  const connections = Array.isArray(connection) ? connection : [connection];
-  const endpoints = connections.map((item) => [normalizeIp(item.serverIp), item.serverPort, normalizeIp(item.clientIp), item.clientPort]);
+  const endpoints = asList(connection).map((item) => [normalizeIp(item.serverIp), item.serverPort, normalizeIp(item.clientIp), item.clientPort]);
   return JSON.stringify(endpoints.sort());
 }
 

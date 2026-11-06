@@ -8,7 +8,8 @@ function monotonicTimeline(wallNow = () => Date.now(), monotonicNow = () => perf
 }
 
 class FrameClock {
-  constructor({ periodMilliseconds, capture, publish, historyWindowMilliseconds = () => DEFAULT_CONFIG.display.sparkMinutes * 60000, now = monotonicTimeline(), setTimer = setTimeout, clearTimer = clearTimeout }) {
+  constructor({ periodMilliseconds, capture, publish, historyWindowMilliseconds = () => DEFAULT_CONFIG.display.sparkMinutes * 60000,
+    now = monotonicTimeline(), setTimer = setTimeout, clearTimer = clearTimeout }) {
     Object.assign(this, { periodMilliseconds, capture, publish, historyWindowMilliseconds, now, setTimer, clearTimer });
     this.running = false;
     this.nextAt = null;
@@ -37,10 +38,18 @@ class FrameClock {
 
   schedule() {
     if (!this.running) return;
-    this.timer = this.setTimer(() => { this.timer = null; this.flush(); this.schedule(); }, Math.max(1, this.nextAt - this.now()));
+    this.timer = this.setTimer(() => {
+      this.timer = null;
+      this.flush();
+      this.schedule();
+    }, Math.max(1, this.nextAt - this.now()));
   }
 
-  stop() { this.running = false; if (this.timer !== null) this.clearTimer(this.timer); this.timer = null; }
+  stop() {
+    this.running = false;
+    if (this.timer !== null) this.clearTimer(this.timer);
+    this.timer = null;
+  }
 
   setPeriod(periodMilliseconds) {
     if (periodMilliseconds === this.periodMilliseconds) return;
