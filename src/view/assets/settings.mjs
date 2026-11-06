@@ -325,7 +325,7 @@ function renderIntervalRow() {
 
 function renderTimeoutSettings() {
   const body = document.getElementById('sett-timeouts-body');
-  const enabled = state.config.timeouts.enabled === true;
+  const enabled = state.config.collection.custom === true;
   document.getElementById('sett-timeouts-section').classList.toggle('custom-timeouts-enabled', enabled);
   body.hidden = !enabled;
   body.classList.add('setting-children', 'last-setting');
@@ -334,8 +334,8 @@ function renderTimeoutSettings() {
   document.getElementById('timeout-toggle').setAttribute('aria-checked', String(enabled));
   for (const field of state.initial.collectionFields) {
     setting(body, 'strategy-' + field.key, { type: 'number', label: tr(field.label), help: field.help,
-      minimum: field.minimum, maximum: field.maximum, value: state.config.timeouts[field.key], change(value) {
-        changeConfig('timeouts', () => { state.config.timeouts[field.key] = value; });
+      minimum: field.minimum, maximum: field.maximum, value: state.config.collection[field.key], change(value) {
+        changeConfig('collection', () => { state.config.collection[field.key] = value; });
       } });
   }
   updateTimeoutReset();
@@ -346,7 +346,7 @@ function updateTimeoutReset() {
   reset.disabled = state.initial.collectionFields.every(field => {
     const record = rows.get('strategy-' + field.key);
     const draft = record && inputs.get(record.input);
-    return (draft?.dirty ? draft.definition.parse(draft.input.value) : state.config.timeouts[field.key]) === field.default;
+    return (draft?.dirty ? draft.definition.parse(draft.input.value) : state.config.collection[field.key]) === field.default;
   });
 }
 
@@ -512,11 +512,11 @@ export function initializeSettings(effects) {
   bindInfo(document.getElementById('timeout-info'),'timeoutInfo');
   bindInfo(document.getElementById('sett-bar-info'),'inALocalLinuxWindowTheStatusBar');
   document.getElementById('timeout-reset').addEventListener('click',()=>{
-    changeConfig('timeouts', () => { for(const field of state.initial.collectionFields)state.config.timeouts[field.key]=field.default; });
+    changeConfig('collection', () => { for(const field of state.initial.collectionFields)state.config.collection[field.key]=field.default; });
     renderSettings();
   });
   document.getElementById('timeout-toggle').addEventListener('click',()=>{
-    changeConfig('timeouts', () => { state.config.timeouts.enabled=!state.config.timeouts.enabled; }); renderSettings();
+    changeConfig('collection', () => { state.config.collection.custom=!state.config.collection.custom; }); renderSettings();
   });
   document.getElementById('config-save-retry').addEventListener('click', () => sendToExtension({cmd:'retryConfigSave'}));
   showConfigSaveState(state.initial.saveState);

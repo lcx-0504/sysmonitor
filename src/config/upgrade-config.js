@@ -1,11 +1,10 @@
 'use strict';
 
-const { DEFAULT_CONFIG, COLLECTION_FIELDS } = require('./default-config');
-const { normalizeConfig } = require('./normalize-config');
+const { DEFAULT_CONFIG } = require('./default-config');
 
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isBoolean = value => typeof value === 'boolean';
-const UPGRADE_KEYS = ['disk', 'display', 'timeouts'];
+const UPGRADE_KEYS = ['disk', 'display'];
 
 function upgradeSetting(key, value) {
   if (!isObject(value)) return null;
@@ -22,11 +21,6 @@ function upgradeSetting(key, value) {
     }
     delete hiddenGroups.system;
     return { ...value, hiddenGroups };
-  }
-  if (key === 'timeouts' && !Object.hasOwn(value, 'enabled')) {
-    const normalized = normalizeConfig({ timeouts: value }).timeouts;
-    const enabled = COLLECTION_FIELDS.some(field => normalized[field.key] !== DEFAULT_CONFIG.timeouts[field.key]);
-    return { ...value, enabled };
   }
   return null;
 }

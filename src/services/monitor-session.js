@@ -3,7 +3,7 @@
 const { MonitorService } = require('./monitor-service');
 const { buildMonitorViewModel } = require('./monitor-view-model');
 const { hasSettledSample } = require('./monitor-sample');
-const { effectiveTimeouts } = require('./collection-policy');
+const { sshTransportOptions } = require('./collection-policy');
 const { MetricHistory } = require('../core/metric-history');
 const { FrameClock } = require('../core/frame-clock');
 
@@ -108,9 +108,9 @@ class MonitorSession {
       this.frameClock.setPeriod(config.refreshInterval * 1000);
     }
     if (this.transport) {
-      const policy = effectiveTimeouts(config);
-      this.transport.connectionTimeoutMilliseconds = policy.connection * 1000;
-      this.transport.setMaxConnections(policy.sshPoolSize);
+      const options = sshTransportOptions(config);
+      this.transport.connectionTimeoutMilliseconds = options.connectionTimeoutMilliseconds;
+      this.transport.setMaxConnections(options.maxConnections);
     }
     this.service.updateConfig(config);
     this.sampleUpdates = [];

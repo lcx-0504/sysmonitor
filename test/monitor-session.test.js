@@ -330,7 +330,7 @@ test('manual reconnection performs one requested round before restarting periodi
 
 test('first display follows the configured collection budget and waits for a settled result', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
-  const fixture = createSessionFixture({ configStore: { getCurrent: () => normalizeConfig({ timeouts: { enabled: true, extended: 120 } }) } });
+  const fixture = createSessionFixture({ configStore: { getCurrent: () => normalizeConfig({ collection: { custom: true, extendedTimeout: 120 } }) } });
   t.after(() => fixture.session.dispose());
   fixture.session.start();
   fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);

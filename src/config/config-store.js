@@ -3,10 +3,9 @@
 const { isDeepStrictEqual } = require('node:util');
 const { normalizeConfig } = require('./normalize-config');
 const { upgradeConfiguration, upgradeSetting } = require('./upgrade-config');
-const { settingSchema } = require('./config-schema');
+const { CONFIGURATION_KEYS, settingSchema } = require('./config-schema');
 
 const CONFIGURATION_SECTION = 'sysmonitor';
-const CONFIGURATION_KEYS = Object.freeze(['refreshInterval', 'timeouts', 'statusBar', 'disk', 'display', 'servers']);
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const clone = value => Array.isArray(value) ? value.map(clone) : isObject(value) ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, clone(child)])) : value;
 function changesBetween(before, after, path = []) {

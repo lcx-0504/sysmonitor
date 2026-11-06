@@ -2,19 +2,21 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { collectionPolicy } = require('../src/services/collection-policy');
-const { effectiveTimeouts } = require('../src/services/collection-policy');
+const { collectionPolicy, effectiveCollection, sshTransportOptions } = require('../src/services/collection-policy');
 
 test('manifest and UI descriptors share the same collection defaults and bounds', () => {
   const properties = require('../package.json').contributes.configuration.properties;
   const { REFRESH_SETTING, COLLECTION_FIELDS } = require('../src/config/default-config');
   const refresh = properties['sysmonitor.refreshInterval'];
   for (const key of ['default', 'minimum', 'maximum']) assert.equal(refresh[key], REFRESH_SETTING[key]);
-  const timeouts = properties['sysmonitor.timeouts'];
+  const collection = properties['sysmonitor.collection'];
   for (const field of COLLECTION_FIELDS) {
-    assert.equal(timeouts.default[field.key], field.default);
-    for (const key of ['minimum', 'maximum']) assert.equal(timeouts.properties[field.key][key], field[key]);
+    assert.equal(collection.default[field.key], field.default);
+    for (const key of ['minimum', 'maximum']) assert.equal(collection.properties[field.key][key], field[key]);
   }
+  assert.deepEqual(COLLECTION_FIELDS.map(field => field.key), ['connectionTimeout', 'standardTimeout', 'extendedTimeout', 'sshPoolSize']);
+  assert.deepEqual(Object.keys(properties).filter(key => key.startsWith('sysmonitor.')).sort(),
+    ['collection', 'disk', 'display', 'refreshInterval', 'servers', 'statusBar'].map(key => 'sysmonitor.' + key));
   for (const property of Object.values(properties)) assert.equal(property.scope, 'application');
   const keywords = require('../package.json').keywords;
   assert.ok(keywords.includes('server')); assert.ok(keywords.includes('ssh')); assert.ok(keywords.length <= 30);
@@ -22,43 +24,45 @@ test('manifest and UI descriptors share the same collection defaults and bounds'
 
 test('SSH pool settings use bounded integers and follow the custom policy switch', () => {
   for (const [raw, expected] of [[0, 1], [9, 8], [2.6, 3], [null, 4]]) {
-    const config = normalizeConfig({ timeouts: { enabled: true, sshPoolSize: raw } });
-    assert.equal(config.timeouts.sshPoolSize, expected);
-    assert.equal(effectiveTimeouts(config).sshPoolSize, expected);
-    config.timeouts.enabled = false;
-    assert.equal(effectiveTimeouts(config).sshPoolSize, 4);
-    assert.equal(config.timeouts.sshPoolSize, expected);
+    const config = normalizeConfig({ collection: { custom: true, sshPoolSize: raw } });
+    assert.equal(config.collection.sshPoolSize, expected);
+    assert.equal(effectiveCollection(config).sshPoolSize, expected);
+    assert.equal(sshTransportOptions(config).maxConnections, expected);
+    config.collection.custom = false;
+    assert.equal(effectiveCollection(config).sshPoolSize, 4);
+    assert.equal(sshTransportOptions(config).maxConnections, 4);
+    assert.equal(config.collection.sshPoolSize, expected);
   }
 });
 
-test('timeout defaults, validation, and shared module budgets', () => {
+test('collection defaults, validation, and shared module budgets', () => {
   const defaults = normalizeConfig({});
-  assert.deepEqual(defaults.timeouts, { enabled: false, connection: 15, standard: 10, extended: 30, sshPoolSize: 4 });
-  const config = normalizeConfig({ timeouts: { enabled: true, connection: 1, standard: 20.6, extended: 150 } });
-  assert.deepEqual(config.timeouts, { enabled: true, connection: 5, standard: 21, extended: 120, sshPoolSize: 4 });
+  assert.deepEqual(defaults.collection, { custom: false, connectionTimeout: 15, standardTimeout: 10, extendedTimeout: 30, sshPoolSize: 4 });
+  assert.deepEqual(sshTransportOptions(defaults), { connectionTimeoutMilliseconds: 15000, maxConnections: 4 });
+  const config = normalizeConfig({ collection: { custom: true, connectionTimeout: 1, standardTimeout: 20.6, extendedTimeout: 150 } });
+  assert.deepEqual(config.collection, { custom: true, connectionTimeout: 5, standardTimeout: 21, extendedTimeout: 120, sshPoolSize: 4 });
+  assert.equal(sshTransportOptions(config).connectionTimeoutMilliseconds, 5000);
   const policy = collectionPolicy(config);
   assert.equal(policy.resources.timeoutMilliseconds, 21000);
   assert.equal(policy.diskTopology.timeoutMilliseconds, 120000);
   assert.equal(policy.processes.timeoutMilliseconds, 120000);
   assert.equal(policy.accelerators.timeoutMilliseconds, 120000);
   assert.equal(policy.diskTopology.minimumIntervalMilliseconds, 10000);
-  config.timeouts.enabled = false;
+  config.collection.custom = false;
   assert.equal(collectionPolicy(config).resources.timeoutMilliseconds, 10000);
   assert.equal(collectionPolicy(config).accelerators.timeoutMilliseconds, 30000);
-  assert.equal(config.timeouts.extended, 120);
+  assert.equal(config.collection.extendedTimeout, 120);
 });
 
 const { DEFAULT_CONFIG } = require('../src/config/default-config');
 const { normalizeConfig } = require('../src/config/normalize-config');
 
-test('the upgrade entry adds a policy switch while normalization uses explicit current settings', () => {
+test('collection settings need no upgrade and keep default budgets until the custom switch is on', () => {
   const { upgradeSetting } = require('../src/config/upgrade-config');
-  const timeouts = { connection:20, standard:15, extended:40 };
-  assert.equal(upgradeSetting('timeouts', timeouts).enabled, true);
-  assert.equal(upgradeSetting('timeouts', { connection:15, standard:10, extended:30 }).enabled, false);
-  assert.equal(upgradeSetting('timeouts', { enabled:false, ...timeouts }), null);
-  assert.equal(normalizeConfig({ timeouts }).timeouts.enabled, false);
-  assert.equal(normalizeConfig({ timeouts:upgradeSetting('timeouts', timeouts) }).timeouts.enabled, true);
+  const collection = { connectionTimeout:20, standardTimeout:15, extendedTimeout:40 };
+  assert.equal(upgradeSetting('collection', collection), null);
+  assert.equal(normalizeConfig({ collection }).collection.custom, false);
+  assert.equal(collectionPolicy(normalizeConfig({ collection })).resources.timeoutMilliseconds, 10000);
 });
 const { ConfigStore } = require('../src/config/config-store');
 function updateSetting(store, key, value) {
@@ -97,11 +101,11 @@ test('configuration upgrade only changes user settings and preserves unrelated f
   const fixture = scopedSettings(
     { disk:{ mountFilter:'custom', showVirtualFs:false, customFsExclude:'vfat', future:7 },
       display:{ charts:false, hiddenGroups:{ system:true, cpu:false, disk:true } },
-      timeouts:{ standard:20 } },
+      collection:{ standardTimeout:20 } },
     { disk:{ showVirtualFs:true, hideVirtualFs:true, customPathExclude:'/nfs' },
-      display:{ hiddenGroups:{ system:false, memory:true } }, timeouts:{ standard:10 } },
-    { a:{ disk:{ showVirtualFs:true }, timeouts:{ enabled:false, extended:60 } },
-      b:{ display:{ hiddenGroups:{ system:true } }, timeouts:{ extended:60 } } },
+      display:{ hiddenGroups:{ system:false, memory:true } }, collection:{ standardTimeout:10 } },
+    { a:{ disk:{ showVirtualFs:true }, collection:{ custom:false, extendedTimeout:60 } },
+      b:{ display:{ hiddenGroups:{ system:true } }, collection:{ extendedTimeout:60 } } },
   );
   const originalWorkspace = structuredClone(fixture.workspace), originalFolders = structuredClone(fixture.folders);
   const store = new ConfigStore({ vscode:fixture.vscode });
@@ -110,10 +114,10 @@ test('configuration upgrade only changes user settings and preserves unrelated f
   assert.deepEqual(fixture.workspace, originalWorkspace);
   assert.deepEqual(fixture.folders, originalFolders);
   assert.deepEqual(fixture.global.display, { charts:false, hiddenGroups:{ cpu:false, memory:true, disk:true } });
-  assert.equal(fixture.global.timeouts.enabled, true);
-  assert.equal(store.getCurrent().timeouts.enabled, true);
+  assert.deepEqual(fixture.global.collection, { standardTimeout:20 });
+  assert.equal(store.getCurrent().collection.standardTimeout, 20);
   assert.deepEqual(fixture.writes.map(({key,target,uri}) => [key,target,uri]), [
-    ['disk',true,undefined], ['display',true,undefined], ['timeouts',true,undefined],
+    ['disk',true,undefined], ['display',true,undefined],
   ]);
   const count = fixture.writes.length;
   await store.upgrade(); assert.equal(fixture.writes.length, count);
@@ -124,11 +128,11 @@ test('configuration upgrade only changes user settings and preserves unrelated f
 
 test('new installations and canonical saved settings require no configuration writes', async () => {
   const { upgradeConfiguration } = require('../src/config/upgrade-config');
-  for (const global of [{}, { disk:{ hideVirtualFs:false }, display:{ hiddenGroups:{ cpu:true, memory:false } }, timeouts:{ enabled:false, standard:20 } }]) {
+  for (const global of [{}, { disk:{ hideVirtualFs:false }, display:{ hiddenGroups:{ cpu:true, memory:false } }, collection:{ custom:false, standardTimeout:20 } }]) {
     const fixture = scopedSettings(global);
     await upgradeConfiguration(fixture.vscode); assert.deepEqual(fixture.writes, []);
   }
-  const fixture = scopedSettings({}, { disk:{ showVirtualFs:true }, timeouts:{ standard:20 } }, { a:{ display:{ hiddenGroups:{ system:true } } } });
+  const fixture = scopedSettings({}, { disk:{ showVirtualFs:true }, collection:{ standardTimeout:20 } }, { a:{ display:{ hiddenGroups:{ system:true } } } });
   await upgradeConfiguration(fixture.vscode); assert.deepEqual(fixture.writes, []);
   const store = new ConfigStore({ vscode:fixture.vscode });
   assert.deepEqual(store.read(), normalizeConfig({}));
@@ -136,13 +140,14 @@ test('new installations and canonical saved settings require no configuration wr
 
 test('user reads, external updates and writes ignore workspace overrides', async () => {
   const { upgradeConfiguration } = require('../src/config/upgrade-config');
-  const fixture = scopedSettings({ refreshInterval:5, timeouts:{ enabled:false, standard:20 } },
-    { refreshInterval:60, timeouts:{ enabled:true, extended:60 }, display:{ charts:false } });
+  const fixture = scopedSettings({ refreshInterval:5, collection:{ custom:false, standardTimeout:20 } },
+    { refreshInterval:60, collection:{ custom:true, extendedTimeout:60 }, display:{ charts:false } });
   await upgradeConfiguration(fixture.vscode);
   assert.deepEqual(fixture.writes, []);
-  fixture.global.timeouts.enabled = true;
+  fixture.global.collection.custom = true;
   const store = new ConfigStore({ vscode:fixture.vscode});
-  assert.equal(store.read().timeouts.enabled, true);
+  assert.equal(store.read().collection.custom, true);
+  assert.equal(store.getCurrent().collection.extendedTimeout, 30);
   assert.equal(store.getCurrent().refreshInterval, 5);
   assert.equal(store.getCurrent().display.charts, true);
   fixture.global.refreshInterval = 10;
@@ -167,7 +172,7 @@ test('virtual filesystem renaming preserves filtering decisions in every disk mo
 
 test('failed user upgrades remain retryable and do not process workspace settings', async () => {
   const { upgradeConfiguration } = require('../src/config/upgrade-config');
-  const fixture = scopedSettings({ timeouts:{ standard:20 } }, { timeouts:{ standard:10 } });
+  const fixture = scopedSettings({ disk:{ showVirtualFs:true } }, { disk:{ showVirtualFs:false } });
   const getConfiguration = fixture.vscode.workspace.getConfiguration;
   let fail = true;
   fixture.vscode.workspace.getConfiguration = (...args) => {
@@ -179,9 +184,10 @@ test('failed user upgrades remain retryable and do not process workspace setting
     return config;
   };
   await assert.rejects(upgradeConfiguration(fixture.vscode), /settings unavailable/);
-  assert.deepEqual(fixture.global.timeouts, { standard:20 });
+  assert.deepEqual(fixture.global.disk, { showVirtualFs:true });
   fail = false; await upgradeConfiguration(fixture.vscode);
-  assert.deepEqual(fixture.workspace.timeouts, { standard:10 }); assert.equal(fixture.global.timeouts.enabled, true);
+  assert.deepEqual(fixture.workspace.disk, { showVirtualFs:false });
+  assert.deepEqual(fixture.global.disk, { hideVirtualFs:false });
 });
 
 test('remote window behavior defaults to menu and accepts exactly the three supported modes', () => {
@@ -245,20 +251,29 @@ test('legacy CPU and memory visibility migrates to independent settings', () => 
   assert.equal(Object.hasOwn(mixed.display.hiddenGroups, 'system'), false);
 });
 
-test('unknown fields survive in-memory normalization for forward and downgrade compatibility', () => {
+test('normalization keeps only declared settings while unknown saved fields stay on disk', async () => {
   const normalized = normalizeConfig({
-    futureTopLevel: 'keep',
+    futureTopLevel: 'drop',
     statusBar: {
       futureStatusField: 42,
       gpu: { futureProviderOption: true },
     },
-    disk: { futureDiskOption: 'keep' },
+    disk: { futureDiskOption: 'drop' },
+    collection: { enabled: true, connection: 20 },
   });
 
-  assert.equal(normalized.futureTopLevel, 'keep');
-  assert.equal(normalized.statusBar.futureStatusField, 42);
-  assert.equal(normalized.statusBar.gpu.futureProviderOption, true);
-  assert.equal(normalized.disk.futureDiskOption, 'keep');
+  assert.equal(Object.hasOwn(normalized, 'futureTopLevel'), false);
+  assert.equal(Object.hasOwn(normalized.statusBar, 'futureStatusField'), false);
+  assert.equal(Object.hasOwn(normalized.statusBar.gpu, 'futureProviderOption'), false);
+  assert.deepEqual(Object.keys(normalized.disk), ['mountFilter', 'hideVirtualFs', 'hideParentMounts']);
+  assert.deepEqual(normalized.collection, DEFAULT_CONFIG.collection);
+  const fixture = scopedSettings({ display: { charts: true, futureDisplayOption: 'keep' } });
+  const store = new ConfigStore({ vscode: fixture.vscode });
+  assert.equal(Object.hasOwn(store.read().display, 'futureDisplayOption'), false);
+  store.update('display', [{ path: ['charts'], value: false }]);
+  await store.flush();
+  assert.deepEqual(fixture.global.display, { charts: false, futureDisplayOption: 'keep' });
+  store.dispose();
 });
 
 test('invalid values are normalized and GPU card preferences are not clipped to current hardware', () => {
@@ -465,18 +480,25 @@ test('external changes remain visible during writes and the final read reconcile
 });
 
 test('a failed settings migration still exposes canonical values and reports the save failure', async () => {
-  const fixture=scopedSettings({disk:{showVirtualFs:true},display:{hiddenGroups:{system:true}},timeouts:{standard:20}});
+  const fixture=scopedSettings({disk:{showVirtualFs:true},display:{hiddenGroups:{system:true}}});
   const get=fixture.vscode.workspace.getConfiguration; const errors=[];
   fixture.vscode.workspace.getConfiguration=(...args)=>({...get(...args),update:async()=>{throw new Error('read only');}});
   const store=new ConfigStore({vscode:fixture.vscode,onUpgradeError:error=>errors.push(error.message)});
   await store.upgrade();
   assert.equal(store.getCurrent().disk.hideVirtualFs,false); assert.equal(store.getCurrent().display.hiddenGroups.memory,true);
-  assert.equal(store.getCurrent().timeouts.enabled,true); assert.deepEqual(errors,['read only']); store.dispose();
+  assert.deepEqual(errors,['read only']); store.dispose();
 });
 
 test('manifest field schemas match the shared normalization definitions', () => {
-  const { manifestConfiguration } = require('../src/config/config-schema');
-  assert.deepEqual(require('../package.json').contributes.configuration.properties, manifestConfiguration());
+  const { manifestConfiguration, settingSchema } = require('../src/config/config-schema');
+  const properties = manifestConfiguration();
+  assert.deepEqual(require('../package.json').contributes.configuration.properties, properties);
+  assert.equal(properties['sysmonitor.collection'].additionalProperties, false);
+  assert.equal(properties['sysmonitor.collection'].properties.custom.description, '%cfgCollectionCustom%');
+  assert.deepEqual(properties['sysmonitor.statusBar'].properties.gpu.properties.cards, { type: 'array', items: { type: 'integer', minimum: 0 }, uniqueItems: true });
+  assert.deepEqual(Object.keys(properties['sysmonitor.disk'].default), ['mountFilter', 'hideVirtualFs', 'hideParentMounts']);
+  assert.equal(settingSchema('collection', ['sshPoolSize']).maximum, 8);
+  assert.equal(settingSchema('collection', ['enabled']), null);
   const disk = normalizeConfig({ disk: { customFsExclude: 123, customPathExclude: ['/work'] } }).disk;
   assert.equal(disk.customFsExclude, ''); assert.equal(disk.customPathExclude, '');
 });
