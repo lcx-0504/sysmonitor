@@ -19,7 +19,7 @@ function quoteShellArgument(value) {
 }
 
 function quoteRemoteShellArgument(value) {
-  return `'${String(value).replace(/['\\]/g, (character) => `'\\${character}'`)}'`;
+  return `'${String(value).replace(/['\\!]/g, (character) => `'\\${character}'`)}'`;
 }
 
 function processSession(viewModel, pid) {

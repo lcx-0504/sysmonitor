@@ -9,6 +9,43 @@ const { DeviceMonitorManager } = require('../src/services/device-monitor-manager
 const { createSessionFixture } = require('./session-fixture');
 const { WebviewReadiness } = require('../src/view/webview-readiness');
 
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+const readInitialConfig = (html) => JSON.parse(Buffer.from(html.match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
+const savedConfig = () => ({ getSaveState: () => ({ status: 'saved', error: null }), getCurrent: () => normalizeConfig({}) });
+
+function hostVscode() {
+  return { env: { language: 'en' }, Uri: { file: (file) => file }, workspace: { getConfiguration: () => ({ get: () => null }) } };
+}
+
+function fakeTarget({ post = () => {}, visible = true, active = false } = {}) {
+  const target = {
+    visible, active,
+    webview: {
+      html: '',
+      postMessage: (message) => { post(message); return Promise.resolve(true); },
+      onDidReceiveMessage(handler) { target.receive = handler; },
+    },
+    onDidDispose(handler) { target.fireDispose = handler; },
+    onDidChangeVisibility(handler) { target.fireVisibility = handler; },
+    onDidChangeViewState(handler) { target.fireViewState = handler; },
+    dispose() { target.fireDispose(); },
+  };
+  return target;
+}
+
+function fakeTimers() {
+  const timers = [];
+  return {
+    timers,
+    scheduleReadyCheck: (callback, milliseconds) => {
+      const timer = { callback, milliseconds, cancelled: false };
+      timers.push(timer);
+      return timer;
+    },
+    cancelReadyCheck: (timer) => { timer.cancelled = true; },
+  };
+}
+
 test('navigation restore preserves selected device and page, with a fixed local Linux tab', () => {
   assert.deepEqual(normalizeNavigation({ tabs: ['ssh:campus', 'ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'proc' }, true), {
     tabs: ['local', 'ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'proc',
@@ -105,6 +142,7 @@ test('server-list Editor actions create duplicate views without moving sidebar t
   await provider.handleMessage({ version: 1, cmd: 'openServer', host: 'campus', inEditor: true }, source);
   await provider.handleMessage({ version: 1, cmd: 'openServer', host: 'campus', inEditor: true }, source);
   assert.equal(opened.length, 2);
+  assert.deepEqual(opened[0], { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' });
   assert.deepEqual(provider.sidebarState.tabs, ['ssh:campus']);
   assert.equal(provider.sidebarState.page, 'servers');
   provider.dispose();
@@ -497,4 +535,203 @@ test('recent workspace falls back to an empty window when history is empty or un
   await provider.activateRemoteWindow('unknown');
   assert.deepEqual(commands, ['opensshremotes.openEmptyWindow', 'opensshremotes.openEmptyWindow']);
   provider.serverDirectory.dispose();
+});
+
+
+test('local process display preferences are global, validated and broadcast to every ready view', async () => {
+  const stored = new Map([['sysmonitor.processDisplay', { cpu: 'whole', ram: 'invalid' }]]);
+  const updates = [];
+  const provider = new MultiMonitorViewProvider({
+    vscode: hostVscode(), manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {} }, configStore: savedConfig(),
+    workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc', processDisplay: { cpu: 'both' } }), update: async () => {} },
+    uiStateStore: { get: (key, fallback) => (stored.has(key) ? stored.get(key) : fallback), update: async (key, value) => { updates.push([key, value]); stored.set(key, value); } },
+    localLinux: false, loadHosts: async () => [],
+  });
+  const initial = { cpu: 'whole', ram: 'size', expandName: false, expandCmd: false };
+  assert.equal('processDisplay' in provider.sidebarState, false);
+  const html = await provider.buildHtml(provider.sidebarState, { sidebar: true });
+  assert.deepEqual(readInitialConfig(html).processDisplay, initial);
+  assert.equal('gpuCount' in readInitialConfig(html), false);
+  const sideMessages = [];
+  const editorMessages = [];
+  const side = { state: provider.sidebarState, sidebar: true, ready: false, target: { visible: true, webview: { postMessage: (message) => sideMessages.push(message) } } };
+  const editor = { state: { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }, sidebar: false, ready: false, target: { visible: true, webview: { postMessage: (message) => editorMessages.push(message) } } };
+  provider.sidebar = side;
+  provider.editors.set(editor.target, editor);
+  await provider.handleMessage({ version: 1, cmd: 'ready' }, side);
+  await provider.handleMessage({ version: 1, cmd: 'ready' }, editor);
+  for (const messages of [sideMessages, editorMessages]) {
+    assert.deepEqual(messages.find((message) => message.cmd === 'uiState').processDisplay, initial);
+    assert.equal(messages.some((message) => message.cmd === 'config' && 'gpuCount' in message), false);
+    messages.length = 0;
+  }
+  await provider.handleMessage({ version: 1, cmd: 'setProcessDisplay', key: 'expandCmd', value: true }, editor);
+  await provider.handleMessage({ version: 1, cmd: 'setProcessDisplay', key: 'cpu', value: 'invalid' }, side);
+  await provider.handleMessage({ version: 1, cmd: 'getConfig' }, side);
+  await settle();
+  const expected = { ...initial, expandCmd: true };
+  assert.deepEqual(sideMessages, [{ cmd: 'uiState', processDisplay: expected }]);
+  assert.deepEqual(editorMessages, [{ cmd: 'uiState', processDisplay: expected }]);
+  assert.deepEqual(updates, [['sysmonitor.processDisplay', expected]]);
+  assert.equal('processDisplay' in editor.state, false);
+  provider.dispose();
+});
+
+
+test('local views use only the webview assets as resource roots', async () => {
+  const created = [];
+  const vscode = { ...hostVscode(), ViewColumn: { Active: 1 }, window: { createWebviewPanel: (_type, _title, _column, options) => { created.push(options); return fakeTarget(); } } };
+  const provider = new MultiMonitorViewProvider({
+    vscode, manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {} }, configStore: savedConfig(),
+    workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
+    localLinux: false, loadHosts: async () => [],
+  });
+  provider.buildHtml = async () => '<html></html>';
+  const options = { enableScripts: true, localResourceRoots: [path.join(__dirname, '..', 'src', 'view', 'assets')] };
+  const view = fakeTarget();
+  await provider.resolveWebviewView(view);
+  const panel = await provider.openEditorPanel();
+  assert.deepEqual(view.webview.options, options);
+  assert.deepEqual(created, [options]);
+  assert.deepEqual(panel.webview.options, options);
+  provider.dispose();
+});
+
+
+test('process collection is demanded for devices shown on a visible process page', async () => {
+  const demands = [];
+  const manager = { paused: false, get() { return null; }, sync() {}, setConfigFile() {}, setProcessDemand: (ids) => demands.push([...ids].sort()) };
+  const provider = new MultiMonitorViewProvider({
+    vscode: hostVscode(), manager, configStore: savedConfig(),
+    workspaceState: { get: () => ({ tabs: ['ssh:a', 'ssh:b'], selected: 'ssh:a', page: 'perf' }), update: async () => {} },
+    localLinux: false, loadHosts: async () => [],
+  });
+  provider.buildHtml = async () => '<html></html>';
+  const view = fakeTarget();
+  await provider.resolveWebviewView(view);
+  await view.receive({ version: 1, cmd: 'ready' });
+  assert.deepEqual(demands, []);
+  await view.receive({ version: 1, cmd: 'switchPage', page: 'proc' });
+  await view.receive({ version: 1, cmd: 'switchDevice', id: 'ssh:b' });
+  view.visible = false;
+  view.fireVisibility();
+  view.visible = true;
+  view.fireVisibility();
+  assert.deepEqual(demands, [['ssh:a'], ['ssh:b'], [], ['ssh:b']]);
+  const panel = fakeTarget({ active: true });
+  await provider.attachEditor(panel, { tabs: ['ssh:a'], selected: 'ssh:a', page: 'proc' });
+  provider.refreshReferences();
+  assert.deepEqual(demands.slice(4), [['ssh:a', 'ssh:b']]);
+  panel.visible = false;
+  panel.fireViewState();
+  panel.dispose();
+  await view.receive({ version: 1, cmd: 'switchPage', page: 'servers' });
+  assert.deepEqual(demands.slice(5), [['ssh:b'], []]);
+  provider.dispose();
+});
+
+
+test('a reshown local sidebar is restored by ready with its device, page, history and dismissed guide', async () => {
+  const { session: device } = createSessionFixture({ id: 'ssh:campus' });
+  const model = { performance: { cpu: { usagePercent: 4 } }, processes: [], sources: { cpu: { state: 'loading' }, memory: { state: 'loading' }, accelerators: { state: 'loading' } } };
+  Object.assign(device, { ready: true, model, modelAt: 5, history: [{ t: 1 }, { t: 2 }] });
+  const provider = new MultiMonitorViewProvider({
+    vscode: hostVscode(), manager: { paused: false, get: (id) => (id === 'ssh:campus' ? device : null), sync() {}, setConfigFile() {} }, configStore: savedConfig(),
+    workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc' }), update: async () => {} },
+    uiStateStore: { get: (key, fallback) => (key === 'sysmonitor.localIntroDismissed' ? true : fallback), update: async () => {} },
+    localLinux: false, loadHosts: async () => ['campus'],
+  });
+  await provider.refreshHosts();
+  provider.buildHtml = async () => '<html></html>';
+  const messages = [];
+  const view = fakeTarget({ post: (message) => messages.push(message) });
+  await provider.resolveWebviewView(view);
+  await view.receive({ version: 1, cmd: 'ready' });
+  view.visible = false;
+  view.fireVisibility();
+  messages.length = 0;
+  provider.onDeviceUpdate('ssh:campus', device);
+  provider.broadcast({ cmd: 'uiState', paused: true });
+  view.visible = true;
+  view.fireVisibility();
+  provider.onDeviceUpdate('ssh:campus', device);
+  assert.deepEqual(messages, []);
+  await view.receive({ version: 1, cmd: 'ready' });
+  assert.deepEqual(messages.map((message) => message.cmd), ['config', 'navigation', 'uiState', 'localIntroDismissed', 'snapshot']);
+  assert.deepEqual(messages[1].state, { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc' });
+  assert.equal(messages[4].deviceId, 'ssh:campus');
+  assert.equal(messages[4].replaceSamples, true);
+  assert.deepEqual(messages[4].samples, [{ t: 1 }, { t: 2 }]);
+  assert.equal(messages[4].viewModel, model);
+  messages.length = 0;
+  await view.receive({ version: 1, cmd: 'switchPage', page: 'servers' });
+  assert.deepEqual(messages.filter((message) => message.cmd === 'servers').map((message) => message.hosts.map((row) => row.host)), [['campus']]);
+  provider.dispose();
+});
+
+
+test('server rows are pushed only to a visible sidebar on the server page', async () => {
+  const provider = new MultiMonitorViewProvider({
+    vscode: hostVscode(), manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {} }, configStore: savedConfig(),
+    workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
+    localLinux: false, loadHosts: async () => ['campus'],
+    scheduleErrorClear: () => ({}), cancelErrorClear() {},
+  });
+  await provider.refreshHosts();
+  const messages = [];
+  const source = { state: provider.sidebarState, sidebar: true, ready: true, target: { visible: true, webview: { postMessage: (message) => messages.push(message) } } };
+  provider.sidebar = source;
+  const rowErrors = () => messages.filter((message) => message.cmd === 'servers').map((message) => message.hosts[0].error);
+  provider.serverDirectory.setHostError('campus', 'first failure');
+  provider.serverDirectory.notify();
+  assert.deepEqual(rowErrors(), []);
+  await provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'servers' }, source);
+  assert.deepEqual(rowErrors(), ['first failure']);
+  provider.serverDirectory.notify();
+  provider.serverDirectory.setHostError('campus', 'second failure');
+  provider.serverDirectory.notify();
+  assert.deepEqual(rowErrors(), ['first failure', 'second failure']);
+  source.target.visible = false;
+  provider.serverDirectory.setHostError('campus', 'third failure');
+  provider.serverDirectory.notify();
+  assert.deepEqual(rowErrors(), ['first failure', 'second failure']);
+  provider.dispose();
+});
+
+
+test('local views that miss the ready handshake are reloaded once and failed deliveries mark them unready', async () => {
+  const clock = fakeTimers();
+  const logs = [];
+  const provider = new MultiMonitorViewProvider({
+    vscode: hostVscode(), manager: { paused: false, get() { return null; }, sync() {}, setConfigFile() {} }, configStore: savedConfig(),
+    workspaceState: { get: () => ({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' }), update: async () => {} },
+    localLinux: false, loadHosts: async () => [], logger: (message) => logs.push(message), ...clock,
+  });
+  let builds = 0;
+  provider.buildHtml = async (state, { sidebar = false } = {}) => `<html>${sidebar ? 'sidebar' : 'editor'} ${state.selected} ${++builds}</html>`;
+  const view = fakeTarget();
+  await provider.resolveWebviewView(view);
+  assert.deepEqual(clock.timers.map((timer) => timer.milliseconds), [10000]);
+  clock.timers[0].callback();
+  await settle();
+  assert.equal(view.webview.html, '<html>sidebar ssh:campus 2</html>');
+  assert.match(logs.at(-1), /Webview sidebar did not report ready within 10 s/);
+  await view.receive({ version: 1, cmd: 'ready' });
+  view.webview.postMessage = () => Promise.resolve(false);
+  provider.broadcast({ cmd: 'uiState', paused: false });
+  await settle();
+  assert.equal(provider.sidebar.ready, false);
+  assert.equal(clock.timers.length, 1);
+  const panel = fakeTarget({ active: true });
+  await provider.attachEditor(panel, { tabs: ['ssh:lab'], selected: 'ssh:lab', page: 'proc' });
+  assert.equal(clock.timers.length, 2);
+  panel.visible = false;
+  panel.fireViewState();
+  assert.equal(clock.timers[1].cancelled, true);
+  panel.visible = true;
+  panel.fireViewState();
+  clock.timers[2].callback();
+  await settle();
+  assert.equal(panel.webview.html, `<html>editor ssh:lab ${builds}</html>`);
+  provider.dispose();
 });

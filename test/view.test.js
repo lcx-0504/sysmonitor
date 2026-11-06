@@ -9,6 +9,24 @@ const { normalizeConfig } = require('../src/config/normalize-config');
 const { WEBVIEW_SCRIPT_FILES } = require('../src/view/webview-html');
 const { MonitorViewProvider } = require('../src/view/monitor-view-provider');
 const { moveMonitorPanelToNewWindow, getMonitorEditorTitle } = require('../src/view/editor-panel');
+const { formatStatusBarText } = require('../src/view/status-bar-controller');
+
+const ASSET_ROOT = path.join(__dirname, '..', 'src', 'view', 'assets');
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+const readInitialConfig = (html) => JSON.parse(Buffer.from(html.match(/data-config="([A-Za-z0-9+/=]+)"/)[1], 'base64').toString('utf8'));
+
+function fakeTimers() {
+  const timers = [];
+  return {
+    timers,
+    scheduleReadyCheck: (callback, milliseconds) => {
+      const timer = { callback, milliseconds, cancelled: false };
+      timers.push(timer);
+      return timer;
+    },
+    cancelReadyCheck: (timer) => { timer.cancelled = true; },
+  };
+}
 
 const { createSessionFixture } = require('./session-fixture');
 function createProvider({ service = {}, configStore = {}, vscode = {}, ...options }) {
@@ -408,4 +426,203 @@ test('a new remote view remains paused while a one-shot retry is collecting', as
   const messages = [];
   await readySidebar(provider, fakeView({ post: (message) => messages.push(message) }));
   assert.equal(messages.find((message) => message.cmd === 'uiState').paused, true);
+});
+
+test('remote views load only the webview assets and no longer carry GPU counts or config requests', async () => {
+  const created = [];
+  const logs = [];
+  const provider = createProvider({
+    vscode: { ViewColumn: { Active: 1 }, window: { createWebviewPanel: (_type, _title, _column, options) => { created.push(options); return fakePanel(); } } },
+    logger: (message) => logs.push(message),
+  });
+  const messages = [];
+  const view = fakeView({ post: (message) => messages.push(message) });
+  await readySidebar(provider, view);
+  const options = { enableScripts: true, localResourceRoots: [ASSET_ROOT] };
+  assert.deepEqual(view.webview.options, options);
+  assert.ok(fs.existsSync(path.join(ASSET_ROOT, 'main.mjs')));
+  assert.equal('gpuCount' in readInitialConfig(view.webview.html), false);
+  assert.equal(messages.some((message) => message.cmd === 'config' && 'gpuCount' in message), false);
+  const panel = await provider.openEditorPanel();
+  assert.deepEqual(created, [options]);
+  assert.deepEqual(panel.webview.options, options);
+  messages.length = 0;
+  provider.pushConfig();
+  assert.equal('gpuCount' in messages[0], false);
+  messages.length = 0;
+  provider.handleMessage({ version: 1, cmd: 'getConfig' }, view);
+  assert.deepEqual(messages, []);
+  assert.equal(logs.at(-1), 'ignored invalid webview message: getConfig');
+});
+
+test('remote session terminals use the session of the current process row', () => {
+  const created = [];
+  const warnings = [];
+  const provider = createProvider({ vscode: {
+    env: { language: 'zh-CN' },
+    window: {
+      createTerminal: (options) => { created.push(options); return { show() {} }; },
+      showWarningMessage: (message) => warnings.push(message),
+    },
+  } });
+  provider.session.model = { processes: [
+    { pid: 7, session: { type: 'tmux', name: "it's", id: "it's" } },
+    { pid: 8, session: null },
+  ] };
+  provider.handleMessage({ version: 1, cmd: 'openSessionTerminal', deviceId: 'ssh:other', pid: 7, session: { type: 'tmux', name: 'forged', id: 'forged' } });
+  assert.equal(created.length, 1);
+  assert.equal(created[0].name, "tmux: it's");
+  assert.equal(created[0].shellPath, '/bin/sh');
+  assert.deepEqual(created[0].env, { TMUX: null, TMUX_PANE: null });
+  assert.match(created[0].shellArgs[1], /tmux attach-session -t '=it'\\''s' \|\| printf '%s\\n' '无法连接会话 it'\\''s，它可能已经结束。'/);
+  assert.doesNotMatch(created[0].shellArgs[1], /forged/);
+  provider.handleMessage({ version: 1, cmd: 'openSessionTerminal', pid: 8 });
+  provider.handleMessage({ version: 1, cmd: 'openSessionTerminal', pid: 99 });
+  provider.handleMessage({ version: 1, cmd: 'openSessionTerminal', pid: '7' });
+  assert.equal(created.length, 1);
+  assert.deepEqual(warnings, Array(3).fill('找不到该进程所在的终端会话，它可能已经结束。'));
+});
+
+test('remote process collection follows visible views that show the process page', async () => {
+  const demands = [];
+  const provider = createProvider({ vscode: {} });
+  provider.session.setProcessDemand = (value) => demands.push(value);
+  provider.buildHtml = async () => '<html></html>';
+  const view = fakeView();
+  await readySidebar(provider, view);
+  assert.deepEqual(demands, []);
+  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, view);
+  view.visible = false;
+  view.fireVisibility();
+  view.visible = true;
+  view.fireVisibility();
+  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'perf' }, view);
+  assert.deepEqual(demands, [true, false, true, false]);
+  const panel = fakePanel();
+  await provider.attachEditorPanel(panel, { page: 'proc' });
+  panel.visible = false;
+  panel.fireViewState();
+  panel.visible = true;
+  panel.fireViewState();
+  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, view);
+  panel.dispose();
+  assert.deepEqual(demands, [true, false, true, false, true, false, true]);
+  view.fireDispose();
+  assert.deepEqual(demands.slice(-1), [false]);
+});
+
+test('a hidden remote view stops receiving updates and is fully restored by its next ready handshake', async () => {
+  const messages = [];
+  const provider = createProvider({ vscode: {} });
+  provider.buildHtml = async () => '<html></html>';
+  const view = fakeView({ post: (message) => messages.push(message) });
+  await readySidebar(provider, view);
+  provider.handleMessage({ version: 1, cmd: 'switchPage', page: 'proc' }, view);
+  provider.session.ready = true;
+  provider.session.model = { performance: { cpu: { usagePercent: 3 } }, processes: [] };
+  provider.session.history = [{ t: 1 }, { t: 2 }];
+  view.visible = false;
+  view.fireVisibility();
+  messages.length = 0;
+  provider.renderSession();
+  provider.broadcast({ cmd: 'uiState', paused: true });
+  view.visible = true;
+  view.fireVisibility();
+  provider.renderSession();
+  assert.deepEqual(messages, []);
+  view.receive({ version: 1, cmd: 'ready', page: 'perf' });
+  assert.deepEqual(messages.map((message) => message.cmd), ['config', 'snapshot', 'uiState', 'navigatePage']);
+  assert.equal(messages[1].replaceSamples, true);
+  assert.deepEqual(messages[1].samples, [{ t: 1 }, { t: 2 }]);
+  assert.deepEqual(messages[1].viewModel.performance, { cpu: { usagePercent: 3 } });
+  assert.deepEqual(messages[3], { cmd: 'navigatePage', page: 'perf' });
+});
+
+test('undelivered messages mark a remote view unready until it reports ready again', async () => {
+  const provider = createProvider({ vscode: {} });
+  provider.buildHtml = async () => '<html></html>';
+  const view = fakeView();
+  let outcome = true;
+  view.webview.postMessage = () => (outcome instanceof Error ? Promise.reject(outcome) : Promise.resolve(outcome));
+  await readySidebar(provider, view);
+  outcome = false;
+  provider.broadcast({ cmd: 'uiState', paused: false });
+  await settle();
+  assert.equal(provider.sidebar.ready, false);
+  outcome = true;
+  view.receive({ version: 1, cmd: 'ready' });
+  outcome = new Error('Webview is disposed');
+  provider.broadcast({ cmd: 'uiState', paused: false });
+  await settle();
+  assert.equal(provider.sidebar.ready, false);
+  let resolveLate;
+  view.webview.postMessage = () => Promise.resolve(true);
+  view.receive({ version: 1, cmd: 'ready' });
+  view.webview.postMessage = () => new Promise((resolve) => { resolveLate = resolve; });
+  provider.broadcast({ cmd: 'uiState', paused: false });
+  view.webview.postMessage = () => Promise.resolve(true);
+  view.receive({ version: 1, cmd: 'ready' });
+  resolveLate(false);
+  await settle();
+  assert.equal(provider.sidebar.ready, true);
+});
+
+test('a remote view that stays silent for ten seconds is reloaded once per visible period', async () => {
+  const clock = fakeTimers();
+  const logs = [];
+  const provider = createProvider({ vscode: {}, logger: (message) => logs.push(message), ...clock });
+  let builds = 0;
+  provider.buildHtml = async (page, surface) => `<html>${surface} ${page} ${++builds}</html>`;
+  const view = fakeView();
+  await provider.resolveWebviewView(view);
+  assert.equal(view.webview.html, '<html>sidebar perf 1</html>');
+  assert.deepEqual(clock.timers.map((timer) => timer.milliseconds), [10000]);
+  clock.timers[0].callback();
+  await settle();
+  assert.equal(view.webview.html, '<html>sidebar perf 2</html>');
+  assert.match(logs.at(-1), /Webview sidebar did not report ready within 10 s/);
+  assert.equal(clock.timers.length, 1);
+  view.visible = false;
+  view.fireVisibility();
+  view.visible = true;
+  view.fireVisibility();
+  assert.equal(clock.timers.length, 2);
+  view.receive({ version: 1, cmd: 'ready' });
+  assert.equal(clock.timers[1].cancelled, true);
+  const panel = fakePanel();
+  await provider.attachEditorPanel(panel, { page: 'proc' });
+  clock.timers[2].callback();
+  await settle();
+  assert.match(panel.webview.html, /^<html>editor proc \d+<\/html>$/);
+  const background = fakePanel({ visible: false });
+  await provider.attachEditorPanel(background);
+  assert.equal(clock.timers.length, 3);
+  background.visible = true;
+  background.fireViewState();
+  assert.equal(clock.timers.length, 4);
+  background.dispose();
+  assert.equal(clock.timers[3].cancelled, true);
+});
+
+test('disposing a replaced remote sidebar keeps the current view registered', async () => {
+  const provider = createProvider({ vscode: {} });
+  provider.buildHtml = async () => '<html></html>';
+  const first = fakeView();
+  const second = fakeView();
+  await provider.resolveWebviewView(first);
+  await provider.resolveWebviewView(second);
+  first.fireDispose();
+  assert.equal(provider.sidebar.target, second);
+  second.fireDispose();
+  assert.equal(provider.sidebar, null);
+});
+
+test('status bar formatting leaves configured and current-user GPU lists unchanged', () => {
+  const cards = [3, 1];
+  const mine = [2, 0];
+  const gpus = [0, 1, 2, 3].map((idx) => ({ idx, util: 10, memPct: 20, isIdle: false }));
+  assert.equal(formatStatusBarText({ gpu: { mode: 'specify', cards, metric: 'util' } }, { gpus }), '$(circuit-board) #1 10% #3 10%');
+  assert.equal(formatStatusBarText({ gpu: { mode: 'my', metric: 'util' } }, { gpus }, mine), '$(circuit-board) #0 10% #2 10%');
+  assert.deepEqual(cards, [3, 1]);
+  assert.deepEqual(mine, [2, 0]);
 });
