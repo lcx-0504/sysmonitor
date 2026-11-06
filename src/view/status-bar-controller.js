@@ -42,7 +42,7 @@ function formatStatusBarText(config, viewModel, currentUserNativeIndices = []) {
     else if (gpu.mode === 'first') indices = viewModel.gpus.slice(0, gpu.firstN || 2).map((device) => device.idx);
     else if (gpu.mode === 'specify') indices = gpu.cards || [];
     else if (gpu.mode === 'my') indices = currentUserNativeIndices;
-    const details = indices.sort((left, right) => left - right).map((index) => viewModel.gpus.find((device) => device.idx === index)).filter(Boolean).filter((device) => !(gpu.skipIdle && device.isIdle)).map((device) => {
+    const details = [...indices].sort((left, right) => left - right).map((index) => viewModel.gpus.find((device) => device.idx === index)).filter(Boolean).filter((device) => !(gpu.skipIdle && device.isIdle)).map((device) => {
       const memoryPercent = device.memPct;
       const util = Number.isFinite(device.util) ? device.util + '%' : '—';
       const memory = Number.isFinite(memoryPercent) ? memoryPercent + '%V' : '—';
@@ -56,17 +56,23 @@ function formatStatusBarText(config, viewModel, currentUserNativeIndices = []) {
 }
 
 class StatusBarController {
-  constructor({ vscode, configStore, subscriptions }) { this.vscode = vscode; this.configStore = configStore; this.subscriptions = subscriptions; this.item = null; this.viewModel = {}; this.currentUserNativeIndices = []; this.recreate(); }
+  constructor({ vscode, configStore }) { this.vscode = vscode; this.configStore = configStore; this.item = null; this.disposed = false; this.viewModel = {}; this.currentUserNativeIndices = []; this.recreate(); }
   recreate() {
+    if (this.disposed) return;
     const config = this.configStore.getCurrent().statusBar;
     const alignment = config.alignment === 'right' ? this.vscode.StatusBarAlignment.Right : this.vscode.StatusBarAlignment.Left;
     const priority = typeof config.priority === 'number' ? config.priority : 10;
     if (this.item && this.item.alignment === alignment && this.item.priority === priority) return;
     if (this.item) this.item.dispose();
     this.item = this.vscode.window.createStatusBarItem(alignment, priority); this.item.command = 'sysmonitor.openPanel'; this.item.tooltip = 'System Monitor';
-    this.subscriptions.push(this.item); this.update();
+    this.update();
   }
   setViewModel(viewModel, currentUserNativeIndices) { this.viewModel = viewModel; this.currentUserNativeIndices = currentUserNativeIndices; this.update(); }
   update() { if (!this.item) return; const text = formatStatusBarText(this.configStore.getCurrent().statusBar, this.viewModel, this.currentUserNativeIndices); if (text) { this.item.text = text; this.item.show(); } else this.item.hide(); }
+  dispose() {
+    this.disposed = true;
+    if (this.item) this.item.dispose();
+    this.item = null;
+  }
 }
 module.exports = { formatStatusBarText, StatusBarController };

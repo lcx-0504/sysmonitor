@@ -299,15 +299,15 @@ test('monitor views wait for SSH while terminal opens without a preflight', asyn
   assert.equal(editorOpens, 0);
   assert.deepEqual(source.state.tabs, []);
   assert.equal(devices.has('ssh:bad'), false);
-  assert.match(provider.serverRows().find((row) => row.host === 'bad').error, /255/);
+  assert.match(provider.serverDirectory.rows().find((row) => row.host === 'bad').error, /255/);
   assert.equal(messages.some((message) => message.cmd === 'servers' && message.hosts.some((row) => row.host === 'bad' && row.busy)), true);
   assert.equal(scheduled.at(-1).milliseconds, 10000);
   await provider.handleMessage({ version: 1, cmd: 'openTerminal', host: 'bad' }, source);
   assert.equal(terminalOpens, 1);
-  assert.match(provider.serverRows().find((row) => row.host === 'bad').error, /255/);
+  assert.match(provider.serverDirectory.rows().find((row) => row.host === 'bad').error, /255/);
   scheduled.at(-1).callback();
-  assert.equal(provider.serverRows().find((row) => row.host === 'bad').state, 'idle');
-  assert.equal(provider.serverRows().find((row) => row.host === 'bad').error, null);
+  assert.equal(provider.serverDirectory.rows().find((row) => row.host === 'bad').state, 'idle');
+  assert.equal(provider.serverDirectory.rows().find((row) => row.host === 'bad').error, null);
 
   await provider.handleMessage({ version: 1, cmd: 'openServer', host: 'good', inWindow: true }, source);
   assert.equal(floatingOpens, 1);

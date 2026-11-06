@@ -23,11 +23,26 @@ class ServerDirectory {
     this.abortController = new AbortController();
     this.disposed = false;
     this.refreshGeneration = 0;
+    this.shownError = null;
+    this.shownSignature = null;
+  }
+
+  payload(error) {
+    return error ? { hosts: [], error } : { hosts: this.rows(), error: null };
+  }
+
+  current() {
+    return this.payload(this.shownError);
   }
 
   notify(error = null) {
     if (this.disposed) return;
-    this.onChange(error ? [] : this.rows(), error);
+    const payload = this.payload(error);
+    const signature = JSON.stringify(payload);
+    if (signature === this.shownSignature) return;
+    this.shownSignature = signature;
+    this.shownError = error;
+    this.onChange(payload.hosts, payload.error);
   }
 
   hasHost(host) { return this.hosts.includes(host); }
@@ -210,11 +225,8 @@ class ServerDirectory {
 
   onDeviceUpdate(id, device) {
     if (device.state === 'connected' && device.host && this.lastStatuses.get(id) !== 'connected:') this.clearHostError(device.host);
-    const signature = `${device.state}:${device.error || ''}`;
-    if (this.lastStatuses.get(id) !== signature || (device.host && device.state === 'connected')) {
-      this.lastStatuses.set(id, signature);
-      this.notify();
-    }
+    this.lastStatuses.set(id, `${device.state}:${device.error || ''}`);
+    if (device.host && this.hasHost(device.host)) this.notify();
   }
 
   dispose() {

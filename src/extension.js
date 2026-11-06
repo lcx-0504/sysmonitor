@@ -81,14 +81,17 @@ async function activate(context) {
       },
     });
     context.subscriptions.push({ dispose: () => { provider.dispose(); manager.dispose(); } });
-    context.subscriptions.push(vscode.window.registerWebviewViewProvider('sysmonitor.panel', provider, { webviewOptions: { retainContextWhenHidden: true } }));
+    context.subscriptions.push(vscode.window.registerWebviewViewProvider('sysmonitor.panel', provider));
     context.subscriptions.push(vscode.window.registerWebviewPanelSerializer('sysmonitor.editor', {
       deserializeWebviewPanel: (panel, state) => {
         if (!configStore.getCurrent().servers.restoreTabs) { panel.dispose(); return; }
         return provider.attachEditor(panel, state && state.navigation ? state.navigation : state);
       },
     }));
-    if (localLinux) statusBarController = new StatusBarController({ vscode, configStore, subscriptions: context.subscriptions });
+    if (localLinux) {
+      statusBarController = new StatusBarController({ vscode, configStore });
+      context.subscriptions.push(statusBarController);
+    }
     watchConfig(context, provider, () => manager.updateConfig(), event => {
       if (event.affectsConfiguration('remote.SSH.configFile')) provider.refreshHosts();
       if (event.affectsConfiguration('remote.SSH.defaultExtensions')) provider.pushConfig();
@@ -108,7 +111,6 @@ async function activate(context) {
   }
 
   if (localInRemoteWindow || process.platform !== 'linux') {
-    vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarDeviceActive', false);
     vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarSshActive', false);
     vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarFixedActive', false);
     vscode.commands.executeCommand('setContext', 'sysmonitor.editorSshActive', false);
@@ -134,6 +136,8 @@ async function activate(context) {
         vscode.commands.executeCommand('workbench.view.extension.sysmonitor-container');
       })
     );
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openEditor', () => {}));
+    context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openWindow', () => {}));
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openTerminal', () => {}));
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.openRemoteWindow', () => {}));
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.copyToEditor', () => {}));
@@ -142,10 +146,12 @@ async function activate(context) {
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorMoveWindow', () => {}));
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorTerminal', () => {}));
     context.subscriptions.push(vscode.commands.registerCommand('sysmonitor.editorRemoteWindow', () => {}));
+    context.subscriptions.push(vscode.window.registerWebviewPanelSerializer('sysmonitor.editor', {
+      deserializeWebviewPanel: (panel) => { panel.dispose(); },
+    }));
     return;
   }
 
-  vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarDeviceActive', true);
   vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarSshActive', false);
   vscode.commands.executeCommand('setContext', 'sysmonitor.sidebarFixedActive', true);
   vscode.commands.executeCommand('setContext', 'sysmonitor.editorSshActive', false);
@@ -172,14 +178,11 @@ async function activate(context) {
     uiStateStore: context.globalState,
     logger: logDebug,
   });
-  context.subscriptions.push({ dispose: () => session.dispose() });
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('sysmonitor.panel', provider, {
-      webviewOptions: { retainContextWhenHidden: true },
-    })
-  );
+  context.subscriptions.push({ dispose: () => { provider.dispose(); session.dispose(); } });
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider('sysmonitor.panel', provider));
 
-  statusBarController = new StatusBarController({ vscode, configStore, subscriptions: context.subscriptions });
+  statusBarController = new StatusBarController({ vscode, configStore });
+  context.subscriptions.push(statusBarController);
 
   watchConfig(context, provider, () => session.updateConfig());
 
@@ -207,5 +210,7 @@ async function activate(context) {
   session.start();
 }
 
-function deactivate() { }
+function deactivate() {
+  return configStore.flush().catch(() => {});
+}
 module.exports = { activate, deactivate };

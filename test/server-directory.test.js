@@ -49,8 +49,7 @@ test('monitor opens after a complete rendered sample, including a valid empty GP
   await new Promise(setImmediate);
   fixture.commit(['cpu', 'memory', 'network', 'sshTraffic', 'diskIo', 'diskTopology']);
   assert.equal(opened, false);
-  assert.deepEqual(fixture.phases.slice(0, 2), ['connecting', 'connecting']);
-  assert.ok(fixture.phases.includes('loading'));
+  assert.deepEqual(fixture.phases, ['connecting', 'loading']);
   fixture.commit(['accelerators']);
   await action;
   assert.equal(opened, true);

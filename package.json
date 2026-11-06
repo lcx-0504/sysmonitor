@@ -15,7 +15,7 @@
     "url": "https://github.com/lcx-0504/sysmonitor.git"
   },
   "engines": {
-    "vscode": "^1.70.0"
+    "vscode": "^1.85.0"
   },
   "scripts": {
     "pretest": "node scripts/build-assets.js",

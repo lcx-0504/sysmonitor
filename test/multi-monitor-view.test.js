@@ -7,19 +7,21 @@ const { normalizeNavigation, normalizeEditorNavigation, MultiMonitorViewProvider
 const { normalizeConfig } = require('../src/config/normalize-config');
 const { DeviceMonitorManager } = require('../src/services/device-monitor-manager');
 const { createSessionFixture } = require('./session-fixture');
+const { WebviewReadiness } = require('../src/view/webview-readiness');
 
 test('navigation restore preserves selected device and page, with a fixed local Linux tab', () => {
   assert.deepEqual(normalizeNavigation({ tabs: ['ssh:campus', 'ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'proc' }, true), {
-    tabs: ['local', 'ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'proc', processDisplay: { cpu: 'core', ram: 'size' },
+    tabs: ['local', 'ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'proc',
   });
-  assert.deepEqual(normalizeNavigation({}, false), { tabs: [], selected: null, page: 'servers', processDisplay: { cpu: 'core', ram: 'size' } });
+  assert.deepEqual(normalizeNavigation({}, false), { tabs: [], selected: null, page: 'servers' });
+  assert.equal('processDisplay' in normalizeNavigation({ tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc', processDisplay: { cpu: 'whole' } }, false), false);
   assert.deepEqual(normalizeNavigation({ tabs: ['ssh:campus', 'local', 'ssh:lab007'], selected: 'local', page: 'perf' }, true).tabs, ['ssh:campus', 'local', 'ssh:lab007']);
 });
 
 
 test('Editor navigation keeps one device and only performance or process pages', () => {
   assert.deepEqual(normalizeEditorNavigation({ tabs: ['ssh:campus', 'ssh:lab007'], selected: 'ssh:lab007', page: 'servers' }, false), {
-    tabs: ['ssh:lab007'], selected: 'ssh:lab007', page: 'perf', processDisplay: { cpu: 'core', ram: 'size' },
+    tabs: ['ssh:lab007'], selected: 'ssh:lab007', page: 'perf',
   });
   assert.deepEqual(normalizeEditorNavigation({ tabs: ['local', 'ssh:campus'], selected: 'local', page: 'proc' }, true).tabs, ['local']);
   assert.equal(normalizeEditorNavigation({}, false), null);
@@ -57,8 +59,7 @@ test('sidebar pop-out moves an SSH tab but copies the fixed local device', async
   assert.deepEqual(remote.provider.sidebarState.tabs, []);
   assert.equal(remote.provider.sidebarState.page, 'servers');
   assert.deepEqual(remote.syncs.at(-1), ['ssh:campus']);
-  assert.deepEqual(remote.contexts.slice(-3), [
-    ['setContext', 'sysmonitor.sidebarDeviceActive', false],
+  assert.deepEqual(remote.contexts.slice(-2), [
     ['setContext', 'sysmonitor.sidebarSshActive', false],
     ['setContext', 'sysmonitor.sidebarFixedActive', false],
   ]);
@@ -79,8 +80,7 @@ test('sidebar pop-out moves an SSH tab but copies the fixed local device', async
   const listPage = await makeProvider(false, { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'servers' });
   await listPage.provider.moveSidebarDeviceToEditor();
   assert.equal(listPage.opened.length, 0);
-  assert.deepEqual(listPage.contexts.filter(([, key]) => key.startsWith('sysmonitor.sidebar')).slice(0, 3), [
-    ['setContext', 'sysmonitor.sidebarDeviceActive', false],
+  assert.deepEqual(listPage.contexts.filter(([, key]) => key.startsWith('sysmonitor.sidebar')).slice(0, 2), [
     ['setContext', 'sysmonitor.sidebarSshActive', false],
     ['setContext', 'sysmonitor.sidebarFixedActive', false],
   ]);
@@ -134,8 +134,8 @@ test('Editor title actions return the active device to the sidebar or move its w
   });
   const sshPanel = { active: true, reveal() { commands.push(['reveal']); }, dispose() { commands.push(['dispose']); } };
   const localPanel = { active: false, dispose() { commands.push(['dispose-local']); } };
-  const sshState = { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc', processDisplay: { cpu: 'whole', ram: 'size' } };
-  const localState = { tabs: ['local'], selected: 'local', page: 'perf', processDisplay: { cpu: 'core', ram: 'size' } };
+  const sshState = { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc' };
+  const localState = { tabs: ['local'], selected: 'local', page: 'perf' };
   provider.editors.set(sshPanel, { target: sshPanel, state: sshState, ready: false, sidebar: false });
   provider.editors.set(localPanel, { target: localPanel, state: localState, ready: false, sidebar: false });
   provider.sidebar = { state: provider.sidebarState, sidebar: true, ready: true, target: { visible: true, show() { commands.push(['show-sidebar']); }, webview: { postMessage() {} } } };
@@ -258,6 +258,7 @@ test('closing an Editor while its HTML loads prevents a write to the disposed pa
   Object.assign(provider, {
     localLinux: false, editors: new Map(),
     vscode: { env: { language: 'en' }, Uri: { file: (value) => value } },
+    readiness: new WebviewReadiness({ rebuildHtml: async () => '' }),
     refreshReferences() {}, updateEditorTitleActions() {},
   });
   let finishHtml;
@@ -284,7 +285,7 @@ test('native Editor tab uses the selected SSH alias', async () => {
   let createdTitle = null;
   const provider = new MultiMonitorViewProvider({
     vscode: {
-      ViewColumn: { Active: 1 },
+      ViewColumn: { Active: 1 }, Uri: { file: (file) => file },
       window: { createWebviewPanel: (_type, title) => { createdTitle = title; return {}; } },
       workspace: { getConfiguration: () => ({ get: () => null }) },
     },
@@ -323,7 +324,7 @@ test('sidebar and editor restore independent device/page state while sharing ope
     get() { return null; },
     setConfigFile() {},
   };
-  const stored = { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc', processDisplay: { cpu: 'core', ram: 'size' } };
+  const stored = { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'proc' };
   const workspaceState = { get: () => stored, update: async () => {} };
   const vscode = {
     env: { language: 'zh-cn' },
@@ -342,7 +343,7 @@ test('sidebar and editor restore independent device/page state while sharing ope
     onDidDispose(handler) { this.dispose = handler; },
     onDidChangeViewState() {},
   };
-  await provider.attachEditor(panel, { tabs: ['ssh:lab007'], selected: 'ssh:lab007', page: 'perf', processDisplay: { cpu: 'whole', ram: 'size' } });
+  await provider.attachEditor(panel, { tabs: ['ssh:lab007'], selected: 'ssh:lab007', page: 'perf' });
   assert.equal(panel.title, 'lab007');
   assert.equal(path.basename(panel.iconPath.light), 'icon-tab-light.svg');
   assert.equal(path.basename(panel.iconPath.dark), 'icon-tab-dark.svg');
@@ -399,7 +400,7 @@ test('Remote-SSH menu exposes recent folders and opens a new remote window witho
   provider.sidebar = source;
   await provider.handleMessage({ version: 1, cmd: 'activateRemoteWindow', host: 'campus' }, source);
   assert.deepEqual(messages.at(-1), { cmd: 'remoteFolders', host: 'campus', folders: [{ index: 0, folder: '/home/alice' }, { index: 1, folder: '/workspace' }] });
-  provider.sidebarState = { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf', processDisplay: { cpu: 'core', ram: 'size' } };
+  provider.sidebarState = { tabs: ['ssh:campus'], selected: 'ssh:campus', page: 'perf' };
   await provider.openRemoteWindowForSidebar();
   assert.deepEqual(commands.filter(([name]) => name === 'vscode.openFolder').at(-1), [
     'vscode.openFolder', { scheme: 'vscode-remote', authority: 'ssh-remote+alice@campus', path: '/home/alice' }, { forceNewWindow: true },

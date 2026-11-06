@@ -10,11 +10,14 @@ const source = fs.readFileSync(path.join(__dirname, '../src/extension.js'), 'utf
 
 async function activate({ platform, remoteName, extensionKind = 2, language = 'zh-CN', realConfig = false, env = {} }) {
   const providers = new Map();
+  const providerOptions = new Map();
+  const serializers = new Map();
   const commands = new Map();
   const contexts = new Map();
   const managers = [];
   const sessions = [];
   const statusBars = [];
+  const flushes = [];
   const savedConfig = {};
   const disposable = { dispose() {} };
   let configurationUpgraded = false;
@@ -24,6 +27,7 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     async upgrade() { await Promise.resolve(); configurationUpgraded = true; }
     refresh() {}
     getCurrent() { return { servers: { restoreTabs: true } }; }
+    flush() { flushes.push('flush'); return Promise.reject(new Error('settings are read only')); }
   }
   class DeviceMonitorManager {
     constructor(options) { assert.equal(configurationUpgraded, true); this.options = options; managers.push(this); }
@@ -51,8 +55,8 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     },
     window: {
       createOutputChannel: () => ({ ...disposable, appendLine() {} }),
-      registerWebviewViewProvider(id, provider) { providers.set(id, provider); return disposable; },
-      registerWebviewPanelSerializer: () => disposable,
+      registerWebviewViewProvider(id, provider, options) { providers.set(id, provider); providerOptions.set(id, options); return disposable; },
+      registerWebviewPanelSerializer(id, serializer) { serializers.set(id, serializer); return disposable; },
       createStatusBarItem(alignment,priority) {
         const item={alignment,priority,show() {},hide() {},dispose() {this.disposed=true;}};
         statusBars.push(item); return item;
@@ -83,7 +87,8 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     require(id) { assert.ok(modules[id], 'Unexpected import: ' + id); return modules[id]; },
   };
   vm.runInNewContext(source, sandbox, { filename: 'src/extension.js' });
-  await sandbox.module.exports.activate({ subscriptions: [], extension: { extensionKind }, workspaceState: {}, globalState: {} });
+  const subscriptions = [];
+  await sandbox.module.exports.activate({ subscriptions, extension: { extensionKind }, workspaceState: {}, globalState: {} });
   const provider = providers.get('sysmonitor.panel');
   let html = '';
   if (provider.resolveWebviewView && !realConfig) {
@@ -91,7 +96,7 @@ async function activate({ platform, remoteName, extensionKind = 2, language = 'z
     provider.resolveWebviewView(view);
     html = view.webview.html;
   }
-  return { managers, sessions, statusBars, contexts, provider, html, MultiMonitorViewProvider, MonitorViewProvider };
+  return { managers, sessions, statusBars, flushes, contexts, commands, serializers, subscriptions, provider, providerOptions, html, MultiMonitorViewProvider, MonitorViewProvider, deactivate: sandbox.module.exports.deactivate };
 }
 
 test('native SSH monitoring retains client-only metadata when full endpoints are unavailable', async () => {
@@ -105,8 +110,9 @@ test('panel settings update the native status bar through the shared config subs
   t.after(() => provider.configStore.dispose());
   const original = statusBars[0];
   const sidebarMessages = [], editorMessages = [];
-  provider.view = {webview:{postMessage:message=>sidebarMessages.push(message)}}; provider.isReady = true;
-  provider.editorPanels.set({webview:{postMessage:message=>editorMessages.push(message)}},true);
+  provider.sidebar = {target:{visible:true,webview:{postMessage:message=>sidebarMessages.push(message)}},ready:true};
+  const panel = {visible:true,webview:{postMessage:message=>editorMessages.push(message)}};
+  provider.editorPanels.set(panel,{target:panel,ready:true});
   provider.handleMessage({version:1,cmd:'setConfig',key:'statusBar',changes:[{path:['alignment'],value:'right'},{path:['priority'],value:50}]});
   assert.equal(statusBars.length,2);
   assert.equal(original.disposed,true);
@@ -169,4 +175,49 @@ test('local-host installation guidance is localized in English', async () => {
   const result = await activate({ platform: 'linux', remoteName: 'ssh-remote', extensionKind: 1, language: 'en' });
   assert.match(result.html, /System Monitor is running locally/);
   assert.doesNotMatch(result.html, /This remote is not Linux/);
+});
+
+const MODES = [
+  { platform: 'darwin' },
+  { platform: 'linux' },
+  { platform: 'linux', remoteName: 'ssh-remote' },
+  { platform: 'darwin', remoteName: 'ssh-remote' },
+  { platform: 'linux', remoteName: 'ssh-remote', extensionKind: 1 },
+];
+
+test('every mode registers all contributed commands and leaves hidden views unretained', async () => {
+  const manifest = require('../package.json');
+  for (const mode of MODES) {
+    const result = await activate(mode);
+    for (const { command } of manifest.contributes.commands) assert.equal(typeof result.commands.get(command), 'function', JSON.stringify(mode) + ' ' + command);
+    assert.equal(result.providerOptions.get('sysmonitor.panel'), undefined, JSON.stringify(mode));
+    assert.equal(result.contexts.has('sysmonitor.sidebarDeviceActive'), false, JSON.stringify(mode));
+    assert.equal(typeof result.serializers.get('sysmonitor.editor').deserializeWebviewPanel, 'function', JSON.stringify(mode));
+  }
+});
+
+test('unsupported environments close restored monitor editors', async () => {
+  const result = await activate({ platform: 'darwin', remoteName: 'ssh-remote' });
+  let disposed = 0;
+  await result.serializers.get('sysmonitor.editor').deserializeWebviewPanel({ dispose: () => { disposed++; } }, { page: 'proc' });
+  assert.equal(disposed, 1);
+});
+
+test('deactivation waits for pending settings writes and ignores write failures', async () => {
+  const result = await activate({ platform: 'darwin' });
+  const pending = result.deactivate();
+  assert.equal(typeof pending.then, 'function');
+  assert.equal(await pending, undefined);
+  assert.deepEqual(result.flushes, ['flush']);
+});
+
+test('the status bar controller owns its item instead of the extension subscriptions', async t => {
+  const { provider, statusBars, subscriptions } = await activate({ platform: 'linux', remoteName: 'ssh-remote', realConfig: true });
+  t.after(() => provider.configStore.dispose());
+  assert.equal(subscriptions.includes(statusBars[0]), false);
+  const controller = subscriptions.find((entry) => entry && typeof entry.recreate === 'function');
+  controller.dispose();
+  assert.equal(statusBars[0].disposed, true);
+  controller.recreate();
+  assert.equal(statusBars.length, 1);
 });
