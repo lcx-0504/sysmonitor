@@ -1,48 +1,130 @@
-import { state } from "./state.mjs";
-import { updateTopbarLayout } from "./layout.mjs";
-import { normalizeProcessDisplay, refreshProcTable } from "./processes.mjs";
-import { switchTab, showMonitorStatus, refreshConnectionRetryButton, showConnection, showNavigation, showRetryConnectionResult, dismissLocalIntro, currentPage } from "./navigation.mjs";
-import { setChartActivity, updateSparkAnimation } from "./charts.mjs";
-import { applySamples } from './chart-state.mjs';
-import { renderSettings, updateSshDefaultUi, refreshGpuAvailability, showConfigSaveState, showSshDefaultExtensions } from "./settings.mjs";
-import { sendToExtension, tr } from './ui.mjs';
-import { renderServers, showServers, showRemoteFolders, finishRemoteWindowAction } from "./servers.mjs";
-import { applyCharts, applyGroupVisibility, applyTabularNums, renderMonitorSnapshot, restoreGpuSelection } from "./performance.mjs";
-import { resolveLanguage } from "./i18n.mjs";
-import { TO_EXTENSION, TO_WEBVIEW } from "./protocol.mjs";
+import { state, currentGpus } from './state.mjs';
+import { resolveLanguage } from './i18n.mjs';
+import { TO_EXTENSION, TO_WEBVIEW } from './protocol.mjs';
+import { sendToExtension, storedViewState, storeViewState, tr } from './ui.mjs';
+import { applySamples, updateChartWindow } from './chart-state.mjs';
+import { initializeCharts, resetCharts, updateSparkAnimation } from './charts.mjs';
+import { hideTooltips } from './popover.mjs';
+import { initializeLayout, updateResponsiveLayout, updateTopbarLayout } from './layout.mjs';
+import { applyNavigation, initializeNavigation, requestPage } from './navigation.mjs';
+import { initializeConnection, refreshConnectionRetryButton, resetConnection, showConnection, showMonitorStatus, showRetryConnectionResult, updateBannerVisibility } from './connection.mjs';
+import { applyCharts, applyGroupVisibility, applyTabularNums, initializePerformance, refreshGpuUsers, renderMonitorSnapshot, resetPerformanceView } from './performance.mjs';
+import { focusGpuProcesses, initializeProcesses, renderProcessSnapshot, resetProcessView, setProcessDisplay, showProcessPage } from './processes.mjs';
+import { applySshDefaultStatus, closeRemoteMenu, dismissLocalIntro, finishRemoteWindowAction, initializeServers, renderServers, showRemoteFolders, showServers, updateLocalIntro } from './servers.mjs';
+import { initializeSettings, refreshGpuAvailability, refreshSettings, showConfigSaveState } from './settings.mjs';
+
+const PAGES = ['perf', 'proc', 'servers'];
+
+function decodeInitialConfig() {
+  const bytes = Uint8Array.from(atob(document.body.dataset.config), (character) => character.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+function initializeState() {
+  const initial = decodeInitialConfig();
+  const localMode = initial.localMode === true;
+  state.bridge = acquireVsCodeApi();
+  state.initial = initial;
+  state.environment = { localMode, localLinux: initial.localLinux === true, editorMode: localMode && initial.surface === 'editor' };
+  state.locale = { language: resolveLanguage(initial.language) };
+  state.config = {
+    statusBar: initial.barCfg || {},
+    collection: { custom: false, ...Object.fromEntries(initial.collectionFields.map((field) => [field.key, field.default])), ...initial.collection },
+    disk: initial.diskCfg || {},
+    display: initial.displayCfg || {},
+    servers: initial.serversCfg || { visibleOnly: false, restoreTabs: true },
+    refreshInterval: initial.interval || initial.refreshSetting.default,
+  };
+  state.ui = { paused: initial.paused === true, page: 'perf' };
+  state.data = { viewModel: null, status: null };
+  state.charts = {};
+}
 
 function setPaused(paused) {
-    setChartActivity(paused, state.ui.canAnimate);
-    refreshConnectionRetryButton();
-    var pauseButton = document.getElementById('pause-btn');
-    pauseButton.textContent = paused ? tr('stopped') : tr('running');
-    pauseButton.classList.toggle('on', !paused);
-    updateTopbarLayout();
+  state.ui.paused = paused;
+  updateSparkAnimation();
+  refreshConnectionRetryButton();
+  const pauseButton = document.getElementById('pause-btn');
+  pauseButton.textContent = paused ? tr('stopped') : tr('running');
+  pauseButton.classList.toggle('on', !paused);
+  updateTopbarLayout();
+}
+
+function showPage(name, notify = true) {
+  if (state.environment.editorMode && name === 'servers') return;
+  state.ui.page = name;
+  if (notify && state.environment.localMode) {
+    requestPage(name);
+    updateLocalIntro();
+    updateBannerVisibility();
+    closeRemoteMenu();
+    sendToExtension(TO_EXTENSION.switchPage, { page: name });
   }
+  if (notify && !state.environment.localMode) {
+    storeViewState({ page: name });
+    sendToExtension(TO_EXTENSION.switchPage, { page: name });
+  }
+  hideTooltips();
+  for (const page of PAGES) {
+    document.getElementById('tab-' + page).classList.toggle('active', page === name);
+    document.getElementById('tab-' + page + '-btn').classList.toggle('on', page === name);
+  }
+  if (name === 'perf') requestAnimationFrame(refreshGpuUsers);
+  if (name === 'proc') showProcessPage();
+  updateSparkAnimation();
+  updateResponsiveLayout();
+  showMonitorStatus(state.data.status);
+}
+
+function viewGpuProcesses(index) {
+  focusGpuProcesses(index);
+  showPage('proc');
+}
+
+// Clears everything shown for the previous device before the newly selected one reports.
+function resetDeviceView() {
+  state.data.viewModel = null;
+  resetConnection();
+  resetCharts();
+  resetProcessView();
+  resetPerformanceView();
+}
+
+function showNavigation(navigation) {
+  if (!navigation) return;
+  closeRemoteMenu();
+  const { deviceChanged } = applyNavigation(navigation);
+  if (deviceChanged) resetDeviceView();
+  showPage(state.ui.navigation.page || 'servers', false);
+  updateLocalIntro();
+  updateBannerVisibility();
+}
+
+function gpuInventory() {
+  return JSON.stringify(currentGpus().map((gpu) => [gpu.idx, gpu.deviceKey]));
+}
 
 function presentSnapshot(data, restoring = false) {
   applySamples(data.samples, { replace: data.replaceSamples === true, timeline: data.timeline });
   if (data.status) showMonitorStatus(data.status);
   if (data.viewModel) {
-    const previousInventory = state.data.gpus.map(gpu => [gpu.idx, gpu.deviceKey]);
+    const inventory = gpuInventory();
     state.data.viewModel = data.viewModel;
+    renderProcessSnapshot(data.viewModel);
     renderMonitorSnapshot(data.viewModel, restoring || data.instant === true, data.sampleTime);
-    if (JSON.stringify(previousInventory) !== JSON.stringify(state.data.gpus.map(gpu => [gpu.idx,gpu.deviceKey]))) refreshGpuAvailability();
+    if (gpuInventory() !== inventory) refreshGpuAvailability();
   }
   if (data.connection) showConnection(data.connection);
 }
 
-function navigatePage(data) {
-  if (data.page !== 'perf' && data.page !== 'proc') return;
-  if (!state.environment.localMode) state.bridge.setState(Object.assign({}, state.bridge.getState() || {}, { page: data.page }));
-  switchTab(data.page, false);
+function navigatePage({ page }) {
+  if (page !== 'perf' && page !== 'proc') return;
+  if (!state.environment.localMode) storeViewState({ page });
+  showPage(page, false);
 }
 
 function applyUiState(data) {
-  if (data.processDisplay) {
-    state.ui.processDisplay = normalizeProcessDisplay(data.processDisplay);
-    refreshProcTable();
-  }
+  if (data.processDisplay) setProcessDisplay(data.processDisplay);
   if (typeof data.paused === 'boolean') setPaused(data.paused);
 }
 
@@ -53,18 +135,19 @@ function applyConfig(data) {
   state.config.display = data.displayCfg || state.config.display;
   if (data.serversCfg) state.config.servers = data.serversCfg;
   if (state.environment.localMode && data.serversCfg) renderServers();
-  state.charts.windowMilliseconds = (state.config.display.sparkMinutes || 5) * 60 * 1000;
+  updateChartWindow();
   applyTabularNums();
   applyCharts();
   applyGroupVisibility();
   state.config.refreshInterval = data.interval || state.config.refreshInterval;
-  if (typeof data.sshDefaultInstalled === 'boolean') {
-    state.config.sshDefaultInstalled = data.sshDefaultInstalled;
-    state.ui.installPending = false;
-    updateSshDefaultUi();
-  }
-  if (state.ui.settingsOpen) renderSettings();
+  if (typeof data.sshDefaultInstalled === 'boolean') applySshDefaultStatus(data.sshDefaultInstalled);
+  refreshSettings();
   if (data.saveState) showConfigSaveState(data.saveState);
+}
+
+function showSshDefaultExtensions({ installed, error }) {
+  applySshDefaultStatus(installed, error);
+  refreshSettings();
 }
 
 function receiveSnapshot(data) {
@@ -97,50 +180,39 @@ const messageHandlers = {
   [TO_WEBVIEW.remoteWindowActionDone]: localModeOnly(finishRemoteWindowAction),
 };
 
+function showInitialPage() {
+  if (state.environment.localMode) {
+    showNavigation(state.ui.navigation);
+    return;
+  }
+  const page = storedViewState().page || state.initial.page || 'perf';
+  showPage(page, false);
+  storeViewState({ page });
+}
+
 export function initializeApp() {
+  initializeState();
+  initializeCharts();
+  initializeLayout();
+  initializeNavigation();
+  initializeConnection();
+  initializePerformance({ viewGpuProcesses });
+  initializeProcesses();
+  initializeServers();
+  initializeSettings();
   window.addEventListener('message', (event) => {
     const data = event.data;
     if (data && Object.hasOwn(messageHandlers, data.cmd)) messageHandlers[data.cmd](data);
   });
-  document.getElementById('tab-perf-btn').addEventListener('click',function(){switchTab('perf');});
-  document.getElementById('tab-proc-btn').addEventListener('click',function(){switchTab('proc');});
-  document.getElementById('tab-servers-btn').addEventListener('click',function(){switchTab('servers');});
-  document.getElementById('pause-btn').addEventListener('click',function(){
-      setPaused(!state.ui.paused);
-      sendToExtension(TO_EXTENSION.pause, { value: state.ui.paused });
-    });
+  for (const page of PAGES) document.getElementById('tab-' + page + '-btn').addEventListener('click', () => showPage(page));
+  document.getElementById('pause-btn').addEventListener('click', () => {
+    setPaused(!state.ui.paused);
+    sendToExtension(TO_EXTENSION.pause, { value: state.ui.paused });
+  });
   document.addEventListener('visibilitychange', updateSparkAnimation);
-  state.charts.windowMilliseconds = (state.config.display.sparkMinutes || 5) * 60 * 1000;
-  restoreGpuSelection();
-  if (state.environment.localMode) showNavigation(state.ui.navigation);
-  else {
-      var persistedPage = state.bridge.getState();
-      switchTab((persistedPage && persistedPage.page) || state.initial.page || 'perf', false);
-      state.bridge.setState(Object.assign({}, persistedPage || {}, {page: (persistedPage && persistedPage.page) || state.initial.page || 'perf'}));
-    }
-    applyGroupVisibility();
-    updateTopbarLayout();
-    sendToExtension(TO_EXTENSION.ready, { page: currentPage() });
-    updateSparkAnimation();
-}
-
-export function initializeState() {
-  state.environment = {}; state.locale = {}; state.config = {}; state.ui = {};
-  state.data = {viewModel:null}; state.charts = {}; state.elements = {};
-  state.bridge = acquireVsCodeApi();
-  state.initial = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(document.body.dataset.config), function(character) { return character.charCodeAt(0); })));
-  state.locale.language = resolveLanguage(state.initial.language);
-  state.ui.paused = state.initial.paused === true;
-  state.ui.canAnimate = true;
-  state.config.statusBar = state.initial.barCfg || {};
-  state.config.collection = Object.assign({ custom: false, ...Object.fromEntries(state.initial.collectionFields.map(field => [field.key, field.default])) }, state.initial.collection);
-  state.config.disk = state.initial.diskCfg || {};
-  state.config.display = state.initial.displayCfg || {};
-  state.config.servers = state.initial.serversCfg || { visibleOnly: false, restoreTabs: true };
-  state.config.sshDefaultInstalled = state.initial.sshDefaultInstalled === true;
-  state.data.gpus = [];
-  state.data.status = state.initial.monitorStatus || null;
-  state.ui.processDisplay = normalizeProcessDisplay(state.initial.processDisplay);
-  state.config.refreshInterval = state.initial.interval || state.initial.refreshSetting.default;
-  state.ui.settingsOpen = false;
+  showInitialPage();
+  applyGroupVisibility();
+  updateTopbarLayout();
+  sendToExtension(TO_EXTENSION.ready, { page: state.ui.page });
+  updateSparkAnimation();
 }

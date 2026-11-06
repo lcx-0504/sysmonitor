@@ -166,9 +166,9 @@ test('GPU card, process tag and user capsule use the same rounded memory percent
   assert.equal(model.performance.gpus[0].users[0].percent, 90);
   assert.equal(model.processes[0].gpus[0].pct, 90);
   const script = readWebviewScript();
-  assert.match(script, /var memPct = g\.memPct;/);
-  assert.match(script, /var pct = g\.pct;/);
-  assert.match(script, /chip\.className = 'gpu-user ' \+ tagColorClass\(user\.percent\)/);
+  assert.match(script, /memory: Number\.isFinite\(gpu\.memPct\) \? gpu\.memPct : null/);
+  assert.match(script, /const percent = usage\.pct;/);
+  assert.match(script, /element\('span', 'gpu-user ' \+ tagColorClass\(user\.percent\)/);
 });
 
 test('GPU display name removes only vendor and marketing prefixes', () => {

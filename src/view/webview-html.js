@@ -5,7 +5,7 @@ const pkg = require('../../package.json');
 const { createTranslator, resolveLanguage } = require('../i18n');
 const { COLLECTION_FIELDS, REFRESH_SETTING } = require('../config/default-config');
 const { DISK_PRESETS } = require('../domain/disk');
-const WEBVIEW_SCRIPT_FILES = ['app.mjs', 'chart-state.mjs', 'charts.mjs', 'layout.mjs', 'performance.mjs', 'settings.mjs', 'navigation.mjs', 'servers.mjs', 'processes.mjs'];
+const WEBVIEW_SCRIPT_FILES = ['app.mjs', 'chart-state.mjs', 'charts.mjs', 'connection.mjs', 'layout.mjs', 'navigation.mjs', 'performance.mjs', 'popover.mjs', 'processes.mjs', 'servers.mjs', 'settings.mjs', 'ui.mjs'];
 
 async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
   const language = resolveLanguage(initConfig && initConfig.language);

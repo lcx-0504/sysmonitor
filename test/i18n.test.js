@@ -61,7 +61,8 @@ const INDIRECT_TRANSLATIONS = {
   'src/extension.js': { key: { file: 'src/ssh/ssh-transport.js', keys: ['remoteTimeoutUnavailable'] } },
   'src/i18n/index.js': { key: { file: 'src/i18n/index.js', keys: ['collectionTimeout', 'collectionBusy', 'collectionIncomplete', 'remoteCommandFailed', 'remoteNotLinux', 'commandOutputTooLarge', 'commandNotFound', 'psUnsupported', 'gpuOccupancyUnavailable', 'gpuIdentityUnavailable'] } },
   'src/view/assets/ui.mjs': { key: null },
-  'src/view/assets/navigation.mjs': { 'SOURCE_LABEL_KEYS[source]': { file: 'src/view/assets/navigation.mjs', keys: ['sourceCpu', 'sourceMemory', 'sourceNetwork', 'sourceDiskIo', 'sourceDiskTopology', 'sourceAccelerators', 'sourceProcesses', 'sourceSshTraffic'] } },
+  'src/view/assets/connection.mjs': { 'SOURCE_LABEL_KEYS[source]': { file: 'src/view/assets/connection.mjs', keys: ['sourceCpu', 'sourceMemory', 'sourceNetwork', 'sourceDiskIo', 'sourceDiskTopology', 'sourceAccelerators', 'sourceProcesses', 'sourceSshTraffic'] } },
+  'src/view/assets/servers.mjs': { key: { file: 'src/view/assets/servers.mjs', keys: ['serverStateConnected', 'serverStateConnecting', 'serverStateLoading', 'serverStateLoadFailed', 'serverStateFailed', 'serverStateIdle'] } },
   'src/view/assets/settings.mjs': { 'field.label': 'collectionFields', 'record.definition.help': 'collectionFields' },
 };
 

@@ -5,16 +5,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const { getWebviewHtml } = require('../src/view/webview-html');
-const { catalogs, createTranslator } = require('../src/i18n');
+const { createTranslator } = require('../src/i18n');
 
 let modules, state;
 test.before(async () => {
   modules = Object.fromEntries(await Promise.all(
-    ['app', 'charts', 'layout', 'performance', 'settings', 'navigation', 'servers', 'processes']
+    ['app', 'charts', 'connection', 'layout', 'performance', 'settings', 'navigation', 'servers', 'processes']
       .map(async name => [name, await import('../src/view/assets/' + name + '.mjs')]),
   ));
   ({ state } = await import('../src/view/assets/state.mjs'));
-  state.locale = { language: 'zh-CN', messages: catalogs['zh-CN'] };
+  state.locale = { language: 'zh-CN' };
 });
 
 test('browser modules import without accessing the DOM before initialization', () => {
@@ -55,7 +55,7 @@ test('HTML loads a native module with a nonce, allowed resource origin, and enco
 });
 
 test('retry countdown exposes zero immediately and keeps manual retry available while paused', () => {
-  const retry = modules.navigation.retryButtonState;
+  const retry = modules.connection.retryButtonState;
   assert.equal(retry('disconnected', false, false, 10000, 2000, 'zh-CN').text, '重试 (8)');
   assert.equal(retry('disconnected', false, false, 10000, 10000, 'zh-CN').text, '重试');
   assert.equal(retry('disconnected', false, true, 10000, 2000, 'zh-CN').text, '重试');
