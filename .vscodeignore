@@ -11,3 +11,4 @@ tmp/
 test/
 .trash/
 scripts/
+.claude/

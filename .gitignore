@@ -4,3 +4,4 @@ release/
 tmp
 .vscode/
 .trash/
+.claude/
