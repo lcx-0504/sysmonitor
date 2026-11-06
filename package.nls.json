@@ -9,7 +9,6 @@
   "description": "Monitor Linux locally, over SSH, or in a remote window — CPU / GPU / RAM / Network",
   "viewTitle": "System Monitor",
   "viewName": "System Monitor",
-  "procsName": "Processes",
   "cmdOpen": "System Monitor: Open Panel",
   "cmdOpenEditor": "System Monitor: Move to Editor",
   "cmdOpenWindow": "System Monitor: Move to New Window",

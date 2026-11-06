@@ -2,10 +2,11 @@ import { state } from "./state.mjs";
 import { sendToExtension, tr } from './ui.mjs';
 import { updateDeviceScrollbar, updateTopbarLayout, updateResponsiveLayout } from "./layout.mjs";
 import { closeRemoteMenu, renderServers, showRemoteMenu } from "./servers.mjs";
-import { setSparkActivity, initializeChartState } from "./chart-state.mjs";
+import { setChartActivity, updateSparkAnimation } from "./charts.mjs";
 import { updateSshDefaultUi } from "./settings.mjs";
 import { localizeError } from "./i18n.mjs";
-import { renderGpuUsers, hideGpuInfoPopover, resetMonitorView } from "./performance.mjs";
+import { renderGpuUsers, hideInfoPopover, resetMonitorView } from "./performance.mjs";
+import { showProcessPage } from "./processes.mjs";
 
 let localLinux, previousNavigationState, pointerDrag, suppressDeviceClick, serverTabButton, deviceStrip, topbar, connectionRetryButton, connectionState, connectionError, connectionRetryAfter, retryPending, retryCountdownTimer;
 
@@ -13,8 +14,7 @@ function hasSamplingFailure() {
     return connectionState === 'connected' && state.data.status && (state.data.status.error || (state.data.status.failures || []).length > 0);
   }
 
-function retryButtonState(connection, pending, isPaused, retryAfter, now, isZh) {
-    var language = typeof isZh === 'string' ? isZh : isZh ? 'zh-CN' : 'en';
+function retryButtonState(connection, pending, isPaused, retryAfter, now, language) {
     if (connection === 'connected' && pending) return { text: tr('collecting', {}, language), disabled: true, remaining: 0 };
     if (connection === 'connecting' || pending) return { text: tr('connecting', {}, language), disabled: true, remaining: 0 };
     var remaining = connection === 'disconnected' && !isPaused && typeof retryAfter === 'number'
@@ -101,31 +101,6 @@ function reorderDeviceTab(draggedId, targetIndex) {
     sendToExtension({ cmd: 'reorderDevices', tabs: reordered });
   }
 
-function clearDeviceContent() {
-    resetMonitorView();
-    initializeChartState();
-    state.ui.canAnimate = false;
-    state.data.status = null;
-    state.data.viewModel = null;
-    state.ui.renderedDiskKeys = []; state.ui.renderedAcceleratorKeys = []; state.data.disks = [];
-    state.ui.selectedGpus = {}; state.data.idleIds = []; state.data.gpus = [];
-    state.data.processes = []; state.ui.pendingProcesses = null;
-    document.getElementById('cpu-val').textContent = '--';
-    document.getElementById('mem-val').textContent = '--';
-    ['mem-used', 'mem-avail', 'mem-total', 'net-tx', 'net-rx', 'disk-io-val', 'gpu-summary', 'proc-count'].forEach(function(id) {
-      document.getElementById(id).textContent = '--';
-    });
-    ['load-1', 'load-5', 'load-15'].forEach(function(id) { document.getElementById(id).textContent = '--'; });
-    document.getElementById('gpu-body').innerHTML = '';
-    document.getElementById('disk-body').innerHTML = '';
-    document.getElementById('disk-card').style.display = 'none';
-    document.getElementById('ssh-card').style.display = 'none';
-    document.getElementById('proc-tbody').innerHTML = '';
-    document.getElementById('updated').textContent = '--';
-    document.querySelectorAll('.spark-bg path').forEach(function(path) { path.removeAttribute('d'); });
-    ['cpu-bar', 'mem-bar'].forEach(function(id) { var bar = document.getElementById(id); if (bar) bar.style.width = '0%'; });
-  }
-
 function updateDeviceTabsPresentation() {
     var hasTabs = state.ui.navigation.tabs.length > 0;
     deviceStrip.hidden = state.environment.editorMode || !hasTabs || state.ui.navigation.page === 'servers';
@@ -148,8 +123,8 @@ function renderDeviceTabs() {
     deviceStrip.innerHTML = '';
     if (state.environment.editorMode) { updateDeviceTabsPresentation(); return; }
     state.ui.navigation.tabs.forEach(function(id) {
-      var tab = document.createElement('button');
-      tab.type = 'button';
+      var tab = document.createElement('div');
+      tab.tabIndex = 0;
       tab.className = 'device-tab' + (state.ui.navigation.selected === id && state.ui.navigation.page !== 'servers' ? ' active' : '');
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', state.ui.navigation.selected === id && state.ui.navigation.page !== 'servers' ? 'true' : 'false');
@@ -159,6 +134,11 @@ function renderDeviceTabs() {
       tab.title = name.textContent;
       tab.addEventListener('click', function(event) {
         if (suppressDeviceClick) { event.preventDefault(); suppressDeviceClick = false; return; }
+        sendToExtension({ cmd: 'switchDevice', id: id });
+      });
+      tab.addEventListener('keydown', function(event) {
+        if (event.target !== tab || (event.key !== 'Enter' && event.key !== ' ')) return;
+        event.preventDefault();
         sendToExtension({ cmd: 'switchDevice', id: id });
       });
       tab.addEventListener('auxclick', function(event) {
@@ -198,10 +178,12 @@ function renderDeviceTabs() {
       });
       tab.dataset.deviceId = id;
       if (id !== 'local') {
-        var close = document.createElement('span');
+        var close = document.createElement('button');
+        close.type = 'button';
         close.className = 'device-tab-close';
         close.textContent = '×';
         close.title = tr("closeDevice");
+        close.setAttribute('aria-label', close.title);
         close.addEventListener('click', function(event) { event.stopPropagation(); sendToExtension({ cmd: 'closeDevice', id: id }); });
         tab.appendChild(close);
       }
@@ -229,12 +211,11 @@ function showNavigation(nextNavigation) {
       connectionError = null;
       connectionRetryAfter = null;
       retryPending = false;
-      setSparkActivity(state.ui.paused, nextDeviceId === 'local');
+      setChartActivity(state.ui.paused, nextDeviceId === 'local');
       refreshConnectionRetryButton();
-      clearDeviceContent();
+      resetMonitorView();
     }
     state.ui.navigation = nextNavigation;
-    state.ui.processDisplay = nextNavigation.processDisplay || state.ui.processDisplay;
     if (tabsChanged || deviceStrip.childElementCount !== nextNavigation.tabs.length) renderDeviceTabs();
     else updateDeviceTabsPresentation();
     switchTab(nextNavigation.page || 'servers', false);
@@ -251,7 +232,7 @@ function showConnection(connection) {
     connectionState = connection && connection.state;
     connectionError = connection && connection.error;
     connectionRetryAfter = connection && typeof connection.retryAfter === 'number' ? connection.retryAfter : null;
-    setSparkActivity(state.ui.paused, connection.canPresent ?? connection.ready !== false);
+    setChartActivity(state.ui.paused, connection.canPresent ?? connection.ready !== false);
     refreshConnectionBanner();
   }
 
@@ -270,7 +251,7 @@ function refreshConnectionBanner() {
   }
 
 function handleNavigationMessage(data, presentSnapshot) {
-    if (data && data.cmd === 'retryConnectionResult' && (state.environment.localMode ? data.deviceId === state.ui.deviceId : data.deviceId === 'local')) {
+    if (data.cmd === 'retryConnectionResult' && (state.environment.localMode ? data.deviceId === state.ui.deviceId : data.deviceId === 'local')) {
       retryPending = false;
       if (data.error && connectionState === 'disconnected') connectionError = data.error;
       refreshConnectionBanner();
@@ -282,14 +263,19 @@ function handleNavigationMessage(data, presentSnapshot) {
       updateSshDefaultUi(data.error);
       return true;
     }
-    if (!state.environment.localMode || !data) return false;
+    if (!state.environment.localMode) return false;
     if (data.cmd === 'navigation') showNavigation(data.state);
     else if (data.cmd === 'localIntroDismissed') { state.ui.localIntroDismissed = true; updateLocalIntro(); }
     else if (data.cmd === 'deviceState') {
       showNavigation(data.state);
       presentSnapshot(data, true);
     }
-    else if (data.cmd === 'servers') { state.data.serverRows = data.hosts || []; state.data.serverError = data.error || ''; renderServers(); }
+    else if (data.cmd === 'servers') {
+      state.data.serverRows = data.hosts || [];
+      state.data.serverError = data.error || '';
+      state.data.serversLoaded = true;
+      renderServers();
+    }
     else if (data.cmd === 'remoteFolders' && state.ui.remoteMenuHost === data.host) showRemoteMenu(data.folders || []);
     else if (data.cmd === 'remoteWindowActionDone' && state.ui.remoteMenuHost === data.host) closeRemoteMenu();
     else return false;
@@ -335,10 +321,10 @@ export function initializeNavigation() {
 
 }
 
-export { hasSamplingFailure, retryButtonState, refreshConnectionRetryButton, storeNavigation, updateLocalIntro, clearTabDrag, moveTabWithinStrip, reorderDeviceTab, clearDeviceContent, updateDeviceTabsPresentation, renderDeviceTabs, showNavigation, showConnection, refreshConnectionBanner, handleNavigationMessage };
+export { retryButtonState, refreshConnectionRetryButton, updateLocalIntro, showNavigation, showConnection, handleNavigationMessage };
 
 function switchTab(name, notify) {
-    if (typeof state.environment.editorMode !== 'undefined' && state.environment.editorMode && name === 'servers') return;
+    if (state.environment.editorMode && name === 'servers') return;
     if (notify !== false && state.environment.localMode) {
       state.ui.requestedPage = name;
       state.ui.navigation = Object.assign({}, state.ui.navigation, { page: name });
@@ -353,14 +339,15 @@ function switchTab(name, notify) {
       state.bridge.setState(Object.assign({}, state.bridge.getState() || {}, {page:name}));
       sendToExtension({cmd:'switchPage',page:name});
     }
-    if (name !== 'perf') hideGpuInfoPopover();
+    hideInfoPopover();
     document.querySelectorAll('.tab-content').forEach(function(d){d.classList.remove('active');});
     document.getElementById('tab-'+name).classList.add('active');
     document.getElementById('tab-perf-btn').classList.toggle('on', name==='perf');
     document.getElementById('tab-proc-btn').classList.toggle('on', name==='proc');
-    var serversButton = document.getElementById('tab-servers-btn');
-    if (serversButton) serversButton.classList.toggle('on', name==='servers');
+    document.getElementById('tab-servers-btn').classList.toggle('on', name==='servers');
     if (name === 'perf') requestAnimationFrame(function() { state.data.gpus.forEach(renderGpuUsers); });
+    if (name === 'proc') showProcessPage();
+    updateSparkAnimation();
     updateResponsiveLayout();
     showMonitorStatus(state.data.status);
   }
@@ -369,7 +356,7 @@ function showMonitorStatus(status) {
     if (!status) return;
     state.data.status = status;
     if (!status.ready && !state.data.viewModel) document.getElementById('gpu-summary').textContent = '--';
-    setSparkActivity(state.ui.paused, status.canPresent ?? status.ready);
+    setChartActivity(state.ui.paused, status.canPresent ?? status.ready);
     refreshConnectionBanner();
   }
 

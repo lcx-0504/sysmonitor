@@ -14,7 +14,7 @@ test('all locales share one complete runtime and manifest vocabulary', () => {
   }
   const t = createTranslator('zh-TW');
   assert.equal(t('settBtn'), '設定');
-  assert.equal(t('servers'), '伺服器');
+  assert.equal(t('serversTab'), '伺服器');
   assert.equal(resolveLanguage('zh-Hant'), 'zh-TW');
   assert.equal(resolveLanguage('zh-HK'), 'zh-TW');
   assert.equal(resolveLanguage('zh-CN'), 'zh-CN');

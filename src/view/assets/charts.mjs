@@ -1,7 +1,7 @@
 import { state } from "./state.mjs";
-import { initializeChartState, sparkDisplayTime } from "./chart-state.mjs";
+import { initializeChartState, setSparkActivity, sparkDisplayTime } from "./chart-state.mjs";
 
-let lastSparkFrame;
+let lastSparkFrame, animationFrame, gpuSeriesSource, gpuSeriesByKey;
 
 function sparkColor(pct) {
     return pct >= 90 ? 'var(--danger)' : pct >= 70 ? 'var(--warn)' : 'var(--accent)';
@@ -86,28 +86,62 @@ function renderRatePair(first, second, firstAreaId, secondAreaId, firstColor, se
     renderSpark(document.getElementById(secondAreaId), second, maximum, secondColor, now);
   }
 
+function gpuSeries(gpu) {
+    if (gpuSeriesSource !== state.charts.gpus) {
+      gpuSeriesSource = state.charts.gpus;
+      gpuSeriesByKey = new Map(Object.entries(state.charts.gpus).map(([index, series]) => [series.deviceKey || index, series]));
+    }
+    return gpuSeriesByKey.get(gpu.deviceKey || String(gpu.idx)) || [];
+  }
+
 function renderGpuSpark(gpu) {
-    const identity = gpu.deviceKey || String(gpu.idx);
-    const match = Object.entries(state.charts.gpus).find(([index, series]) => (series.deviceKey || index) === identity);
-    const series = match?.[1] || [];
     const area = document.getElementById('gpu-spark-area-' + gpu.idx);
-    if (area) renderSpark(area, series, 100, sparkColor(gpu.util));
+    if (area) renderSpark(area, gpuSeries(gpu), 100, sparkColor(gpu.util));
+  }
+
+function sparkAnimationAllowed() {
+    return !state.ui.paused && state.ui.canAnimate && state.config.display.charts !== false && !document.hidden
+      && document.getElementById('tab-perf').classList.contains('active');
+  }
+
+function renderVisibleSparks() {
+    const hidden = state.config.display.hiddenGroups || {};
+    const current = state.data.viewModel?.performance;
+    if (!hidden.cpu) renderSpark(document.getElementById('cpu-spark-area'), state.charts.cpu, 100, sparkColor(current?.cpu.usagePercent));
+    if (!hidden.memory) renderSpark(document.getElementById('ram-spark-area'), state.charts.memory, 100, sparkColor(current?.memory.usagePercent));
+    if (!hidden.network) {
+      renderRatePair(state.charts.netTx, state.charts.netRx, 'net-spark-tx-area', 'net-spark-rx-area', 'var(--warn)', 'var(--accent)');
+      if (current?.sshTraffic?.isSsh) renderRatePair(state.charts.sshTx, state.charts.sshRx, 'ssh-spark-tx-area', 'ssh-spark-rx-area', 'var(--warn)', 'var(--accent)');
+    }
+    if (!hidden.disk) renderRatePair(state.charts.diskRead, state.charts.diskWrite, 'disk-spark-r-area', 'disk-spark-w-area', 'var(--warn)', 'var(--accent)');
+    if (!hidden.gpuCards) state.data.gpus.forEach(renderGpuSpark);
   }
 
 function animateSparks(frameTime) {
-    if (frameTime - lastSparkFrame >= 32 && !state.ui.paused && state.ui.canAnimate && state.config.display && state.config.display.charts !== false && document.getElementById('tab-perf').classList.contains('active')) {
+    animationFrame = null;
+    if (!sparkAnimationAllowed()) return;
+    if (frameTime - lastSparkFrame >= 32) {
       lastSparkFrame = frameTime;
-      const current = state.data.viewModel?.performance;
-      renderSpark(document.getElementById('cpu-spark-area'), state.charts.cpu, 100, sparkColor(current?.cpu.usagePercent));
-      renderSpark(document.getElementById('ram-spark-area'), state.charts.memory, 100, sparkColor(current?.memory.usagePercent));
-      renderRatePair(state.charts.netTx, state.charts.netRx, 'net-spark-tx-area', 'net-spark-rx-area', 'var(--warn)', 'var(--accent)');
-      renderRatePair(state.charts.sshTx, state.charts.sshRx, 'ssh-spark-tx-area', 'ssh-spark-rx-area', 'var(--warn)', 'var(--accent)');
-      renderRatePair(state.charts.diskRead, state.charts.diskWrite, 'disk-spark-r-area', 'disk-spark-w-area', 'var(--warn)', 'var(--accent)');
-      state.data.gpus.forEach(renderGpuSpark);
+      renderVisibleSparks();
     }
-    requestAnimationFrame(animateSparks);
+    animationFrame = requestAnimationFrame(animateSparks);
   }
 
-export function initializeCharts() { initializeChartState(); lastSparkFrame = 0; }
+function updateSparkAnimation() {
+    if (animationFrame === null && sparkAnimationAllowed()) animationFrame = requestAnimationFrame(animateSparks);
+  }
 
-export { sparkColor, sparkInterpolatedValue, sparkPaths, renderSpark, sparkVisibleMaximum, sparkMaximum, renderRatePair, renderGpuSpark, animateSparks };
+function setChartActivity(paused, connectionAllowsAnimation) {
+    setSparkActivity(paused, connectionAllowsAnimation);
+    updateSparkAnimation();
+  }
+
+export function initializeCharts() {
+  initializeChartState();
+  lastSparkFrame = 0;
+  animationFrame = null;
+  gpuSeriesSource = null;
+  gpuSeriesByKey = new Map();
+}
+
+export { sparkColor, sparkPaths, renderSpark, sparkMaximum, renderRatePair, renderGpuSpark, updateSparkAnimation, setChartActivity };

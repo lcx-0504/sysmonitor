@@ -326,15 +326,12 @@ function renderIntervalRow() {
 function renderTimeoutSettings() {
   const body = document.getElementById('sett-timeouts-body');
   const enabled = state.config.timeouts.enabled === true;
-  document.getElementById('sett-timeouts-label').textContent = tr('connectionAndCollection');
-  document.getElementById('custom-timeouts-label').textContent = tr('customTimeouts');
   document.getElementById('sett-timeouts-section').classList.toggle('custom-timeouts-enabled', enabled);
   body.hidden = !enabled;
   body.classList.add('setting-children', 'last-setting');
   document.getElementById('timeout-reset').hidden = !enabled;
   document.getElementById('timeout-toggle').classList.toggle('on', enabled);
   document.getElementById('timeout-toggle').setAttribute('aria-checked', String(enabled));
-  document.getElementById('timeout-reset').textContent = tr('restoreDefaults');
   for (const field of state.initial.collectionFields) {
     setting(body, 'strategy-' + field.key, { type: 'number', label: tr(field.label), help: field.help,
       minimum: field.minimum, maximum: field.maximum, value: state.config.timeouts[field.key], change(value) {
@@ -345,7 +342,6 @@ function renderTimeoutSettings() {
 }
 
 function updateTimeoutReset() {
-  if (!inputs) return;
   const reset = document.getElementById('timeout-reset');
   reset.disabled = state.initial.collectionFields.every(field => {
     const record = rows.get('strategy-' + field.key);
@@ -446,7 +442,6 @@ function renderSettingsBody() {
   select(remoteBody,'remote-window-mode',tr('remoteWindowBehavior'),'servers',servers.remoteWindowMode || 'menu',
     [['new',tr('newWorkspace')],['recent',tr('recentWorkspace')],['menu',tr('chooseFromMenu')]],
     value=>{servers.remoteWindowMode=value;closeRemoteMenu();if(state.environment.localMode)renderServers();},{visible:actions.remoteWindow !== false});
-  document.getElementById('sett-servers-section').hidden=false;
   const serversBody=document.getElementById('sett-servers-body');
   bool(serversBody,'servers-visible',tr('refreshVisiblePanelsOnly'),'servers',()=>servers.visibleOnly === true,value=>{servers.visibleOnly=value;},{hint:tr('hiddenServersStopSamplingWhenEnabledChartsMay')});
   bool(serversBody,'servers-restore',tr('restoreTabsOnStartup'),'servers',()=>servers.restoreTabs !== false,value=>{servers.restoreTabs=value;});
@@ -472,7 +467,7 @@ function updateSshDefaultUi(error) {
   introButton.hidden=!!state.config.sshDefaultInstalled;
   introButton.textContent=state.ui.installPending?tr('adding'):tr('addToDefaults');
   introButton.disabled=!!state.ui.installPending;
-  if(rows?.has('ssh-default-add')) {
+  if(rows.has('ssh-default-add')) {
     const button=rows.get('ssh-default-add').button;
     button.textContent=state.config.sshDefaultInstalled?tr('added'):state.ui.installPending?tr('adding'):tr('addToDefaults');
     button.disabled=!!(state.config.sshDefaultInstalled || state.ui.installPending);
@@ -494,10 +489,6 @@ function addSshDefaultExtension(event) {
 function openModal() {
   state.ui.settingsOpen=true;
   document.getElementById('modal-mask').classList.add('open');
-  document.getElementById('modal-title-text').textContent=tr('settBtn');
-  for(const [id,key] of [['sett-bar-label','statusBar'],['sett-disk-label','diskLabel'],['sett-display-label','displayLabel'],['sett-actions-label','actionButtons'],['sett-servers-label','servers']]) {
-    document.getElementById(id).textContent=tr(key);
-  }
   renderSettings();
 }
 
@@ -527,9 +518,7 @@ export function initializeSettings(effects) {
   document.getElementById('timeout-toggle').addEventListener('click',()=>{
     changeConfig('timeouts', () => { state.config.timeouts.enabled=!state.config.timeouts.enabled; }); renderSettings();
   });
-  const saveRetry = document.getElementById('config-save-retry');
-  saveRetry.classList.add('tb');
-  saveRetry.addEventListener('click', () => sendToExtension({cmd:'retryConfigSave'}));
+  document.getElementById('config-save-retry').addEventListener('click', () => sendToExtension({cmd:'retryConfigSave'}));
   showConfigSaveState(state.initial.saveState);
   document.getElementById('settings-btn').addEventListener('click',openModal);
   document.getElementById('modal-close').addEventListener('click',closeModal);
@@ -560,13 +549,11 @@ export function showConfigSaveState(saveState = {status:'saved',error:null}) {
   state.config.saveState = saveState;
   const error = document.getElementById('config-save-error');
   error.hidden = saveState.status !== 'error';
-  document.getElementById('config-save-error-text').textContent = tr('configSaveFailed');
   error.title = saveState.error || '';
-  document.getElementById('config-save-retry').textContent = tr('retry');
   if (state.ui.settingsOpen) requestAnimationFrame(updateModalScrollbar);
 }
 
-export { renderSettings, renderSettingsBody, renderTimeoutSettings, renderIntervalRow, flushSettingsInputs, openModal, closeModal, updateSshDefaultUi, addSshDefaultExtension, openSettingMenu, closeSettingMenu, updateModalScrollbar };
+export { renderSettings, updateSshDefaultUi, addSshDefaultExtension };
 
 export function refreshGpuAvailability() {
   const row = rows.get('gpu-cards');

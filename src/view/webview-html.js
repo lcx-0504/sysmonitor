@@ -16,11 +16,12 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
     : './main.mjs';
   const configBase64 = Buffer.from(JSON.stringify({ ...initConfig, collectionFields: COLLECTION_FIELDS, refreshSetting: REFRESH_SETTING, diskPresets: DISK_PRESETS }), "utf8").toString("base64");
   const surface = initConfig && initConfig.surface === 'editor' ? 'editor' : 'sidebar';
+  const paused = initConfig && initConfig.paused === true;
   return `<!DOCTYPE html>
 <html lang="${language}">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}' 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview?.cspSource || ''};">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}' ${webview?.cspSource || ''};">
 <style nonce="${nonce}">${style}</style>
 </head>
 <body data-config="${configBase64}" data-surface="${surface}">
@@ -33,10 +34,10 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
   <button class="tb" id="tab-servers-btn" hidden>${t("serversTab")}</button>
   </div>
   <div class="topbar-right">
-    <button type="button" class="tb" id="topbar-more" aria-haspopup="menu" aria-expanded="false" hidden>…</button>
+    <button type="button" class="tb" id="topbar-more" aria-haspopup="menu" aria-expanded="false" aria-label="${t("moreActions")}" title="${t("moreActions")}" hidden>…</button>
     <span class="topbar-info" id="updated">--</span>
     <button class="tb" id="topbar-server-refresh" hidden>${t("refreshList")}</button>
-    <button class="tb on" id="pause-btn">${t("running")}</button>
+    <button class="tb${paused ? '' : ' on'}" id="pause-btn">${paused ? t("stopped") : t("running")}</button>
     <button class="tb on" id="settings-btn">${t("settBtn")}</button>
   </div>
 </div>
@@ -45,41 +46,41 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
   <div class="device-scrollbar" id="device-scrollbar" aria-hidden="true" hidden><div class="device-scrollbar-thumb" id="device-scrollbar-thumb"></div></div>
 </div>
 
-<div class="connection-banner" id="connection-banner"><span id="connection-banner-text"></span><button type="button" class="connection-retry" id="connection-retry" hidden>${t("retry")}</button></div>
+<div class="connection-banner" id="connection-banner"><span id="connection-banner-text"></span><button type="button" id="connection-retry" hidden>${t("retry")}</button></div>
 
 <!-- ── 设置模态 ── -->
 <div class="modal-mask" id="modal-mask">
 <div class="modal">
-  <div class="modal-title"><span id="modal-title-text">${t("settBtn")}</span><span class="flex-1"></span><button class="tb" id="open-vsc-settings">settings.json ↗</button><button class="tb" id="modal-close">✕</button></div>
+  <div class="modal-title"><span>${t("settBtn")}</span><span class="flex-1"></span><button class="tb" id="open-vsc-settings">settings.json ↗</button><button class="tb" id="modal-close">✕</button></div>
   <div class="modal-body" id="modal-body">
   <div class="sett-section" id="sett-timeouts-section">
-    <div class="sett-label" id="sett-timeouts-label">${t("connectionAndCollection")}</div>
-    <div class="setting-row interval-setting-row"><span class="setting-title" id="sett-interval-label">${t("refreshIntervalLabel")}</span><div class="sett-row" id="interval-row"></div></div>
-    <div class="setting-row custom-timeout-row"><span class="setting-info sett-heading"><span class="setting-title" id="custom-timeouts-label">${t("customTimeouts")}</span><button type="button" class="sett-info-icon" id="timeout-info" aria-label="${t("timeoutInfoLabel")}">ⓘ</button></span><span class="setting-control timeout-controls"><button type="button" class="tb timeout-reset" id="timeout-reset" hidden>${t("restoreDefaults")}</button><button type="button" class="setting-switch" role="switch" aria-checked="false" id="timeout-toggle"><span></span></button></span></div>
+    <div class="sett-label">${t("connectionAndCollection")}</div>
+    <div class="setting-row interval-setting-row"><span class="setting-title">${t("refreshIntervalLabel")}</span><div class="sett-row" id="interval-row"></div></div>
+    <div class="setting-row custom-timeout-row"><span class="setting-info sett-heading"><span class="setting-title">${t("customTimeouts")}</span><button type="button" class="sett-info-icon" id="timeout-info" aria-label="${t("timeoutInfoLabel")}">ⓘ</button></span><span class="setting-control timeout-controls"><button type="button" class="tb timeout-reset" id="timeout-reset" hidden>${t("restoreDefaults")}</button><button type="button" class="setting-switch" role="switch" aria-checked="false" id="timeout-toggle"><span></span></button></span></div>
     <div id="sett-timeouts-body" hidden></div>
   </div>
-  <div class="sett-section" id="sett-bar-section">
-    <div class="sett-label sett-heading"><span id="sett-bar-label">${t("statusBar")}</span><button type="button" class="sett-info-icon" id="sett-bar-info" aria-label="${t("statusBarScope")}">ⓘ</button></div>
+  <div class="sett-section">
+    <div class="sett-label sett-heading"><span>${t("statusBar")}</span><button type="button" class="sett-info-icon" id="sett-bar-info" aria-label="${t("statusBarScope")}">ⓘ</button></div>
     <div id="sett-body" class="settings-options"></div>
   </div>
   <div class="sett-section">
-    <div class="sett-label" id="sett-disk-label">${t("diskLabel")}</div>
+    <div class="sett-label">${t("diskLabel")}</div>
     <div id="sett-disk-body" class="settings-options"></div>
   </div>
   <div class="sett-section">
-    <div class="sett-label" id="sett-display-label">${t("displayLabel")}</div>
+    <div class="sett-label">${t("displayLabel")}</div>
     <div id="sett-display-body" class="settings-options"></div>
   </div>
-  <div class="sett-section" id="sett-actions-section">
-    <div class="sett-label" id="sett-actions-label">${t("actionButtons")}</div>
+  <div class="sett-section">
+    <div class="sett-label">${t("actionButtons")}</div>
     <div id="sett-actions-body" class="settings-options"></div>
   </div>
-  <div class="sett-section" id="sett-servers-section" hidden>
-    <div class="sett-label" id="sett-servers-label">${t("serversTab")}</div>
+  <div class="sett-section">
+    <div class="sett-label">${t("serversTab")}</div>
     <div id="sett-servers-body" class="settings-options"></div>
     <div class="sett-hint ssh-default-error" id="ssh-default-error" hidden></div>
   </div>
-  <div id="config-save-error" role="status" hidden><span id="config-save-error-text"></span><button type="button" id="config-save-retry"></button></div>
+  <div id="config-save-error" role="status" hidden><span>${t("configSaveFailed")}</span><button type="button" class="tb" id="config-save-retry">${t("retry")}</button></div>
   <div class="copyright">v${pkg.version} · © ${new Date().getFullYear()} Li Chenxi · ${pkg.license}<br><a href="https://marketplace.visualstudio.com/items?itemName=LiChenxi.sysmonitor">Marketplace</a> · <a href="https://open-vsx.org/extension/LiChenxi/sysmonitor">Open VSX</a> · <a href="https://github.com/lcx-0504/sysmonitor">GitHub</a></div>
   </div>
   <div class="modal-scrollbar" id="modal-scrollbar" aria-hidden="true" hidden><div class="modal-scrollbar-thumb" id="modal-scrollbar-thumb"></div></div>
@@ -92,59 +93,59 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
   <div class="card" id="cpu-card">
     <svg class="spark-bg" id="cpu-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="cpu-spark-area" /></svg>
     <div class="card-head"><span class="card-label">CPU</span><span class="card-value" id="cpu-val">--</span></div>
-    <div class="track"><div class="fill" id="cpu-bar" style="width:0%"></div></div>
-    <div class="detail-row"><span id="l-1m">1${t("min")}</span><span id="load-1">--</span></div>
-    <div class="detail-row"><span id="l-5m">5${t("min")}</span><span id="load-5">--</span></div>
-    <div class="detail-row"><span id="l-15m">15${t("min")}</span><span id="load-15">--</span></div>
+    <div class="track"><div class="fill" id="cpu-bar"></div></div>
+    <div class="detail-row"><span>1${t("min")}</span><span id="load-1">--</span></div>
+    <div class="detail-row"><span>5${t("min")}</span><span id="load-5">--</span></div>
+    <div class="detail-row"><span>15${t("min")}</span><span id="load-15">--</span></div>
   </div>
   <div class="card" id="mem-card">
     <svg class="spark-bg" id="ram-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="ram-spark-area" /></svg>
     <div class="card-head"><span class="card-label">RAM</span><span class="card-value" id="mem-val">--</span></div>
-    <div class="track"><div class="fill" id="mem-bar" style="width:0%"></div></div>
-    <div class="detail-row"><span id="l-used">${t("used")}</span><span id="mem-used">--</span></div>
-    <div class="detail-row"><span id="l-avail">${t("avail")}</span><span id="mem-avail">--</span></div>
-    <div class="detail-row"><span id="l-total">${t("total")}</span><span id="mem-total">--</span></div>
+    <div class="track"><div class="fill" id="mem-bar"></div></div>
+    <div class="detail-row"><span>${t("used")}</span><span id="mem-used">--</span></div>
+    <div class="detail-row"><span>${t("avail")}</span><span id="mem-avail">--</span></div>
+    <div class="detail-row"><span>${t("total")}</span><span id="mem-total">--</span></div>
   </div>
 </div>
 
 <div class="card disk-empty" id="disk-card">
   <svg class="spark-bg" id="disk-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="disk-spark-r-area" /><path id="disk-spark-w-area" /></svg>
-  <div class="card-head"><span class="card-label" id="disk-label">Disk</span><span class="card-value" id="disk-io-value"><span id="disk-io-val">--</span><button type="button" class="disk-alert" id="disk-io-info" data-disk-io-info aria-label="${t('diskIoDetails')}">ⓘ</button></span></div>
+  <div class="card-head"><span class="card-label">${t("diskLabel")}</span><span class="card-value" id="disk-io-value"><span id="disk-io-val">--</span><button type="button" class="disk-alert" id="disk-io-info" data-disk-io-info aria-label="${t('diskIoDetails')}">ⓘ</button></span></div>
   <div id="disk-body"></div>
 </div>
 
 <div class="net-ssh-row" id="network-row">
-  <div class="card" id="net-card">
+  <div class="card">
     <svg class="spark-bg" id="net-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="net-spark-tx-area" /><path id="net-spark-rx-area" /></svg>
     <div class="card-head"><span class="card-label" id="net-title">${t("net")}</span></div>
     <div class="net-row">
       <div class="net-item">
-        <div class="net-dir" id="net-up-label">${t("up")}</div>
+        <div class="net-dir">${t("up")}</div>
         <div class="net-speed" id="net-tx">--</div>
       </div>
       <div class="net-item">
-        <div class="net-dir" id="net-down-label">${t("down")}</div>
+        <div class="net-dir">${t("down")}</div>
         <div class="net-speed" id="net-rx">--</div>
       </div>
     </div>
   </div>
-  <div class="card" id="ssh-card" style="display:none">
+  <div class="card" id="ssh-card" hidden>
     <svg class="spark-bg" id="ssh-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="ssh-spark-tx-area" /><path id="ssh-spark-rx-area" /></svg>
-    <div class="card-head"><span class="card-label" id="ssh-label">${t("localSSH")}</span><span class="card-value" id="ssh-latency" title="TCP RTT">--</span></div>
+    <div class="card-head"><span class="card-label">${t("localSSH")}</span><span class="card-value" id="ssh-latency" title="${t("latency")} · TCP RTT">--</span></div>
     <div class="net-row">
       <div class="net-item">
-        <div class="net-dir" id="ssh-up-label">${t("up")}</div>
+        <div class="net-dir">${t("up")}</div>
         <div class="net-speed" id="ssh-tx">--</div>
       </div>
       <div class="net-item">
-        <div class="net-dir" id="ssh-down-label">${t("down")}</div>
+        <div class="net-dir">${t("down")}</div>
         <div class="net-speed" id="ssh-rx">--</div>
       </div>
     </div>
   </div>
 </div>
 
-<div class="card" id="free-gpu-card" style="display:none">
+<div class="card" id="free-gpu-card" hidden>
   <div class="card-head"><span class="card-label">GPU</span><span class="card-value" id="gpu-summary">--</span></div>
   <div class="capsules" id="gpu-capsules"></div>
   <div class="capsule-actions" id="capsule-actions">
@@ -153,7 +154,7 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
     <button class="action-btn primary" id="copy-btn" disabled>${t("copyEnv")}</button>
   </div>
 </div>
-<div class="gpu-grid" id="gpu-body"><span class="gpu-na">${t("detecting")}</span></div>
+<div class="gpu-grid" id="gpu-body"></div>
 </div>
 
 <!-- ── 进程 tab ── -->
@@ -167,9 +168,10 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
   <div class="table-scroll">
     <table><thead><tr id="proc-hdr"></tr></thead><tbody id="proc-tbody"></tbody></table>
   </div>
+  <div class="proc-footnote" id="proc-footnote" hidden><span id="proc-footnote-text"></span><button type="button" class="gpu-info" id="proc-footnote-info" aria-label="${t("processSearchScope")}" hidden>ⓘ</button></div>
 </div>
 
-<div class="tab-content server-page" id="tab-servers">
+<div class="tab-content" id="tab-servers">
   <div class="filter-hint server-intro-hint" id="server-intro-hint"><span id="server-intro-text"></span><div class="server-intro-actions"><small id="server-intro-ssh-error" hidden></small><button type="button" class="tb" id="server-intro-close">${t("gotIt")}</button><button type="button" class="tb on" id="server-intro-ssh-default">${t("addToDefaults")}</button></div></div>
   <div class="server-list" id="server-list"></div>
 </div>

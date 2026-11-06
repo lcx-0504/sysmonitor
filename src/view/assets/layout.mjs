@@ -1,5 +1,4 @@
 import { state } from "./state.mjs";
-import { tr } from "./ui.mjs";
 
 let topbarMenu, topbarHiddenItems, topbarMoreButton, monitorLayoutObserver, tabScrollViewport, tabScrollTrack, tabScrollThumb, tabScrollDragOffset, deviceScrollbarObserver;
 let topbarLayoutPending = false;
@@ -67,8 +66,6 @@ function measureTopbarLayout() {
     var nextHiddenItems = items.filter(function(item) { return item.hidden; });
     var changed = topbarHiddenItems.map(function(item) { return item.id; }).join(',') !== nextHiddenItems.map(function(item) { return item.id; }).join(',');
     topbarHiddenItems = nextHiddenItems;
-    topbarMoreButton.setAttribute('aria-label', tr('moreActions'));
-    topbarMoreButton.title = tr('moreActions');
     right.dataset.collapse = String(stage);
     if (topbarMenu && changed) closeTopbarMenu();
     if (topbarMenu) topbarMenu.querySelectorAll('[data-source]').forEach(function(item) { item.textContent = document.getElementById(item.dataset.source).textContent; });
@@ -160,4 +157,4 @@ export function initializeLayout() {
   deviceScrollbarObserver.observe(tabScrollViewport);
 }
 
-export { updateResponsiveLayout, closeTopbarMenu, chooseTopbarStage, updateTopbarLayout, updateDeviceScrollbar, scrollDeviceTabsFromPointer, endDeviceScrollbarDrag };
+export { updateResponsiveLayout, chooseTopbarStage, updateTopbarLayout, updateDeviceScrollbar };

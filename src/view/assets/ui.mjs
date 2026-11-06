@@ -9,3 +9,6 @@ export function setBar(id, percent) {
   const node = document.getElementById(id);
   if (node) { node.style.width = (Number.isFinite(percent) ? percent : 0) + '%'; node.className = 'fill ' + colorClass(percent); }
 }
+export function copyText(text) {
+  return Promise.resolve().then(() => navigator.clipboard.writeText(text)).then(() => true, () => false);
+}
