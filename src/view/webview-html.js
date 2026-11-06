@@ -56,7 +56,7 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
   <div class="sett-section" id="sett-timeouts-section">
     <div class="sett-label">${t("connectionAndCollection")}</div>
     <div class="setting-row interval-setting-row"><span class="setting-title">${t("refreshIntervalLabel")}</span><div class="sett-row" id="interval-row"></div></div>
-    <div class="setting-row custom-timeout-row"><span class="setting-info sett-heading"><span class="setting-title">${t("customTimeouts")}</span><button type="button" class="sett-info-icon" id="timeout-info" aria-label="${t("timeoutInfoLabel")}">ⓘ</button></span><span class="setting-control timeout-controls"><button type="button" class="tb timeout-reset" id="timeout-reset" hidden>${t("restoreDefaults")}</button><button type="button" class="setting-switch" role="switch" aria-checked="false" id="timeout-toggle"><span></span></button></span></div>
+    <div class="setting-row custom-timeout-row"><span class="setting-info sett-heading"><span class="setting-title">${t("customCollection")}</span><button type="button" class="sett-info-icon" id="timeout-info" aria-label="${t("collectionInfoLabel")}">ⓘ</button></span><span class="setting-control timeout-controls"><button type="button" class="tb timeout-reset" id="timeout-reset" hidden>${t("restoreDefaults")}</button><button type="button" class="setting-switch" role="switch" aria-checked="false" id="timeout-toggle"><span></span></button></span></div>
     <div id="sett-timeouts-body" hidden></div>
   </div>
   <div class="sett-section">
@@ -94,9 +94,9 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
     <svg class="spark-bg" id="cpu-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="cpu-spark-area" /></svg>
     <div class="card-head"><span class="card-label">CPU</span><span class="card-value" id="cpu-val">--</span></div>
     <div class="track"><div class="fill" id="cpu-bar"></div></div>
-    <div class="detail-row"><span>1${t("min")}</span><span id="load-1">--</span></div>
-    <div class="detail-row"><span>5${t("min")}</span><span id="load-5">--</span></div>
-    <div class="detail-row"><span>15${t("min")}</span><span id="load-15">--</span></div>
+    <div class="detail-row"><span>${t("minutes", { count: 1 })}</span><span id="load-1">--</span></div>
+    <div class="detail-row"><span>${t("minutes", { count: 5 })}</span><span id="load-5">--</span></div>
+    <div class="detail-row"><span>${t("minutes", { count: 15 })}</span><span id="load-15">--</span></div>
   </div>
   <div class="card" id="mem-card">
     <svg class="spark-bg" id="ram-spark" viewBox="0 0 100 100" preserveAspectRatio="none"><path id="ram-spark-area" /></svg>
@@ -164,7 +164,7 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
     <span class="proc-count" id="proc-count">--</span>
     <div class="filter-wrap" id="filter-wrap"><input class="proc-filter" id="proc-filter" placeholder="${t("filterHint")}" /><button class="filter-clear" id="filter-clear">&times;</button></div>
   </div>
-  <div class="filter-hint" id="filter-hint"></div>
+  <div class="filter-hint" id="filter-hint"><span class="hint-close" id="hint-close">&times;</span>${t("searchHint")}${t("sentenceSeparator")}${t("searchHintGpu")}${t("sentenceSeparator")}<code>GPU0</code> <code>#0</code> <code>GPU 0</code></div>
   <div class="table-scroll">
     <table><thead><tr id="proc-hdr"></tr></thead><tbody id="proc-tbody"></tbody></table>
   </div>

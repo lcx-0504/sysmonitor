@@ -9,6 +9,17 @@ import { localizeError } from "./i18n.mjs";
 import { renderGpuUsers, hideInfoPopover, resetMonitorView } from "./performance.mjs";
 import { showProcessPage } from "./processes.mjs";
 
+const SOURCE_LABEL_KEYS = Object.freeze({
+  cpu: 'sourceCpu',
+  memory: 'sourceMemory',
+  network: 'sourceNetwork',
+  diskIo: 'sourceDiskIo',
+  diskTopology: 'sourceDiskTopology',
+  accelerators: 'sourceAccelerators',
+  processes: 'sourceProcesses',
+  sshTraffic: 'sourceSshTraffic',
+});
+
 let activePage = 'perf';
 let localLinux, previousNavigationState, pointerDrag, suppressDeviceClick, serverTabButton, deviceStrip, topbar, connectionRetryButton, connectionState, connectionError, connectionRetryAfter, retryPending, retryCountdownTimer;
 
@@ -49,13 +60,13 @@ function updateLocalIntro() {
     var hint = document.getElementById('server-intro-hint');
     if (state.environment.localMode) {
       var environment = localLinux
-        ? (tr("thisLocalEnvironmentIsLinuxYouCanMonitor"))
-        : (tr("thisLocalEnvironmentIsMacOSWindowsSelectA"));
-      var remote = tr("youCanAlsoInstallTheExtensionInA");
+        ? (tr("introLocalLinux"))
+        : (tr("introLocalOther"));
+      var remote = tr("introRemoteWindow");
       var install = state.config.sshDefaultInstalled
-        ? (tr("addedToTheRemoteSSHDefaultListInstalls"))
-        : (tr("addToTheRemoteSSHDefaultListTo"));
-      document.getElementById('server-intro-text').textContent = [tr("systemMonitorSupportsLinuxEnvironments"), environment, remote, install].join(tr("sentenceSeparator"));
+        ? (tr("introSshDefaultAdded"))
+        : (tr("introSshDefaultAdd"));
+      document.getElementById('server-intro-text').textContent = [tr("introLinuxOnly"), environment, remote, install].join(tr("sentenceSeparator"));
     }
     hint.classList.toggle('show', state.environment.localMode && state.initial.showLocalIntro === true && !state.ui.localIntroDismissed && state.ui.navigation.page === 'servers');
   }
@@ -131,7 +142,7 @@ function renderDeviceTabs() {
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', state.ui.navigation.selected === id && state.ui.navigation.page !== 'servers' ? 'true' : 'false');
       var name = document.createElement('span');
-      name.textContent = isLocalDeviceId(id) ? tr("local") : deviceHost(id);
+      name.textContent = isLocalDeviceId(id) ? tr("localDevice") : deviceHost(id);
       tab.appendChild(name);
       tab.title = name.textContent;
       tab.addEventListener('click', function(event) {
@@ -238,16 +249,19 @@ function showConnection(connection) {
     refreshConnectionBanner();
   }
 
+function sourceLabel(source) {
+    return Object.hasOwn(SOURCE_LABEL_KEYS, source) ? tr(SOURCE_LABEL_KEYS[source]) : source;
+  }
+
 function refreshConnectionBanner() {
-    var labels = tr("cPUMemoryNetworkDiskIODisksGPU");
     var samplingError = state.data.status && (localizeError(state.data.status.error, state.locale.language) || (state.data.status.failures || []).map(function(failure) {
-      return (labels[failure.key] || failure.key) + ': ' + localizeError(failure, state.locale.language);
+      return sourceLabel(failure.key) + ': ' + localizeError(failure, state.locale.language);
     }).join(' · '));
     var text = connectionState === 'connecting' ? (tr("connectingToServer"))
       : connectionState === 'disconnected' ? (connectionError || (tr("disconnectedRetrying")))
       : samplingError || '';
     state.elements.connectionBannerText.textContent = text;
-    state.elements.connectionBannerText.title = state.data.status?.failures?.map(failure => (labels[failure.key] || failure.key) + ': ' + failure.message).join('\n') || text;
+    state.elements.connectionBannerText.title = state.data.status?.failures?.map(failure => sourceLabel(failure.key) + ': ' + failure.message).join('\n') || text;
     refreshConnectionRetryButton();
     state.elements.connectionBanner.classList.toggle('show', !!text && !state.elements.serverPage.classList.contains('active'));
   }

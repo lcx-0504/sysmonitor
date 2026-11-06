@@ -8,7 +8,7 @@ import { renderSettings, updateSshDefaultUi, refreshGpuAvailability, showConfigS
 import { sendToExtension, tr } from './ui.mjs';
 import { renderServers, showServers, showRemoteFolders, finishRemoteWindowAction } from "./servers.mjs";
 import { applyCharts, applyGroupVisibility, applyTabularNums, renderMonitorSnapshot, restoreGpuSelection } from "./performance.mjs";
-import { catalogs, resolveLanguage } from "./i18n.mjs";
+import { resolveLanguage } from "./i18n.mjs";
 import { TO_EXTENSION, TO_WEBVIEW } from "./protocol.mjs";
 
 function setPaused(paused) {
@@ -130,7 +130,6 @@ export function initializeState() {
   state.bridge = acquireVsCodeApi();
   state.initial = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(document.body.dataset.config), function(character) { return character.charCodeAt(0); })));
   state.locale.language = resolveLanguage(state.initial.language);
-  state.locale.messages = catalogs[state.locale.language];
   state.ui.paused = state.initial.paused === true;
   state.ui.canAnimate = true;
   state.config.statusBar = state.initial.barCfg || {};

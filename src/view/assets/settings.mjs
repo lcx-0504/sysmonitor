@@ -56,17 +56,17 @@ function endModalScrollbarDrag(event) {
   if (modalScrollbar.hasPointerCapture(event.pointerId)) modalScrollbar.releasePointerCapture(event.pointerId);
 }
 
-function showInfo(button, key) {
-  infoPopover.textContent = tr(key);
+function showInfo(button, text) {
+  infoPopover.textContent = text();
   infoPopover.hidden = false;
   const bounds = button.getBoundingClientRect();
   infoPopover.style.left = Math.max(4, Math.min(bounds.left, window.innerWidth - infoPopover.offsetWidth - 4)) + 'px';
   infoPopover.style.top = Math.max(4, Math.min(bounds.bottom + 6, window.innerHeight - infoPopover.offsetHeight - 4)) + 'px';
 }
 
-function bindInfo(button, key) {
-  button.addEventListener('mouseenter', () => showInfo(button, key));
-  button.addEventListener('focus', () => showInfo(button, key));
+function bindInfo(button, text) {
+  button.addEventListener('mouseenter', () => showInfo(button, text));
+  button.addEventListener('focus', () => showInfo(button, text));
   button.addEventListener('mouseleave', () => { infoPopover.hidden = true; });
   button.addEventListener('blur', () => { infoPopover.hidden = true; });
 }
@@ -243,7 +243,7 @@ function setting(parent, key, definition) {
       const help = element('button', 'sett-info-icon', 'ⓘ');
       help.type = 'button';
       help.setAttribute('aria-label', definition.label);
-      bindInfo(help, definition.help);
+      bindInfo(help, () => tr(record.definition.help));
       info.append(help);
     }
   }
@@ -312,7 +312,7 @@ function renderIntervalRow() {
     parent.append(input);
   }
   for (const { button, seconds } of intervalButtons) {
-    button.textContent = seconds + tr('s');
+    button.textContent = tr('seconds', { count: seconds });
     button.classList.toggle('on', state.config.refreshInterval === seconds);
   }
   const input = document.getElementById('refresh-interval-input');
@@ -415,9 +415,9 @@ function renderSettingsBody() {
   bool(rulesBody, 'disk-hide-virtual', tr('diskHideVirtual'), 'disk', () => values.hideVirtualFs, value => { disk.hideVirtualFs = value; },
     { hint:tr('diskHideVirtualTip'),disabled:!custom });
   for (const [id,label,hint,key,value] of [
-    ['disk-fs-input','diskExcludeFs','diskExcludeFsTip','customFsExclude',values.customFsExclude || ''],
-    ['disk-path-input','diskExcludePath','diskExcludePathTip','customPathExclude',values.customPathExclude || ''],
-  ]) setting(rulesBody,id,{type:'textarea',id,label:tr(label),hint:tr(hint),value,readonly:!custom,
+    ['disk-fs-input',tr('diskExcludeFs'),tr('diskExcludeFsTip'),'customFsExclude',values.customFsExclude || ''],
+    ['disk-path-input',tr('diskExcludePath'),tr('diskExcludePathTip'),'customPathExclude',values.customPathExclude || ''],
+  ]) setting(rulesBody,id,{type:'textarea',id,label,hint,value,readonly:!custom,
     change(value) { changeConfig('disk', () => { disk[key] = value; }); }});
   bool(diskBody,'disk-hide-parent',tr('diskHideParent'),'disk',()=>disk.hideParentMounts !== false,value=>{disk.hideParentMounts=value;},{hint:tr('diskHideParentTip')});
 
@@ -426,27 +426,27 @@ function renderSettingsBody() {
   const minutes = display.sparkMinutes || 5;
   const durations = [...new Set([1,2,5,10,30,minutes])].sort((a,b)=>a-b);
   select(displayBody,'spark-min',tr('sparkLabel'),'display',String(minutes),
-    durations.map(value=>[String(value),value+tr('min2')]),value=>{display.sparkMinutes=Number(value);state.charts.windowMilliseconds=Number(value)*60000;});
+    durations.map(value=>[String(value),tr('minutes', { count: value })]),value=>{display.sparkMinutes=Number(value);state.charts.windowMilliseconds=Number(value)*60000;});
   bool(displayBody,'tabular-toggle',tr('tabularNums'),'display',()=>display.tabularNums !== false,value=>{display.tabularNums=value;},{hint:tr('tabularNumsTip'),effect:applyTabularNums});
   const groups={cpu:'CPU',memory:'RAM',disk:tr('diskLabel'),network:tr('networkGroup'),gpuSummary:tr('gpuSummaryGroup'),gpuCards:tr('gpuCardsGroup')};
   for (const [key,label] of Object.entries(groups)) bool(displayBody,'group-'+key,label,'display',
     ()=>!(display.hiddenGroups || {})[key],value=>{display.hiddenGroups={...display.hiddenGroups,[key]:!value};},{effect:applyGroupVisibility});
-  for (const [key,label] of [['highlightMyGpus','myGpuBorder'],['showGpuPicker','gpuPicker'],['showGpuUsers','gpuUsers']]) {
-    bool(displayBody,key,tr(label),'display',()=>display[key] !== false,value=>{display[key]=value;},{effect:applyGroupVisibility});
+  for (const [key,label] of [['highlightMyGpus',tr('myGpuBorder')],['showGpuPicker',tr('gpuPicker')],['showGpuUsers',tr('gpuUsers')]]) {
+    bool(displayBody,key,label,'display',()=>display[key] !== false,value=>{display[key]=value;},{effect:applyGroupVisibility});
   }
   const servers=state.config.servers, actions=servers.actions || {};
   const actionsBody=document.getElementById('sett-actions-body');
-  for (const [key,label] of [['editor','createSwitchEditorView'],['window','createMoveToNewWindow'],['terminal','openSSHTerminal'],['remoteWindow','openRemoteWindow']]) {
-    bool(actionsBody,'action-'+key,tr(label),'servers',()=>actions[key] !== false,value=>{servers.actions={...servers.actions,[key]:value};},{effect:()=>{if(state.environment.localMode)renderServers();}});
+  for (const [key,label] of [['editor',tr('actionEditorView')],['window',tr('actionNewWindow')],['terminal',tr('openSSHTerminal')],['remoteWindow',tr('openRemoteWindow')]]) {
+    bool(actionsBody,'action-'+key,label,'servers',()=>actions[key] !== false,value=>{servers.actions={...servers.actions,[key]:value};},{effect:()=>{if(state.environment.localMode)renderServers();}});
   }
   const remoteBody = settingGroup(actionsBody, 'remote-window-options', { visible: actions.remoteWindow !== false });
   select(remoteBody,'remote-window-mode',tr('remoteWindowBehavior'),'servers',servers.remoteWindowMode || 'menu',
     [['new',tr('newWorkspace')],['recent',tr('recentWorkspace')],['menu',tr('chooseFromMenu')]],
     value=>{servers.remoteWindowMode=value;closeRemoteMenu();if(state.environment.localMode)renderServers();},{visible:actions.remoteWindow !== false});
   const serversBody=document.getElementById('sett-servers-body');
-  bool(serversBody,'servers-visible',tr('refreshVisiblePanelsOnly'),'servers',()=>servers.visibleOnly === true,value=>{servers.visibleOnly=value;},{hint:tr('hiddenServersStopSamplingWhenEnabledChartsMay')});
-  bool(serversBody,'servers-restore',tr('restoreTabsOnStartup'),'servers',()=>servers.restoreTabs !== false,value=>{servers.restoreTabs=value;});
-  setting(serversBody,'ssh-default-add',{type:'action',label:tr('remoteSSHAutoInstall'),hint:tr('addToTheDefaultListToInstallAutomatically'),
+  bool(serversBody,'servers-visible',tr('serversVisibleOnly'),'servers',()=>servers.visibleOnly === true,value=>{servers.visibleOnly=value;},{hint:tr('serversVisibleOnlyHint')});
+  bool(serversBody,'servers-restore',tr('serversRestoreTabs'),'servers',()=>servers.restoreTabs !== false,value=>{servers.restoreTabs=value;});
+  setting(serversBody,'ssh-default-add',{type:'action',label:tr('sshDefaultInstall'),hint:tr('sshDefaultInstallHint'),
     caption:state.config.sshDefaultInstalled?tr('added'):state.ui.installPending?tr('adding'):tr('addToDefaults'),
     disabled:state.config.sshDefaultInstalled || state.ui.installPending,change:addSshDefaultExtension});
   if(state.ui.settingsOpen)requestAnimationFrame(updateModalScrollbar);
@@ -510,8 +510,8 @@ export function initializeSettings(effects) {
   modalScrollbarThumb=document.getElementById('modal-scrollbar-thumb');
   infoPopover=element('div','gpu-info-popover sett-info-popover timeout-info-popover');
   infoPopover.hidden=true;document.body.append(infoPopover);
-  bindInfo(document.getElementById('timeout-info'),'timeoutInfo');
-  bindInfo(document.getElementById('sett-bar-info'),'inALocalLinuxWindowTheStatusBar');
+  bindInfo(document.getElementById('timeout-info'),() => tr('collectionInfo'));
+  bindInfo(document.getElementById('sett-bar-info'),() => tr('statusBarScopeInfo'));
   document.getElementById('timeout-reset').addEventListener('click',()=>{
     changeConfig('collection', () => { for(const field of state.initial.collectionFields)state.config.collection[field.key]=field.default; });
     renderSettings();
@@ -566,6 +566,6 @@ export function refreshGpuAvailability() {
   const row = rows.get('gpu-cards');
   if (!row) return;
   const badCards = state.data.viewModel ? state.config.statusBar.gpu.cards.filter(index => !state.data.gpus.some(card => card.idx === index)) : [];
-  row.hint.textContent = badCards.length ? tr('cardNotFound', {badCards}) : '';
+  row.hint.textContent = badCards.length ? tr('cardNotFound', { cards: badCards.join(',') }) : '';
   row.hint.hidden = !badCards.length;
 }

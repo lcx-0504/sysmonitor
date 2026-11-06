@@ -212,7 +212,7 @@ function renderProcTable() {
   const ready = !(state.data.status && state.data.status.processesReady === false);
   const { rows, matchedCount } = selectProcessRows(state.data.processes, state.ui.sort, state.ui.search);
   const total = state.data.viewModel?.processTotalCount ?? 0;
-  processCount.textContent = ready ? state.locale.messages.pcount.replace('{n}', total) : '--';
+  processCount.textContent = ready ? tr('processCount', { count: total }) : '--';
   renderProcHeader(display, gpuEnabled);
   state.ui.visibleProcesses = rows;
   processTable.innerHTML = rows.map(function(p, index) { return processRowHtml(p, index, display, gpuEnabled); }).join('');
@@ -310,14 +310,12 @@ export function initializeProcesses({ switchPage: navigate, bindInfoButton: bind
   state.elements.filterInput.addEventListener('focus', function() {
       if (hintDismissed || hintShown) return;
       hintShown = true;
-      var hint = document.getElementById('filter-hint');
-      hint.innerHTML = tr("timesSearchByNameUserPIDCommandGPU");
-      hint.classList.add('show');
-      document.getElementById('hint-close').addEventListener('click', function() {
-        hint.classList.remove('show');
-        hintDismissed = true;
-        state.bridge.setState(Object.assign({}, state.bridge.getState() || {}, { hintDismissed: true }));
-      });
+      document.getElementById('filter-hint').classList.add('show');
+    });
+  document.getElementById('hint-close').addEventListener('click', function() {
+      document.getElementById('filter-hint').classList.remove('show');
+      hintDismissed = true;
+      state.bridge.setState(Object.assign({}, state.bridge.getState() || {}, { hintDismissed: true }));
     });
   document.getElementById('filter-clear').addEventListener('click',function(){
       state.elements.filterInput.value = '';

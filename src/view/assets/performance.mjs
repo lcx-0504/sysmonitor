@@ -89,7 +89,7 @@ function renderMonitorSnapshot(viewModel, instant, sampleTime) {
       renderAccelerators(performance, instant, viewModel.sources?.accelerators);
       applyGroupVisibility();
     }
-    const timeText = state.locale.messages.updAt + new Date(typeof sampleTime === 'number' ? sampleTime : Date.now()).toLocaleTimeString(state.locale.language);
+    const timeText = tr('updatedAt', { time: new Date(typeof sampleTime === 'number' ? sampleTime : Date.now()).toLocaleTimeString(state.locale.language) });
     if (renderedTime !== timeText) {
       renderedTime = timeText;
       document.getElementById('updated').textContent = timeText;
@@ -103,9 +103,9 @@ function renderMonitorSnapshot(viewModel, instant, sampleTime) {
 function renderCpu(performance) {
     document.getElementById('cpu-val').textContent = Number.isFinite(performance.cpu.usagePercent) ? performance.cpu.usagePercent + '%' : '--';
     setBar('cpu-bar', performance.cpu.usagePercent);
-    document.getElementById('load-1').textContent = performance.cpu.available === false ? '--' : performance.cpu.loadAverage.oneMinute + ' / ' + performance.cpu.coreCount + state.locale.messages.cores;
-    document.getElementById('load-5').textContent = performance.cpu.available === false ? '--' : performance.cpu.loadAverage.fiveMinutes + ' / ' + performance.cpu.coreCount + state.locale.messages.cores;
-    document.getElementById('load-15').textContent = performance.cpu.available === false ? '--' : performance.cpu.loadAverage.fifteenMinutes + ' / ' + performance.cpu.coreCount + state.locale.messages.cores;
+    document.getElementById('load-1').textContent = performance.cpu.available === false ? '--' : performance.cpu.loadAverage.oneMinute + ' / ' + tr('coreCount', { count: performance.cpu.coreCount });
+    document.getElementById('load-5').textContent = performance.cpu.available === false ? '--' : performance.cpu.loadAverage.fiveMinutes + ' / ' + tr('coreCount', { count: performance.cpu.coreCount });
+    document.getElementById('load-15').textContent = performance.cpu.available === false ? '--' : performance.cpu.loadAverage.fifteenMinutes + ' / ' + tr('coreCount', { count: performance.cpu.coreCount });
     renderSpark(document.getElementById('cpu-spark-area'), state.charts.cpu, 100, sparkColor(performance.cpu.usagePercent));
 
   }
@@ -276,7 +276,7 @@ function renderAccelerators(performance, instant, source) {
     renderGpuCapsules(gpus);
     const freeCount = gpus.filter(function(g) { return g.isIdle === true; }).length;
     document.getElementById('gpu-summary').textContent = gpus.length
-      ? tr('freeGPUs', { freeCount: gpus.some(g => g.availability === 'unknown') ? '--' : freeCount, performance })
+      ? tr('freeGPUs', { free: gpus.some(g => g.availability === 'unknown') ? '--' : freeCount, total: gpus.length })
       : source?.state === 'loading' ? '--' : source && source.state !== 'ready' ? tr('collectionFailed') : tr('noGpu');
     state.data.idleIds = gpus.filter(function(g) { return g.isIdle === true; }).map(function(g) { return g.idx; });
     updateCopyBtn();
@@ -310,8 +310,8 @@ function gpuStatsValues(gpu) {
 
 function gpuStatsDescription(gpu) {
     var values = gpuStatsValues(gpu);
-    var details = state.locale.messages.tempLabel + ' ' + values.temperature;
-    if (values.power) details += ' · ' + state.locale.messages.pwLabel + ' ' + values.power;
+    var details = tr('tempLabel') + ' ' + values.temperature;
+    if (values.power) details += ' · ' + tr('pwLabel') + ' ' + values.power;
     return details;
   }
 
@@ -453,7 +453,7 @@ function refreshDetailPopover() {
       detailPopover.classList.add('disk-breakdown');
       detailPopover.replaceChildren();
       var details = isDiskIo ? [[tr('diskRead'), io?.readText ?? '--'], [tr('diskWrite'), io?.writeText ?? '--']]
-        : [[state.locale.messages.diskReserved, disk.reservedStr], [state.locale.messages.used, disk.usedStr], [state.locale.messages.avail, disk.availableStr], [state.locale.messages.total, disk.totalStr]];
+        : [[tr('diskReserved'), disk.reservedStr], [tr('used'), disk.usedStr], [tr('avail'), disk.availableStr], [tr('total'), disk.totalStr]];
       details.forEach(function(row) {
         detailPopover.appendChild(element('span', 'disk-breakdown-label', row[0]));
         detailPopover.appendChild(element('span', 'disk-breakdown-value', row[1]));
@@ -485,7 +485,7 @@ function applyTabularNums() {
   }
 
 function diskBreakdownDescription(disk) {
-    return state.locale.messages.diskReserved + ' ' + disk.reservedStr + ' · ' + state.locale.messages.used + ' ' + disk.usedStr + ' · ' + state.locale.messages.avail + ' ' + disk.availableStr + ' · ' + state.locale.messages.total + ' ' + disk.totalStr;
+    return tr('diskReserved') + ' ' + disk.reservedStr + ' · ' + tr('used') + ' ' + disk.usedStr + ' · ' + tr('avail') + ' ' + disk.availableStr + ' · ' + tr('total') + ' ' + disk.totalStr;
   }
 
 function updateDiskBar(disk) {

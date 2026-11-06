@@ -84,7 +84,7 @@ function renderServers() {
     if (!state.data.serverRows.length && state.data.serversLoaded) {
       var empty = document.createElement('div');
       empty.className = 'server-placeholder';
-      empty.textContent = state.data.serverError || (tr("noHostsFoundInSSHConfig"));
+      empty.textContent = state.data.serverError || (tr("noSshHosts"));
       list.appendChild(empty);
     }
     state.data.serverRows.forEach(function(server, index) {
@@ -150,11 +150,11 @@ function renderServers() {
       if (status.className !== statusClass) status.className = statusClass;
       var indicatorClass = server.busy ? 'server-spinner' : 'server-state-dot';
       if (status.firstChild.className !== indicatorClass) status.firstChild.className = indicatorClass;
-      status.lastChild.textContent = server.state === 'connected' ? (tr("connected")) : server.state === 'connecting' ? (tr("connecting2")) : server.state === 'loading' ? (tr("loadingResources")) : server.state === 'error' ? (tr("loadFailed")) : server.state === 'disconnected' ? (tr("failed")) : (tr("idle"));
+      status.lastChild.textContent = server.state === 'connected' ? tr("serverStateConnected") : server.state === 'connecting' ? tr("serverStateConnecting") : server.state === 'loading' ? tr("serverStateLoading") : server.state === 'error' ? tr("serverStateLoadFailed") : server.state === 'disconnected' ? tr("serverStateFailed") : tr("serverStateIdle");
       var summary = row.querySelector('.server-summary');
       var summaryClass = 'server-summary' + (server.error ? ' error' : '');
       if (summary.className !== summaryClass) summary.className = summaryClass;
-      var summaryText = server.error || (server.metrics.length ? ' · ' + server.metrics.join(' · ') : server.summaryLoading ? tr('collecting2') : '');
+      var summaryText = server.error || (server.metrics.length ? ' · ' + server.metrics.join(' · ') : server.summaryLoading ? ' · ' + tr('serverSummaryCollecting') : '');
       if (summary.textContent !== summaryText) summary.textContent = summaryText;
       summary.title = server.error || '';
       row.querySelector('.server-open').disabled = !!server.busy;

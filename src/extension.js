@@ -166,10 +166,10 @@ function unsupportedViewHtml(title, body) {
 
 function activateUnsupported({ context, t }, localInRemoteWindow) {
   setTitleContexts(vscode);
-  const title = localInRemoteWindow ? t('runTheExtensionInTheRemoteEnvironment') : t('linuxOnly');
+  const title = localInRemoteWindow ? t('runInRemoteTitle') : t('linuxOnly');
   const body = localInRemoteWindow
-    ? t('systemMonitorIsRunningLocallyInstallOrEnable')
-    : t('thisRemoteIsNotLinuxSystemMonitorRequires', { process });
+    ? t('runInRemoteDetail')
+    : t('linuxOnlyDetail', { platform: process.platform });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('sysmonitor.panel', {
       resolveWebviewView(view) {
