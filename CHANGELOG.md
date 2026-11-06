@@ -3,11 +3,14 @@
 ## 1.5.3 — Unreleased
 
 - Add Traditional Chinese support across the monitor, extension settings, and documentation.
-- Add configurable SSH connection, standard collection, and extended collection timeouts, plus a per-server SSH connection pool limit of 1–8 connections.
+- Add a custom collection policy in the `sysmonitor.collection` setting. When `custom` is enabled, it applies configurable SSH connection, standard collection, and extended collection timeouts (`connectionTimeout`, `standardTimeout`, and `extendedTimeout`, 5–120 seconds) and a per-server SSH connection pool limit of 1–8 connections (`sshPoolSize`); otherwise the defaults are used.
 - Extend the refresh interval range to 1–60 seconds. Disk capacity queries respect the configured refresh interval and remain at least 10 seconds apart.
-- Reduce process-list transfer size by selecting the top 100 processes by CPU, RAM, and total GPU memory on the monitored host, then merging them into at most 300 unique candidates. Each view sorts these candidates locally and displays up to 100 results. Search is limited to the returned candidates.
+- Show current process CPU usage, calculated from two reads of `/proc/PID/stat` within each collection over half the refresh interval (at most 1 second), instead of the average since process start reported by `ps`.
+- Reduce process-list transfer size by selecting candidates on the monitored host: the top 100 processes by current CPU usage among processes using CPU, the top 100 by RAM, and the top 100 by total GPU memory among processes using GPU memory, merged into at most 300 unique candidates. Each view sorts these candidates locally and displays up to 100 results. Search is limited to the candidates; a note below the table shows when results are limited or may be incomplete, and the process count always shows the total.
+- Label the current user's processes running in a tmux pane or screen session, with the session name shown in the expanded process-name column and the tooltip. The label and the context menu open the session in a terminal: tmux attaches to the session without switching windows, and screen uses `screen -x`. Remote windows, such as Remote-SSH, and the local machine use the integrated terminal; servers monitored from a local window open through `ssh -t`. A session attached elsewhere shares input with the new terminal, and its window size may adjust to the terminal.
+- Make process display preferences (per-core or whole-machine CPU, RAM size or percentage, and expanded process-name and command columns) global, so all monitor views stay in sync. The sidebar is no longer kept loaded while hidden; when shown again, it restores chart history, the current page, and the selected device, and monitor views restore the process search, sort column, and selected GPUs after reloading.
 - Reduce SSH collection overhead by combining CPU, memory, network, and disk I/O reads into one request.
-- Stop collecting metrics that are disabled in both the performance panel and the applicable status bar. Disabling all GPU displays also hides GPU information and sorting in the process list.
+- Stop collecting metrics that are disabled in both the performance panel and the applicable status bar. Disabling all GPU displays also hides GPU information and sorting in the process list. The process list is collected only while a visible view shows the Processes page.
 - Update displayed metrics together at the configured refresh interval using the latest available snapshot.
 - Allow monitor views to open when some initial metrics fail, showing the available metrics alongside collection errors.
 - Smooth chart scrolling with delayed samples, preserve gaps during manual pauses, and reconnect valid points after automatic recovery. Keep GPU history associated with the same physical GPU when card indices change.
@@ -15,7 +18,7 @@
 - Retain available GPU measurements when process or ownership queries fail, and show an unknown idle count when occupancy information is unavailable.
 - Apply disk exclusions before capacity queries so excluded NFS mounts cannot block those queries. Refresh the selected mounts when filter settings change.
 - Keep disk I/O visible when no mounts are displayed and show read and write values in an information popover.
-- Improve SSH traffic matching for nonstandard ports and loopback connections, and preserve valid rate baselines across temporary query failures.
+- Improve SSH traffic matching for nonstandard ports and loopback connections, fall back to matching the SSH server port and client address when the exact connection details do not match, and preserve valid rate baselines across temporary query failures.
 - Correct CPU utilization on hosts running virtual machines by counting guest CPU time once.
 - Preserve valid measurements when a query omits individual values and show placeholders for unavailable readings.
 - Fix settings inputs losing focus during automatic saves. Save text fields on blur and switches or selections immediately, preserve independent edits from other views, and provide a retry action for failed saves.
@@ -25,6 +28,11 @@
 - Keep collection errors visible during a manual retry, with a collecting indicator until results arrive.
 - Report SSH configuration permission and I/O errors instead of displaying an empty server list.
 - Apply monitor settings at User level across windows and automatically migrate renamed settings, including `showVirtualFs` to `hideVirtualFs`.
+- Require VS Code 1.85 or later.
+- Schedule collection by refresh cycles so timing jitter no longer skips rounds. After pausing, resuming, or reconnecting, the first rate and CPU values no longer average over the entire pause. Remote network and disk I/O rates are calculated from server-side sample times.
+- Show the error reported by SSH when an established connection exits, keep only one SSH connection per server while monitoring is paused or stopped by the visible-only refresh option, and terminate the entire process group when a local collection command times out.
+- Support systems whose `ss` does not accept `-H` and kernels without `MemAvailable`, report a clear message when `ps` does not support the required output format (for example, BusyBox `ps`), and localize more error messages.
+- Reset the monitor completely when switching devices, so GPU selections no longer carry over from the previous device. Keep clicks on GPU selections and process table headers from being lost during refreshes, stop chart animation and unnecessary rendering while a view is hidden, report copy failures, support keyboard operation for device tabs, context menus, and other controls, and tighten the Webview content security policy.
 
 ## 1.5.2 — 2026-09-29
 
