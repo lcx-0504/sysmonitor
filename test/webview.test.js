@@ -85,6 +85,14 @@ test('layout retains card minimums, a four-column maximum, and overlay scrollbar
   assert.match(css, /\.device-scrollbar/);
 });
 
+test('the stylesheet relies on one hidden rule, named stacking layers and one reduced-motion block', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../src/view/assets/webview.css'), 'utf8');
+  assert.equal(css.match(/\[hidden\]/g).length, 1);
+  assert.equal(css.match(/!important/g).length, 1);
+  assert.doesNotMatch(css, /z-index:\s*\d/);
+  assert.equal(css.match(/prefers-reduced-motion/g).length, 1);
+});
+
 test('static labels come from the template and reflect the initial state', async () => {
   const running = await getWebviewHtml({ nonce: 'n', initConfig: { language: 'zh-CN' } });
   const paused = await getWebviewHtml({ nonce: 'n', initConfig: { language: 'zh-CN', paused: true } });

@@ -53,11 +53,11 @@ async function getWebviewHtml({ initConfig, nonce, webview, vscode }) {
 <div class="modal">
   <div class="modal-title"><span>${t("settBtn")}</span><span class="flex-1"></span><button class="tb" id="open-vsc-settings">settings.json ↗</button><button class="tb" id="modal-close">✕</button></div>
   <div class="modal-body" id="modal-body">
-  <div class="sett-section" id="sett-timeouts-section">
+  <div class="sett-section" id="sett-collection-section">
     <div class="sett-label">${t("connectionAndCollection")}</div>
     <div class="setting-row interval-setting-row"><span class="setting-title">${t("refreshIntervalLabel")}</span><div class="sett-row" id="interval-row"></div></div>
-    <div class="setting-row custom-timeout-row"><span class="setting-info sett-heading"><span class="setting-title">${t("customCollection")}</span><button type="button" class="sett-info-icon" id="timeout-info" aria-label="${t("collectionInfoLabel")}">ⓘ</button></span><span class="setting-control timeout-controls"><button type="button" class="tb timeout-reset" id="timeout-reset" hidden>${t("restoreDefaults")}</button><button type="button" class="setting-switch" role="switch" aria-checked="false" id="timeout-toggle"><span></span></button></span></div>
-    <div id="sett-timeouts-body" hidden></div>
+    <div class="setting-row custom-collection-row"><span class="setting-info sett-heading"><span class="setting-title">${t("customCollection")}</span><button type="button" class="sett-info-icon" id="collection-info" aria-label="${t("collectionInfoLabel")}">ⓘ</button></span><span class="setting-control collection-controls"><button type="button" class="tb collection-reset" id="collection-reset" hidden>${t("restoreDefaults")}</button><button type="button" class="setting-switch" role="switch" aria-checked="false" id="collection-toggle"><span></span></button></span></div>
+    <div id="sett-collection-body" hidden></div>
   </div>
   <div class="sett-section">
     <div class="sett-label sett-heading"><span>${t("statusBar")}</span><button type="button" class="sett-info-icon" id="sett-bar-info" aria-label="${t("statusBarScope")}">ⓘ</button></div>

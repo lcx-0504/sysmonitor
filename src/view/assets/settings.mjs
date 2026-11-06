@@ -15,7 +15,7 @@ const MODAL_SCROLL_THUMB_MIN_PX = 28;
 const SCROLL_OVERFLOW_TOLERANCE_PX = 1;
 // A textarea's scrollHeight excludes its top and bottom borders.
 const TEXTAREA_BORDER_PX = 2;
-const SECTION_BODY_IDS = ['sett-body', 'sett-disk-body', 'sett-display-body', 'sett-actions-body', 'sett-servers-body', 'sett-timeouts-body'];
+const SECTION_BODY_IDS = ['sett-body', 'sett-disk-body', 'sett-display-body', 'sett-actions-body', 'sett-servers-body', 'sett-collection-body'];
 
 const rows = new Map();
 const inputs = new Map();
@@ -403,17 +403,17 @@ function renderIntervalRow() {
 }
 
 function renderCollectionSettings() {
-  const body = document.getElementById('sett-timeouts-body');
+  const body = document.getElementById('sett-collection-body');
   const enabled = state.config.collection.custom === true;
-  document.getElementById('sett-timeouts-section').classList.toggle('custom-timeouts-enabled', enabled);
+  document.getElementById('sett-collection-section').classList.toggle('custom-collection-enabled', enabled);
   body.hidden = !enabled;
   body.classList.add('setting-children', 'last-setting');
-  document.getElementById('timeout-reset').hidden = !enabled;
-  const toggle = document.getElementById('timeout-toggle');
+  document.getElementById('collection-reset').hidden = !enabled;
+  const toggle = document.getElementById('collection-toggle');
   toggle.classList.toggle('on', enabled);
   toggle.setAttribute('aria-checked', String(enabled));
   for (const field of state.initial.collectionFields) {
-    setting(body, 'strategy-' + field.key, { type: 'number', label: tr(field.label), help: field.help,
+    setting(body, 'collection-' + field.key, { type: 'number', label: tr(field.label), help: field.help,
       minimum: field.minimum, maximum: field.maximum, value: state.config.collection[field.key], change(value) {
         changeConfig('collection', () => {
           state.config.collection[field.key] = value;
@@ -424,8 +424,8 @@ function renderCollectionSettings() {
 }
 
 function updateCollectionReset() {
-  document.getElementById('timeout-reset').disabled = state.initial.collectionFields.every((field) => {
-    const record = rows.get('strategy-' + field.key);
+  document.getElementById('collection-reset').disabled = state.initial.collectionFields.every((field) => {
+    const record = rows.get('collection-' + field.key);
     const draft = record && inputs.get(record.input);
     return (draft?.dirty ? draft.definition.parse(draft.input.value) : state.config.collection[field.key]) === field.default;
   });
@@ -637,15 +637,15 @@ export function initializeSettings() {
   modalScrollbar = document.getElementById('modal-scrollbar');
   modalScrollbarThumb = document.getElementById('modal-scrollbar-thumb');
   helpTooltip = createTooltip('settings-tooltip', { align: 'start', side: 'below', gap: 6, fit: 'shift' });
-  bindHelp(document.getElementById('timeout-info'), () => tr('collectionInfo'));
+  bindHelp(document.getElementById('collection-info'), () => tr('collectionInfo'));
   bindHelp(document.getElementById('sett-bar-info'), () => tr('statusBarScopeInfo'));
-  document.getElementById('timeout-reset').addEventListener('click', () => {
+  document.getElementById('collection-reset').addEventListener('click', () => {
     changeConfig('collection', () => {
       for (const field of state.initial.collectionFields) state.config.collection[field.key] = field.default;
     });
     renderSettings();
   });
-  document.getElementById('timeout-toggle').addEventListener('click', () => {
+  document.getElementById('collection-toggle').addEventListener('click', () => {
     changeConfig('collection', () => {
       state.config.collection.custom = !state.config.collection.custom;
     });

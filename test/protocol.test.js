@@ -12,7 +12,7 @@ const { normalizeConfig } = require('../src/config/normalize-config');
 const VIEW_DIRECTORY = path.join(__dirname, '..', 'src', 'view');
 const ASSET_DIRECTORY = path.join(VIEW_DIRECTORY, 'assets');
 const GENERATED_MODULES = ['i18n.mjs', 'protocol.mjs', 'device-id.mjs', 'metric-playback.mjs'];
-const HOST_FILES =['monitor-view-host.js', 'monitor-view-provider.js', 'multi-monitor-view-provider.js'];
+const HOST_FILES = ['monitor-view-host.js', 'monitor-view-provider.js', 'multi-monitor-view-provider.js'];
 
 function frontendSource() {
   return fs.readdirSync(ASSET_DIRECTORY)
