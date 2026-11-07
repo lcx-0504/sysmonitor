@@ -117,11 +117,12 @@ function parseProcessSessions(raw) {
   const sessions = new Map();
   for (const line of raw.split('\n')) {
     const [pid, type, ...parts] = line.split('\t');
+    const pinned = parts.length > 1 && /^[01]$/.test(parts.at(-1)) ? parts.pop() === '1' : false;
     const id = parts.join('\t');
     if (!/^\d+$/.test(pid) || !id) continue;
-    if (type === 'tmux') sessions.set(Number(pid), { type, name: id, id });
+    if (type === 'tmux') sessions.set(Number(pid), { type, name: id, id, pinned });
     const screen = type === 'screen' && id.match(/^\d+\.(.+)$/s);
-    if (screen) sessions.set(Number(pid), { type, name: screen[1], id });
+    if (screen) sessions.set(Number(pid), { type, name: screen[1], id, pinned });
   }
   return sessions;
 }

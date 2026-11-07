@@ -98,10 +98,15 @@ function offer(kind, pid, value,    n, i, previous) {
   scores[kind, pid] = value
   sizes[kind] = n
 }
-function session_of(pid,    depth) {
+# Sets session_pinned for programs running inside a session. A tmux pane root or a screen window
+# root (a direct child of the SCREEN server) is pinned only when it is not a shell; the SCREEN
+# server is never pinned.
+function session_of(pid,    depth, start) {
+  session_pinned = 0
+  start = pid
   for (depth = 0; depth < 64 && pid > 1; depth++) {
-    if (pid in tmux) return "tmux\t" tmux[pid]
-    if (pid in screen) return "screen\t" screen[pid]
+    if (pid in tmux) { session_pinned = depth >= 1 || !(start in shell); return "tmux\t" tmux[pid] }
+    if (pid in screen) { session_pinned = depth >= 2 || (depth == 1 && !(start in shell)); return "screen\t" screen[pid] }
     if (!(pid in parent)) return ""
     pid = parent[pid]
   }
@@ -148,6 +153,10 @@ $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $5 ~ /^[0-9]+$/ && NF >
   owner[pid] = $3
   user[pid] = $4
   rss[pid] = $5 + 0
+  command = $11
+  sub(/^.*\//, "", command)
+  sub(/^-/, "", command)
+  if (command ~ /^(sh|ash|bash|dash|ksh|mksh|zsh|fish|csh|tcsh)$/) shell[pid] = 1
   line = $0
   sub(/^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+[0-9]+[ \t]+[^ \t]+[ \t]+/, "", line)
   rest[pid] = line
@@ -178,9 +187,14 @@ END {
     if (usage > 0) offer(1, pid, usage)
     offer(2, pid, rss[pid])
     if (gpu_enabled == 1 && gpu_status == 0 && gpu[pid] > 0) offer(3, pid, gpu[pid])
+    if (user_id == "" || owner[pid] != user_id) continue
+    session = session_of(pid)
+    if (session == "") continue
+    sessions[pid] = session "\t" session_pinned
+    if (session_pinned) offer(4, pid, int(usage * 10 + 0.5) * 10000000000 + rss[pid])
   }
   printf "__SYSMON_PROCESSES__ %d %d\n", total, gpu_status
-  for (kind = 1; kind <= 3; kind++) {
+  for (kind = 1; kind <= 4; kind++) {
     for (i = 1; i <= sizes[kind]; i++) {
       pid = ranks[kind, i]
       if (seen[pid]++) continue
@@ -189,11 +203,8 @@ END {
     }
   }
   print "__SYSMON_SESSIONS__"
-  if (user_id == "") exit
   for (i = 1; i <= selected_count; i++) {
     pid = selected[i]
-    if (owner[pid] != user_id) continue
-    session = session_of(pid)
-    if (session != "") print pid "\t" session
+    if (pid in sessions) print pid "\t" sessions[pid]
   }
 }'

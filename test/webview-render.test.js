@@ -83,3 +83,33 @@ test('server rows title their window buttons with the wording of the matching na
   assert.equal(row.querySelector('.server-window').getAttribute('aria-label'), '在新窗口打开');
   assert.equal(row.querySelector('.server-remote').getAttribute('aria-label'), '打开远程窗口');
 });
+
+test('process table updates wait while a session tag is hovered or focused and resume afterwards', () => {
+  processes.initializeProcesses();
+  document.getElementById('tab-proc').classList.add('active');
+  const table = document.getElementById('proc-tbody');
+  const snapshot = (pid, revision) => ({
+    processRevision: revision, processTotalCount: 1, sources: {}, performance: {},
+    processes: [{ pid, name: 'python', user: 'alice', cmd: 'python', cpu: 1, cpuWhole: 0.1, mem: GIB, memStr: '1.0G', memPct: 1, gpus: [], vram: 0,
+      session: { type: 'tmux', name: 'train', id: 'train', pinned: true } }],
+  });
+  const tag = document.createElement('button');
+  tag.className = 'session-tag';
+  const cell = document.createElement('td');
+  processes.renderProcessSnapshot(snapshot(101, 'r1'));
+  assert.match(table.innerHTML, />101</);
+  table.dispatchEvent({ type: 'mouseover', target: tag });
+  processes.renderProcessSnapshot(snapshot(202, 'r2'));
+  assert.match(table.innerHTML, />101</, 'hovering a session tag keeps the rows in place');
+  table.dispatchEvent({ type: 'mouseover', target: cell });
+  assert.match(table.innerHTML, />202</, 'moving off the tag shows the latest rows');
+  table.dispatchEvent({ type: 'focusin', target: tag });
+  processes.renderProcessSnapshot(snapshot(303, 'r3'));
+  assert.match(table.innerHTML, />202</, 'a focused session tag keeps the rows in place');
+  table.dispatchEvent({ type: 'focusout', target: tag, relatedTarget: null });
+  assert.match(table.innerHTML, />303</);
+  table.dispatchEvent({ type: 'mouseover', target: tag });
+  processes.renderProcessSnapshot(snapshot(404, 'r4'));
+  table.dispatchEvent({ type: 'mouseout', target: tag, relatedTarget: null });
+  assert.match(table.innerHTML, />404</, 'leaving the table releases the hold');
+});

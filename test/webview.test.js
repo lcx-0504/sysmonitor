@@ -203,6 +203,26 @@ test('process footnote reports the row limit and search coverage, and shows its 
     { text: '在 287 个进程中搜索到 137 个结果，显示前 100 个，搜索结果可能不完全。', incomplete: true });
   assert.equal(footnote({ total: 600, candidates: 287, matched: 1, searching: true }, createTranslator('en')).text,
     'Found 1 result in 287 processes; results may be incomplete.');
+  assert.deepEqual(footnote({ total: 600, candidates: 290, matched: 290, searching: false, sessions: 3 }, zh), { text: '显示前 100 个进程及 3 个会话进程', incomplete: true });
+  assert.equal(footnote({ total: 600, candidates: 290, matched: 140, searching: true, sessions: 2 }, zh).text,
+    '在 290 个进程中搜索到 140 个结果，显示前 100 个及 2 个会话进程，搜索结果可能不完全。');
+  assert.equal(footnote({ total: 600, candidates: 290, matched: 290, searching: false, sessions: 1 }, createTranslator('en')).text,
+    'Showing the top 100 processes and 1 session process');
+});
+
+test('programs in sessions stay listed below the row limit, sorted with the other rows', () => {
+  const processes = modules.processes;
+  const ranked = Array.from({ length: 150 }, (_, index) => ({ pid: index + 1, name: 'job', user: 'alice', cmd: 'job', cpu: 200 - index, gpus: [], session: null }));
+  const shell = { pid: 900, name: 'bash', user: 'alice', cmd: 'bash', cpu: 0, gpus: [], session: { type: 'tmux', name: 'train', id: 'train', pinned: false } };
+  const idle = { pid: 901, name: 'codex', user: 'alice', cmd: 'codex', cpu: 0.5, gpus: [], session: { type: 'tmux', name: 'train', id: 'train', pinned: true } };
+  const selection = processes.selectProcessRows([...ranked, shell, idle], 'cpu');
+  assert.equal(selection.rows.length, 101);
+  assert.equal(selection.pinnedCount, 1);
+  assert.equal(selection.rows.at(-1).pid, 901);
+  assert.equal(selection.rows.some((process) => process.pid === 900), false, 'shells carry the tag but are not pinned');
+  const searched = processes.selectProcessRows([...ranked, shell, idle], 'cpu', 'codex');
+  assert.deepEqual(searched.rows.map((process) => process.pid), [901]);
+  assert.equal(searched.pinnedCount, 0, 'a pinned row inside the limit is not counted as extra');
 });
 
 test('process sessions appear in labels, tooltips, and search text but not in copied values', () => {

@@ -20,6 +20,8 @@ let renderedHeader = null;
 let hintDismissed = false;
 let hintShown = false;
 let footnoteTooltip;
+// Table updates wait while a session tag is hovered or focused, or while the context menu is open.
+const hold = { tagHover: false, tagFocus: false, menuReopening: false };
 let processPage, processCount, processTable, footnote, footnoteText, footnoteInfo, filterInput, filterWrap;
 
 function normalizeProcessDisplay(value) {
@@ -67,17 +69,21 @@ function procSearchStr(process) {
   return text;
 }
 
+// The top rows by the sort column, plus programs running in the user's tmux/screen sessions,
+// which stay listed even when they rank below the limit.
 export function selectProcessRows(processes, sortKey, query = '') {
   const filtered = query ? processes.filter((process) => procSearchStr(process).includes(query)) : processes;
   const metric = sortKey === 'cpu' ? 'cpu' : sortKey === 'mem' ? 'mem' : 'vram';
   const sorted = filtered.slice().sort((a, b) => (b[metric] || 0) - (a[metric] || 0) || a.pid - b.pid);
-  return { rows: sorted.slice(0, PROCESS_ROW_LIMIT), matchedCount: filtered.length };
+  const pinned = sorted.slice(PROCESS_ROW_LIMIT).filter((process) => process.session?.pinned);
+  const rows = sorted.filter((process, index) => index < PROCESS_ROW_LIMIT || pinned.includes(process));
+  return { rows, matchedCount: filtered.length, pinnedCount: pinned.length };
 }
 
-function processFootnote({ total, candidates, matched, searching }, translate = tr) {
+function processFootnote({ total, candidates, matched, searching, sessions = 0 }, translate = tr) {
   const incomplete = candidates < total;
-  if (!searching) return total > PROCESS_ROW_LIMIT ? { text: translate('processListLimited', { limit: PROCESS_ROW_LIMIT }), incomplete } : null;
-  return { text: translate('processSearchSummary', { candidates, matched, limit: PROCESS_ROW_LIMIT, truncated: matched > PROCESS_ROW_LIMIT, incomplete }), incomplete };
+  if (!searching) return total > PROCESS_ROW_LIMIT ? { text: translate('processListLimited', { limit: PROCESS_ROW_LIMIT, sessions }), incomplete } : null;
+  return { text: translate('processSearchSummary', { candidates, matched, limit: PROCESS_ROW_LIMIT, truncated: matched > PROCESS_ROW_LIMIT, sessions, incomplete }), incomplete };
 }
 
 function dualValue(first, second) {
@@ -196,7 +202,7 @@ function renderProcTable() {
   table.stale = false;
   const gpuEnabled = gpuProcessesEnabled !== false;
   const ready = state.data.status?.processesReady !== false;
-  const { rows, matchedCount } = selectProcessRows(table.processes, sort, search);
+  const { rows, matchedCount, pinnedCount } = selectProcessRows(table.processes, sort, search);
   const total = state.data.viewModel?.processTotalCount ?? 0;
   processCount.textContent = ready ? tr('processCount', { count: total }) : '--';
   renderProcHeader(display, gpuEnabled);
@@ -204,7 +210,7 @@ function renderProcTable() {
   table.visible = rows;
   processTable.innerHTML = rows.map((process, index) => processRowHtml(process, index, display, gpuEnabled)).join('');
   restoreSessionFocus(focusedPid);
-  renderFootnote(ready ? processFootnote({ total, candidates: table.processes.length, matched: matchedCount, searching: !!search }) : null);
+  renderFootnote(ready ? processFootnote({ total, candidates: table.processes.length, matched: matchedCount, searching: !!search, sessions: pinnedCount }) : null);
 }
 
 function refreshProcTable() {
@@ -212,8 +218,12 @@ function refreshProcTable() {
   else table.stale = true;
 }
 
+function holdingUpdates() {
+  return hold.tagHover || hold.tagFocus || isMenuOpen(PROCESS_MENU);
+}
+
 function applyPendingProcesses() {
-  if (!table.pending) return;
+  if (!table.pending || holdingUpdates()) return;
   table.processes = table.pending;
   table.pending = null;
   refreshProcTable();
@@ -244,7 +254,9 @@ function copyMenuItem(label, text) {
 }
 
 function showContextMenu(event, process, cellIndex) {
+  hold.menuReopening = true;
   closeMenu(PROCESS_MENU);
+  hold.menuReopening = false;
   const values = processCopyValues(process, display, gpuProcessesEnabled !== false);
   const menu = element('div', 'popup-menu ctx-menu');
   menu.setAttribute('role', 'menu');
@@ -256,7 +268,7 @@ function showContextMenu(event, process, cellIndex) {
     }));
   }
   openMenu({ owner: PROCESS_MENU, content: menu, point: { x: event.clientX, y: event.clientY }, focusFirst: true,
-    closeOnScroll: document, onClose: applyPendingProcesses });
+    closeOnScroll: document, onClose: () => { if (!hold.menuReopening) applyPendingProcesses(); } });
 }
 
 function rowProcess(target) {
@@ -287,7 +299,7 @@ export function renderProcessSnapshot(viewModel) {
   const revision = [state.ui.deviceId, viewModel.processRevision, gpuEnabled, state.data.status?.processesReady].join(':');
   if (viewModel.processRevision !== undefined && revision === table.revision) return;
   table.revision = revision;
-  if (isMenuOpen(PROCESS_MENU)) {
+  if (holdingUpdates()) {
     table.pending = viewModel.processes || [];
     return;
   }
@@ -314,6 +326,8 @@ export function showProcessPage() {
 
 export function resetProcessView() {
   table.pending = null;
+  hold.tagHover = false;
+  hold.tagFocus = false;
   closeMenu(PROCESS_MENU);
   table = freshTable();
   processTable.replaceChildren();
@@ -368,6 +382,20 @@ export function initializeProcesses() {
     if (!event.target.closest('.session-tag')) return;
     const process = rowProcess(event.target);
     if (process?.session) openSessionTerminal(process);
+  });
+  const isSessionTag = (node) => !!(node && node.closest && node.closest('.session-tag'));
+  const setHold = (key, value) => {
+    if (hold[key] === value) return;
+    hold[key] = value;
+    applyPendingProcesses();
+  };
+  processTable.addEventListener('mouseover', (event) => setHold('tagHover', isSessionTag(event.target)));
+  processTable.addEventListener('mouseout', (event) => {
+    if (!processTable.contains(event.relatedTarget)) setHold('tagHover', false);
+  });
+  processTable.addEventListener('focusin', (event) => setHold('tagFocus', isSessionTag(event.target)));
+  processTable.addEventListener('focusout', (event) => {
+    if (!isSessionTag(event.relatedTarget)) setHold('tagFocus', false);
   });
   processTable.addEventListener('contextmenu', (event) => {
     const cell = event.target.closest('td');

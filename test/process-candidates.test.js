@@ -225,17 +225,33 @@ test('tmux and screen sessions are attributed to the nearest session of the curr
   const screen = 'There are screens on:\n\t200.exp\t(11/06/2026 10:00:00 AM)\t(Detached)\n\t300.nested\t(Attached)\n\t999.gone\t(Dead ???)\n2 Sockets in /run/screen/S-alice.';
   const source = fixture(t, rows, { first: steady(tree.map(([pid]) => pid)), tmux: '100 my train\nmalformed\n \n', screen });
   const sample = await source.collector.collect();
-  const sessions = Object.fromEntries(sample.rows.map(process => [process.pid, process.session && process.session.type + ':' + process.session.name + ':' + process.session.id]));
+  const sessions = Object.fromEntries(sample.rows.map(process => [process.pid, process.session
+    && process.session.type + ':' + process.session.name + ':' + process.session.id + (process.session.pinned ? ':pinned' : '')]));
   assert.deepEqual(sessions, {
-    100: 'tmux:my train:my train', 101: 'tmux:my train:my train', 102: 'tmux:my train:my train', 103: null,
-    200: 'screen:exp:200.exp', 201: 'screen:exp:200.exp', 300: 'screen:nested:300.nested', 301: 'screen:nested:300.nested',
+    100: 'tmux:my train:my train', 101: 'tmux:my train:my train:pinned', 102: 'tmux:my train:my train:pinned', 103: null,
+    200: 'screen:exp:200.exp', 201: 'screen:exp:200.exp:pinned', 300: 'screen:nested:300.nested', 301: 'screen:nested:300.nested:pinned',
     400: null, 500: null, 501: null, 600: null,
-  });
+  }, 'pane and window shells and SCREEN servers carry the tag but are not pinned; programs inside the session are');
   assert.equal(source.tmuxFormat(), '#{pane_pid} #{session_name}', 'tmux replaces control characters such as tabs under the C locale used for collection');
   const store = new SnapshotStore(); store.commit('processes', sample);
   const model = buildMonitorViewModel(store.read());
-  assert.deepEqual(model.processes.find(process => process.pid === 201).session, { type: 'screen', name: 'exp', id: '200.exp' });
+  assert.deepEqual(model.processes.find(process => process.pid === 201).session, { type: 'screen', name: 'exp', id: '200.exp', pinned: true });
   assert.equal(model.processes.find(process => process.pid === 400).session, null);
+});
+
+test('programs inside tmux and screen stay in the candidates even when they rank low', async t => {
+  const busy = range(1, 250).map(pid => row(pid, { rss: 500000 + pid }));
+  const tree = [row(900, { command: 'bash', rss: 2048 }), row(901, { ppid: 900, command: 'python idle-train.py', rss: 2048 }),
+    row(902, { ppid: 1, command: 'python direct.py', rss: 2048 }), row(903, { ppid: 1, command: 'SCREEN -S exp', rss: 2048 }),
+    row(904, { ppid: 903, command: 'python window.py', rss: 2048 }), row(905, { ppid: 1, uid: 1001, user: 'bob', command: 'python other.py', rss: 2048 })];
+  const pids = [...range(1, 250), 900, 901, 902, 903, 904, 905];
+  const source = fixture(t, [...busy, ...tree], { first: steady(pids), tmux: '900 main\n902 direct', screen: '\t903.exp\t(Detached)' });
+  const sample = await source.collector.collect();
+  const selected = new Set(sample.rows.map(process => process.pid));
+  assert.equal(sample.rows.length, 103);
+  for (const pid of [901, 902, 904]) assert.equal(selected.has(pid), true, String(pid));
+  for (const pid of [900, 903, 905]) assert.equal(selected.has(pid), false, String(pid));
+  assert.equal(sample.rows.find(process => process.pid === 902).session.pinned, true, 'a pane started directly with a program pins that program');
 });
 
 test('failing session commands or an unknown user id leave the process list intact', async t => {
@@ -292,9 +308,15 @@ test('process totals reuse published memory and core counts before querying the 
 test('session lines keep tab-separated names and strip only the screen process prefix', () => {
   const sessions = parseProcessSessions('7\ttmux\tname with spaces\n8\tscreen\t12345.pts-0.host\n9\tscreen\tinvalid\n10\tunknown\tx\nbad\ttmux\tx\n11\ttmux\t\n');
   assert.deepEqual([...sessions], [
-    [7, { type: 'tmux', name: 'name with spaces', id: 'name with spaces' }],
-    [8, { type: 'screen', name: 'pts-0.host', id: '12345.pts-0.host' }],
+    [7, { type: 'tmux', name: 'name with spaces', id: 'name with spaces', pinned: false }],
+    [8, { type: 'screen', name: 'pts-0.host', id: '12345.pts-0.host', pinned: false }],
   ]);
+  const flagged = parseProcessSessions('7\ttmux\ttrain\t1\n8\tscreen\t12345.exp\t0\n9\ttmux\t1\n');
+  assert.deepEqual([...flagged], [
+    [7, { type: 'tmux', name: 'train', id: 'train', pinned: true }],
+    [8, { type: 'screen', name: 'exp', id: '12345.exp', pinned: false }],
+    [9, { type: 'tmux', name: '1', id: '1', pinned: false }],
+  ], 'a trailing 0 or 1 is the pinned flag only when a session name precedes it');
 });
 
 test('views independently sort and search the same candidates without changing shared data', async () => {

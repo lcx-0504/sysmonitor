@@ -8,7 +8,7 @@ const { REFRESH_SETTING } = require('../config/default-config');
 const PROCESS_SNAPSHOT_COMMAND = fs.readFileSync(path.join(__dirname, 'process-snapshot.sh'), 'utf8');
 const UNSUPPORTED_PS_STATUS = 65;
 const PROCESS_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
-const MAX_PROCESS_ROWS = 300;
+const MAX_PROCESS_ROWS = 400;
 const SESSIONS_MARKER = /(?:^|\n)__SYSMON_SESSIONS__\n/;
 
 const positive = value => Number.isFinite(value) && value > 0;
