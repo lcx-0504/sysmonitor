@@ -163,7 +163,8 @@ See the [changelog](CHANGELOG.md) for release notes.
 ## Contributors
 
 <a href="https://github.com/lcx-0504" title="Author"><img src="https://github.com/lcx-0504.png" width="50" style="border-radius:50%" alt="lcx-0504"/></a>
-<a href="https://github.com/klay7w" title="Helped fix GPU refresh stability"><img src="https://github.com/klay7w.png" width="50" style="border-radius:50%" alt="klay7w"/></a>
+<a href="https://github.com/klay7w" title="Helped fix GPU refresh stability and the sidebar that stopped redrawing after being hidden"><img src="https://github.com/klay7w.png" width="50" style="border-radius:50%" alt="klay7w"/></a>
+<a href="https://github.com/Steve2457" title="Proposed tmux/screen session support"><img src="https://github.com/Steve2457.png" width="50" style="border-radius:50%" alt="Steve2457"/></a>
 
 ## License
 

@@ -163,7 +163,8 @@ NVIDIA GPU 指標需要被監控機器上的 `nvidia-smi` 能正常運行。SSH 
 ## 貢獻者
 
 <a href="https://github.com/lcx-0504" title="作者"><img src="https://github.com/lcx-0504.png" width="50" style="border-radius:50%" alt="lcx-0504"/></a>
-<a href="https://github.com/klay7w" title="協助修復 GPU 重新整理穩定性"><img src="https://github.com/klay7w.png" width="50" style="border-radius:50%" alt="klay7w"/></a>
+<a href="https://github.com/klay7w" title="協助修復 GPU 重新整理穩定性與側邊欄長時間隱藏後不重繪的問題"><img src="https://github.com/klay7w.png" width="50" style="border-radius:50%" alt="klay7w"/></a>
+<a href="https://github.com/Steve2457" title="提出 tmux/screen 會話功能"><img src="https://github.com/Steve2457.png" width="50" style="border-radius:50%" alt="Steve2457"/></a>
 
 ## 許可
 
