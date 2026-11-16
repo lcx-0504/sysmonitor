@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.5.3 — Unreleased
+## 1.6.0 — 2026-11-16
 
 - Add Traditional Chinese support across the monitor, extension settings, and documentation.
 - Add a custom collection policy in the `sysmonitor.collection` setting. When `custom` is enabled, it applies configurable SSH connection, standard collection, and extended collection timeouts (`connectionTimeout`, `standardTimeout`, and `extendedTimeout`, 5–120 seconds) and a per-server SSH connection pool limit of 1–8 connections (`sshPoolSize`); otherwise the defaults are used.
